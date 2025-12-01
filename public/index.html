@@ -328,176 +328,209 @@
     </div>
 
     <script>
-      // ===== USER ID LOGIC =====
-      function getUserIdFromUrlOrStorage() {
-        const params = new URLSearchParams(window.location.search);
-        let id = params.get("userId");
+  // ===== USER ID LOGIC =====
+  function getUserIdFromUrlOrStorage() {
+    const params = new URLSearchParams(window.location.search);
+    let id = params.get("userId");
 
-        if (id && id.trim()) {
-          id = id.trim();
-          localStorage.setItem("loew_user_id", id);
-          return id;
-        }
+    if (id && id.trim()) {
+      id = id.trim();
+      localStorage.setItem("loew_user_id", id);
+      return id;
+    }
 
-        const stored = localStorage.getItem("loew_user_id");
-        if (stored && stored.trim()) {
-          return stored.trim();
-        }
+    const stored = localStorage.getItem("loew_user_id");
+    if (stored && stored.trim()) {
+      return stored.trim();
+    }
 
-        const fallback = "roy";
-        localStorage.setItem("loew_user_id", fallback);
-        return fallback;
-      }
+    const fallback = "roy";
+    localStorage.setItem("loew_user_id", fallback);
+    return fallback;
+  }
 
-      const USER_ID = getUserIdFromUrlOrStorage();
+  const USER_ID = getUserIdFromUrlOrStorage();
 
-      const messagesEl = document.getElementById("messages");
-      const inputEl = document.getElementById("input");
-      const sendBtn = document.getElementById("send-btn");
-      const userIdLabel = document.getElementById("user-id-label");
-      userIdLabel.textContent = USER_ID;
+  const messagesEl = document.getElementById("messages");
+  const inputEl = document.getElementById("input");
+  const sendBtn = document.getElementById("send-btn");
+  const userIdLabel = document.getElementById("user-id-label");
+  userIdLabel.textContent = USER_ID;
 
-      let hasStrava = false;
-      let initialSnapshot = null;
+  let hasStrava = false;
 
-      function addMessage(text, who) {
-        const row = document.createElement("div");
-        row.className = "message-row " + (who === "user" ? "user" : "assistant");
+  function addMessage(text, who) {
+    const row = document.createElement("div");
+    row.className = "message-row " + (who === "user" ? "user" : "assistant");
 
-        const avatar = document.createElement("div");
-        avatar.className =
-          "avatar " + (who === "user" ? "user" : "assistant");
-        avatar.textContent = who === "user" ? "אני" : "L";
+    const avatar = document.createElement("div");
+    avatar.className =
+      "avatar " + (who === "user" ? "user" : "assistant");
+    avatar.textContent = who === "user" ? "אני" : "L";
 
-        const bubble = document.createElement("div");
-        bubble.className =
-          "bubble " + (who === "user" ? "user" : "assistant");
-        bubble.textContent = text;
+    const bubble = document.createElement("div");
+    bubble.className =
+      "bubble " + (who === "user" ? "user" : "assistant");
+    bubble.textContent = text;
 
-        row.appendChild(avatar);
-        row.appendChild(bubble);
-        messagesEl.appendChild(row);
-        messagesEl.scrollTop = messagesEl.scrollHeight;
-      }
+    row.appendChild(avatar);
+    row.appendChild(bubble);
+    messagesEl.appendChild(row);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
 
-      async function fetchSnapshotOnce() {
-        try {
-          const res = await fetch("/api/loew/strava-snapshot", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ userId: USER_ID }),
-          });
-          const data = await res.json();
-          if (data.ok) {
-            hasStrava = true;
-            initialSnapshot = data.snapshot;
-          } else {
-            hasStrava = false;
-          }
-        } catch (err) {
-          console.warn("snapshot init error", err);
-          hasStrava = false;
-        }
-      }
+  // הודעה שמכילה לינק (HTML)
+  function addHtmlMessage(html, who) {
+    const row = document.createElement("div");
+    row.className = "message-row " + (who === "user" ? "user" : "assistant");
 
-      async function fetchSnapshot() {
-        try {
-          const res = await fetch("/api/loew/strava-snapshot", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ userId: USER_ID }),
-          });
-          const data = await res.json();
-          if (data.ok) {
-            hasStrava = true;
-            return data.snapshot;
-          }
-        } catch (err) {
-          console.warn("snapshot error", err);
-        }
-        return null;
-      }
+    const avatar = document.createElement("div");
+    avatar.className =
+      "avatar " + (who === "user" ? "user" : "assistant");
+    avatar.textContent = who === "user" ? "אני" : "L";
 
-      async function callChatAPI(text, snapshot) {
-        const res = await fetch("/api/loew/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            userId: USER_ID,
-            message: text,
-            snapshot: snapshot,
-          }),
-        });
-        return res.json();
-      }
+    const bubble = document.createElement("div");
+    bubble.className =
+      "bubble " + (who === "user" ? "user" : "assistant");
+    bubble.innerHTML = html;
 
-      async function sendMessage() {
-        const text = inputEl.value.trim();
-        if (!text) return;
+    row.appendChild(avatar);
+    row.appendChild(bubble);
+    messagesEl.appendChild(row);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
 
-        addMessage(text, "user");
-        inputEl.value = "";
-        inputEl.focus();
-        sendBtn.disabled = true;
-
-        // אם אין סטרבה למשתמש הזה וכל מה שהוא כתב זה "כן" → חיבור לסטרבה
-        const normalized = text.trim().toLowerCase().replace(/[.!?…]/g, "");
-        if (!hasStrava && (normalized === "כן" || normalized === "yes" || normalized === "y")) {
-          window.location.href =
-            "/auth/strava?userId=" + encodeURIComponent(USER_ID);
-          return;
-        }
-
-        let snapshot = await fetchSnapshot();
-
-        try {
-          const data = await callChatAPI(text, snapshot);
-
-          if (!data.ok && data.error) {
-            addMessage("שגיאה מהשרת: " + data.error, "assistant");
-            return;
-          }
-
-          if (data.reply) {
-            addMessage(data.reply, "assistant");
-          } else {
-            addMessage("לא קיבלתי תשובה מ-LOEW.", "assistant");
-          }
-        } catch (err) {
-          console.error(err);
-          addMessage("הייתה תקלה בתקשורת עם השרת.", "assistant");
-        } finally {
-          sendBtn.disabled = false;
-        }
-      }
-
-      sendBtn.addEventListener("click", sendMessage);
-      inputEl.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          sendMessage();
-        }
+  async function fetchSnapshotOnce() {
+    try {
+      const res = await fetch("/api/loew/strava-snapshot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: USER_ID }),
       });
+      const data = await res.json();
+      hasStrava = !!data.ok;
+    } catch (err) {
+      console.warn("snapshot init error", err);
+      hasStrava = false;
+    }
+  }
 
-      // ===== INIT =====
-      (async function init() {
-        await fetchSnapshotOnce();
+  async function fetchSnapshot() {
+    try {
+      const res = await fetch("/api/loew/strava-snapshot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: USER_ID }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        hasStrava = true;
+        return data.snapshot;
+      }
+    } catch (err) {
+      console.warn("snapshot error", err);
+    }
+    return null;
+  }
 
-        if (!hasStrava) {
-          addMessage(
-            "היי, אני LOEW.\n" +
-              "אני רואה שעוד לא חיברת חשבון Strava.\n" +
-              "יש לך סטרבה שתרצה לחבר? תכתוב 'כן' כדי להתחבר, או 'לא' אם תרצה להמשיך בלי.",
-            "assistant"
-          );
-        } else {
-          addMessage(
-            "היי, אני LOEW.\n" +
-              "יש לי נתונים מסטרבה עבורך. אתה יכול לשאול על האימון האחרון, לבקש תוכנית אימונים, או כל דבר אחר.",
-            "assistant"
-          );
-        }
-      })();
-    </script>
+  async function callChatAPI(text, snapshot) {
+    const res = await fetch("/api/loew/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        userId: USER_ID,
+        message: text,
+        snapshot: snapshot,
+      }),
+    });
+    return res.json();
+  }
+
+  async function sendMessage() {
+    const text = inputEl.value.trim();
+    if (!text) return;
+
+    addMessage(text, "user");
+    inputEl.value = "";
+    inputEl.focus();
+    sendBtn.disabled = true;
+
+    // אם אין סטרבה וכל מה שנכתב זה "כן" → ננסה גם רידיירקט אוטומטי
+    const normalized = text.trim().toLowerCase().replace(/[.!?…]/g, "");
+    if (!hasStrava && (normalized === "כן" || normalized === "yes" || normalized === "y")) {
+      const url =
+        "https://loew.onrender.com/auth/strava?userId=" +
+        encodeURIComponent(USER_ID);
+      window.location.href = url;
+      // אם משום מה הדפדפן לא עושה redirect, נשחרר את הכפתור
+      setTimeout(() => {
+        sendBtn.disabled = false;
+      }, 1500);
+      return;
+    }
+
+    let snapshot = await fetchSnapshot();
+
+    try {
+      const data = await callChatAPI(text, snapshot);
+
+      if (!data.ok && data.error) {
+        addMessage("שגיאה מהשרת: " + data.error, "assistant");
+        return;
+      }
+
+      if (data.reply) {
+        addMessage(data.reply, "assistant");
+      } else {
+        addMessage("לא קיבלתי תשובה מ-LOEW.", "assistant");
+      }
+    } catch (err) {
+      console.error(err);
+      addMessage("הייתה תקלה בתקשורת עם השרת.", "assistant");
+    } finally {
+      sendBtn.disabled = false;
+    }
+  }
+
+  sendBtn.addEventListener("click", sendMessage);
+  inputEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+
+  // ===== INIT =====
+  (async function init() {
+    await fetchSnapshotOnce();
+
+    if (!hasStrava) {
+      addMessage(
+        "היי, אני LOEW.\n" +
+          "אני רואה שעוד לא חיברת חשבון Strava.\n" +
+          "יש לך סטרבה שתרצה לחבר? תכתוב 'כן' כדי להתחבר, או 'לא' אם תרצה להמשיך בלי.",
+        "assistant"
+      );
+
+      const stravaUrl =
+        "https://loew.onrender.com/auth/strava?userId=" +
+        encodeURIComponent(USER_ID);
+
+      addHtmlMessage(
+        "או שפשוט <a href=\"" +
+          stravaUrl +
+          "\" style=\"color:#22c55e; text-decoration:underline;\">לחץ כאן להתחברות לסטרבה</a>.",
+        "assistant"
+      );
+    } else {
+      addMessage(
+        "היי, אני LOEW.\n" +
+          "יש לי נתונים מסטרבה עבורך. אתה יכול לשאול על האימון האחרון, לבקש תוכנית אימונים, או כל דבר אחר.",
+        "assistant"
+      );
+    }
+  })();
+</script>
+
   </body>
 </html>
