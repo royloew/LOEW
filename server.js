@@ -42,8 +42,18 @@ const stravaTokensByUser = new Map();
 /* ---------------- STRAVA SNAPSHOT HELPER ---------------- */
 
 /**
- * Builder אופציונלי ל-snapshot "מהיר"
+ * Builder מהיר ל-snapshot
  * משתמש ישירות ב-Strava API על בסיס access_token.
+ *
+ * מחזיר:
+ * - training_summary (90 יום)
+ * - hr_max_from_data / hr_threshold_from_data
+ * - ftp_models (מ-Ftp של Strava)
+ * - וגם:
+ *   - latest_activity
+ *   - latest_activity_date
+ *   - latest_activity_is_today
+ *   - recent_activities (רשימת רכיבות אחרונות)
  */
 async function buildStravaSnapshot(tokens) {
   if (!tokens || !tokens.access_token) return null;
@@ -74,16 +84,24 @@ async function buildStravaSnapshot(tokens) {
     }
     const acts = await actsResp.json();
 
-    const now = Date.now();
-    const days90 = 90 * 24 * 60 * 60 * 1000;
-    const cutoff = now - days90;
+    // מיון מהחדשה לישנה
+    const sortedActs = (acts || [])
+      .slice()
+      .sort(
+        (a, b) => new Date(b.start_date).getTime() - new Date(a.start_date).getTime()
+      );
 
-    const acts90 = (acts || []).filter((a) => {
+    const nowMs = Date.now();
+    const days90Ms = 90 * 24 * 60 * 60 * 1000;
+    const cutoff = nowMs - days90Ms;
+
+    const acts90 = sortedActs.filter((a) => {
       const t = new Date(a.start_date).getTime();
       return t >= cutoff;
     });
 
-    // HR max & threshold
+    /* ----- HR max & threshold מה-90 יום ----- */
+
     let hrMaxFromData = null;
     for (const a of acts90) {
       if (a.has_heartrate && typeof a.max_heartrate === "number") {
@@ -98,7 +116,8 @@ async function buildStravaSnapshot(tokens) {
       hrThresholdFromData = Math.round(hrMaxFromData * 0.9);
     }
 
-    // סיכום נפח 90 יום
+    /* ----- סיכום נפח 90 יום ----- */
+
     const totalSeconds = acts90.reduce(
       (sum, a) => sum + (a.moving_time || 0),
       0
@@ -122,7 +141,7 @@ async function buildStravaSnapshot(tokens) {
       avgHoursPerWeek,
     };
 
-    // ----- מודל FTP בסיסי על סמך athlete.ftp -----
+    /* ----- FTP בסיסי על סמך athlete.ftp ----- */
 
     const ftpFromStrava =
       typeof athlete.ftp === "number" ? athlete.ftp : null;
@@ -148,6 +167,60 @@ async function buildStravaSnapshot(tokens) {
 
     const ftpFromStreams = null; // לוגיקה עמוקה יותר ב-dbSqlite/StravaIngest
 
+    /* ----- הרכיבה האחרונה + רכיבות אחרונות ----- */
+
+    let latestActivity = null;
+    let latestActivityDate = null;
+    let latestActivityIsToday = false;
+
+    if (sortedActs.length > 0) {
+      const latest = sortedActs[0];
+      const latestDate = new Date(latest.start_date);
+      latestActivityDate = latestDate.toISOString();
+
+      const now = new Date();
+      const sameDay =
+        latestDate.getUTCFullYear() === now.getUTCFullYear() &&
+        latestDate.getUTCMonth() === now.getUTCMonth() &&
+        latestDate.getUTCDate() === now.getUTCDate();
+
+      latestActivityIsToday = sameDay;
+
+      latestActivity = {
+        id: latest.id,
+        name: latest.name,
+        start_date: latest.start_date, // UTC from Strava
+        distance_km: latest.distance ? latest.distance / 1000 : null,
+        moving_time_s: latest.moving_time || null,
+        total_elevation_m: latest.total_elevation_gain || null,
+        average_power:
+          typeof latest.average_watts === "number" ? latest.average_watts : null,
+        max_power:
+          typeof latest.max_watts === "number" ? latest.max_watts : null,
+        average_heartrate: latest.average_heartrate || null,
+        max_heartrate: latest.max_heartrate || null,
+        has_heartrate: !!latest.has_heartrate,
+        type: latest.sport_type || latest.type || null,
+      };
+    }
+
+    // רשימת רכיבות אחרונות (נגיד 30) – לשימוש בניתוח לפי תאריך
+    const recentActivities = sortedActs.slice(0, 30).map((a) => ({
+      id: a.id,
+      name: a.name,
+      start_date: a.start_date,
+      distance_km: a.distance ? a.distance / 1000 : null,
+      moving_time_s: a.moving_time || null,
+      total_elevation_m: a.total_elevation_gain || null,
+      average_power:
+        typeof a.average_watts === "number" ? a.average_watts : null,
+      max_power: typeof a.max_watts === "number" ? a.max_watts : null,
+      average_heartrate: a.average_heartrate || null,
+      max_heartrate: a.max_heartrate || null,
+      has_heartrate: !!a.has_heartrate,
+      type: a.sport_type || a.type || null,
+    }));
+
     return {
       user_from_strava: {
         name: `${athlete.firstname || ""} ${athlete.lastname || ""}`.trim(),
@@ -160,6 +233,12 @@ async function buildStravaSnapshot(tokens) {
       ftp_from_strava: ftpFromStrava,
       ftp_from_streams: ftpFromStreams,
       ftp_models: ftpModels,
+
+      // שדות חדשים:
+      latest_activity: latestActivity,
+      latest_activity_date: latestActivityDate,
+      latest_activity_is_today: latestActivityIsToday,
+      recent_activities: recentActivities,
     };
   } catch (err) {
     console.error("buildStravaSnapshot error:", err);
@@ -222,6 +301,24 @@ You may receive a "Context JSON" in a system message. It can include:
 Treat this JSON as background context only.
 The real user question is always the last user message in the conversation.
 Never mention "JSON", "payload" or field names explicitly to the user.
+
+If the Context JSON.snapshot contains ride-related fields like:
+- latest_activity, latest_activity_date, latest_activity_is_today
+- recent_activities (an array of recent rides with dates and metrics),
+
+then:
+- When the user asks if you have today's ride, or about "the last ride",
+  use latest_activity and latest_activity_is_today to answer clearly.
+  Explicitly say up to which date/time you have data and give a short summary
+  (duration, distance, elevation, average power and heart rate if available).
+
+- When the user asks to analyse a specific ride by date
+  (for example: "תנתח לי את הרכיבה מ-2025-11-30"),
+  scan recent_activities for a ride whose start_date falls on that calendar day
+  (ignore time-of-day). If found, base your analysis on its metrics
+  (distance_km, moving_time_s, total_elevation_m, average_power, max_power,
+   average_heartrate, max_heartrate). If not found, say you don't have that ride
+  and explain which date range you do have Strava data for.
 
 When the user asks about anything else (code, emails, work, explanations, relationships, life questions, etc.):
 - Behave like a normal, smart, general-purpose assistant.
