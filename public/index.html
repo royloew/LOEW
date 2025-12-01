@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="he" dir="rtl">
   <head>
@@ -31,7 +32,7 @@
         flex-direction: column;
       }
 
-      /* ===== HEADER (כמו הפס העליון בצ'אט) ===== */
+      /* HEADER */
       .header {
         display: flex;
         align-items: center;
@@ -78,16 +79,16 @@
 
       .header-right {
         font-size: 11px;
-        opacity: 0.7;
+        opacity: 0.8;
         text-align: left;
       }
 
-      /* ===== CHAT AREA ===== */
+      /* CHAT AREA */
       .chat-container {
         flex: 1;
         display: flex;
         flex-direction: column;
-        padding: 8px 0 80px; /* מקום לאינפוט */
+        padding: 8px 0 80px;
       }
 
       #chat {
@@ -157,7 +158,7 @@
         color: #022c22;
       }
 
-      /* ===== INPUT BAR (קבוע בתחתית, כמו GPT) ===== */
+      /* INPUT BAR */
       .input-bar-wrap {
         position: sticky;
         bottom: 0;
@@ -219,7 +220,6 @@
         text-align: center;
       }
 
-      /* ===== RESPONSIVE ===== */
       @media (max-width: 640px) {
         .page {
           padding: 0 8px;
@@ -264,13 +264,16 @@
           <div class="title-block">
             <div class="title">LOEW – המאמן האישי שלך</div>
             <div class="subtitle">
-              צ'אט מאמן אופניים חכם, עם תמיכה מלאה במובייל.
+              צ'אט אימוני אופניים חכם, מותאם לכל רוכב בנפרד.
             </div>
           </div>
         </div>
         <div class="header-right">
-          משתמש נוכחי:
-          <span id="user-id-label"></span>
+          רוכב נוכחי:
+          <span id="user-id-label"></span><br />
+          <span style="opacity: 0.7;"
+            >כדי להחליף רוכב: הוסף ?userId=שם לכתובת</span
+          >
         </div>
       </header>
 
@@ -291,16 +294,38 @@
             <button id="send-btn" class="send-btn">שלח</button>
           </div>
           <div class="small-note">
-            טיפ: בהתחלה LOEW יעשה אונבורדינג קצר (גיל, משקל, דופק, FTP,
-            מטרה) – ואז מספיק לכתוב "מה האימון שלי היום".
+            טיפ: לכל רוכב יש userId משלו. למשל:
+            <br />
+            <code>?userId=roy</code>, <code>?userId=yoram</code>, <code>?userId=liraz</code>
           </div>
         </div>
       </div>
     </div>
 
     <script>
-      // ====== הגדרת userId ======
-      const USER_ID = "roy"; // אפשר לשנות ליורמים, ילדים וכו'
+      // ===== USER ID HANDLING (multi rider) =====
+      function getUserIdFromUrlOrStorage() {
+        const params = new URLSearchParams(window.location.search);
+        let id = params.get("userId");
+
+        if (id && id.trim()) {
+          id = id.trim();
+          localStorage.setItem("loew_user_id", id);
+          return id;
+        }
+
+        const stored = localStorage.getItem("loew_user_id");
+        if (stored && stored.trim()) {
+          return stored.trim();
+        }
+
+        // ברירת מחדל – אתה
+        const fallback = "roy";
+        localStorage.setItem("loew_user_id", fallback);
+        return fallback;
+      }
+
+      const USER_ID = getUserIdFromUrlOrStorage();
 
       const chatEl = document.getElementById("chat");
       const inputEl = document.getElementById("input");
@@ -330,75 +355,74 @@
         chatEl.scrollTop = chatEl.scrollHeight;
       }
 
-  async function sendMessage() {
-  const text = inputEl.value.trim();
-  if (!text) return;
+      async function sendMessage() {
+        const text = inputEl.value.trim();
+        if (!text) return;
 
-  addMessage(text, "me");
-  inputEl.value = "";
-  inputEl.focus();
-  sendBtn.disabled = true;
+        addMessage(text, "me");
+        inputEl.value = "";
+        inputEl.focus();
+        sendBtn.disabled = true;
 
-  let snapshot = null;
+        let snapshot = null;
 
-  try {
-    // --- שלב 1: קבלת סנאפשוט מסטרבה ---
-    const snapRes = await fetch("/api/loew/strava-snapshot", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId: USER_ID })
-    });
+        try {
+          // קודם ננסה להביא snapshot מסטרבה עבור ה-userId הזה
+          const snapRes = await fetch("/api/loew/strava-snapshot", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ userId: USER_ID }),
+          });
 
-    const snapData = await snapRes.json();
-    if (snapData.ok) {
-      snapshot = snapData.snapshot;
-    }
-  } catch (err) {
-    console.warn("Snapshot failed:", err);
-  }
+          const snapData = await snapRes.json();
+          if (snapData.ok) {
+            snapshot = snapData.snapshot;
+          }
+        } catch (err) {
+          console.warn("Snapshot failed:", err);
+        }
 
-  try {
-    // --- שלב 2: שליחת ההודעה לשרת עם snapshot ---
-    const res = await fetch("/api/loew/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        userId: USER_ID,
-        message: text,
-        snapshot: snapshot
-      }),
-    });
+        try {
+          const res = await fetch("/api/loew/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              userId: USER_ID,
+              message: text,
+              snapshot: snapshot,
+            }),
+          });
 
-    const data = await res.json();
+          const data = await res.json();
 
-    if (!data.ok && data.error) {
-      addMessage("שגיאה: " + data.error, "bot");
-      return;
-    }
+          if (!data.ok && data.error) {
+            addMessage("שגיאה: " + data.error, "bot");
+            return;
+          }
 
-    if (data.onboarding && data.reply === "__STRAVA_CONNECT__") {
-      addMessage(
-        "בשביל להמשיך צריך לחבר את חשבון ה-Strava שלך. מעביר אותך לעמוד החיבור...",
-        "bot"
-      );
-      window.location.href =
-        "/auth/strava?userId=" + encodeURIComponent(USER_ID);
-      return;
-    }
+          // אם LOEW מבקש להתחבר לסטרבה
+          if (data.onboarding && data.reply === "__STRAVA_CONNECT__") {
+            addMessage(
+              "בשביל להמשיך צריך לחבר את חשבון ה-Strava שלך. מעביר אותך לעמוד החיבור...",
+              "bot"
+            );
+            window.location.href =
+              "/auth/strava?userId=" + encodeURIComponent(USER_ID);
+            return;
+          }
 
-    if (data.reply) {
-      addMessage(data.reply, "bot");
-    } else {
-      addMessage("לא קיבלתי תשובה מ-LOEW.", "bot");
-    }
-  } catch (err) {
-    console.error(err);
-    addMessage("הייתה תקלה בתקשורת עם השרת.", "bot");
-  } finally {
-    sendBtn.disabled = false;
-  }
-}
-
+          if (data.reply) {
+            addMessage(data.reply, "bot");
+          } else {
+            addMessage("לא קיבלתי תשובה מ-LOEW.", "bot");
+          }
+        } catch (err) {
+          console.error(err);
+          addMessage("הייתה תקלה בתקשורת עם השרת.", "bot");
+        } finally {
+          sendBtn.disabled = false;
+        }
+      }
 
       sendBtn.addEventListener("click", sendMessage);
 
@@ -409,10 +433,13 @@
         }
       });
 
-      // הודעת פתיחה בסגנון GPT
+      // הודעת פתיחה
       addMessage(
         "היי, אני LOEW.\n" +
-          "בוא נבנה לך פרופיל קצר ואז אתן לך אימונים מדויקים, פשוטים ומותאמים לזמן שלך.\n" +
+          "אתה כרגע מחובר כ־userId: " +
+          USER_ID +
+          ".\n" +
+          "אם תרצה רוכב אחר, תוסיף ?userId=שם לכתובת למעלה.\n\n" +
           "תכתוב לי 'היי' או כל דבר אחר בשביל להתחיל.",
         "bot"
       );
