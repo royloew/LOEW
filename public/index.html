@@ -330,56 +330,75 @@
         chatEl.scrollTop = chatEl.scrollHeight;
       }
 
-      async function sendMessage() {
-        const text = inputEl.value.trim();
-        if (!text) return;
+  async function sendMessage() {
+  const text = inputEl.value.trim();
+  if (!text) return;
 
-        addMessage(text, "me");
-        inputEl.value = "";
-        inputEl.focus();
-        sendBtn.disabled = true;
+  addMessage(text, "me");
+  inputEl.value = "";
+  inputEl.focus();
+  sendBtn.disabled = true;
 
-        try {
-          const res = await fetch("/api/loew/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              userId: USER_ID,
-              message: text,
-              snapshot: null, // בעתיד אפשר להכניס כאן snapshot מ-Strava
-            }),
-          });
+  let snapshot = null;
 
-          const data = await res.json();
+  try {
+    // --- שלב 1: קבלת סנאפשוט מסטרבה ---
+    const snapRes = await fetch("/api/loew/strava-snapshot", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: USER_ID })
+    });
 
-          if (!data.ok && data.error) {
-            addMessage("שגיאה: " + data.error, "bot");
-            return;
-          }
+    const snapData = await snapRes.json();
+    if (snapData.ok) {
+      snapshot = snapData.snapshot;
+    }
+  } catch (err) {
+    console.warn("Snapshot failed:", err);
+  }
 
-          // לוגיקת אונבורדינג – במקרה ש-LOEW מבקש חיבור לסטרבה
-          if (data.onboarding && data.reply === "__STRAVA_CONNECT__") {
-            addMessage(
-              "בשביל להמשיך צריך לחבר את חשבון ה-Strava שלך. מעביר אותך לעמוד החיבור...",
-              "bot"
-            );
-            window.location.href =
-              "/auth/strava?userId=" + encodeURIComponent(USER_ID);
-            return;
-          }
+  try {
+    // --- שלב 2: שליחת ההודעה לשרת עם snapshot ---
+    const res = await fetch("/api/loew/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        userId: USER_ID,
+        message: text,
+        snapshot: snapshot
+      }),
+    });
 
-          if (data.reply) {
-            addMessage(data.reply, "bot");
-          } else {
-            addMessage("לא קיבלתי תשובה מ-LOEW.", "bot");
-          }
-        } catch (err) {
-          console.error(err);
-          addMessage("הייתה תקלה בתקשורת עם השרת.", "bot");
-        } finally {
-          sendBtn.disabled = false;
-        }
-      }
+    const data = await res.json();
+
+    if (!data.ok && data.error) {
+      addMessage("שגיאה: " + data.error, "bot");
+      return;
+    }
+
+    if (data.onboarding && data.reply === "__STRAVA_CONNECT__") {
+      addMessage(
+        "בשביל להמשיך צריך לחבר את חשבון ה-Strava שלך. מעביר אותך לעמוד החיבור...",
+        "bot"
+      );
+      window.location.href =
+        "/auth/strava?userId=" + encodeURIComponent(USER_ID);
+      return;
+    }
+
+    if (data.reply) {
+      addMessage(data.reply, "bot");
+    } else {
+      addMessage("לא קיבלתי תשובה מ-LOEW.", "bot");
+    }
+  } catch (err) {
+    console.error(err);
+    addMessage("הייתה תקלה בתקשורת עם השרת.", "bot");
+  } finally {
+    sendBtn.disabled = false;
+  }
+}
+
 
       sendBtn.addEventListener("click", sendMessage);
 
