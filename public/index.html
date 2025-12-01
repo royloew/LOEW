@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="he" dir="rtl">
   <head>
@@ -19,27 +18,56 @@
         margin: 0;
         font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
           sans-serif;
-        background: #050816;
+        background: #020617;
         color: #e5e7eb;
       }
 
-      .page {
+      /* ===== LAYOUT ===== */
+
+      .app {
         min-height: 100vh;
-        max-width: 960px;
-        margin: 0 auto;
-        padding: 0 12px;
         display: flex;
-        flex-direction: column;
+        align-items: stretch;
+        justify-content: center;
+        padding: 8px;
       }
 
-      /* HEADER */
+      .chat-shell {
+        width: 100%;
+        max-width: 760px;
+        margin: auto;
+        background: radial-gradient(circle at top, #020617, #020617 40%, #000);
+        border-radius: 18px;
+        border: 1px solid #1f2937;
+        box-shadow: 0 18px 40px rgba(0, 0, 0, 0.7);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      @media (max-width: 640px) {
+        .app {
+          padding: 0;
+        }
+
+        .chat-shell {
+          border-radius: 0;
+          max-width: 100%;
+          border-left: none;
+          border-right: none;
+          box-shadow: none;
+        }
+      }
+
+      /* ===== HEADER ===== */
+
       .header {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 12px 0;
+        padding: 10px 14px;
         border-bottom: 1px solid #1f2937;
-        gap: 8px;
+        gap: 10px;
       }
 
       .header-left {
@@ -68,7 +96,7 @@
       }
 
       .title {
-        font-size: 16px;
+        font-size: 15px;
         font-weight: 600;
       }
 
@@ -79,30 +107,48 @@
 
       .header-right {
         font-size: 11px;
-        opacity: 0.8;
         text-align: left;
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        align-items: flex-start;
       }
 
-      /* CHAT AREA */
-      .chat-container {
+      .header-caption {
+        opacity: 0.65;
+        font-size: 10px;
+      }
+
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", "Courier New", monospace;
+        font-size: 10px;
+        background: #020617;
+        border-radius: 999px;
+        padding: 2px 6px;
+      }
+
+      /* ===== CHAT BODY ===== */
+
+      .chat-body {
         flex: 1;
         display: flex;
         flex-direction: column;
-        padding: 8px 0 80px;
+        padding: 10px 14px 74px;
+        max-height: calc(100vh - 120px);
       }
 
-      #chat {
+      .messages {
         flex: 1;
         overflow-y: auto;
-        padding: 10px 0 16px;
         display: flex;
         flex-direction: column;
-        gap: 10px;
+        gap: 8px;
       }
 
       .message-row {
         display: flex;
-        gap: 10px;
+        gap: 8px;
         width: 100%;
       }
 
@@ -115,15 +161,15 @@
       }
 
       .avatar {
-        width: 28px;
-        height: 28px;
+        width: 26px;
+        height: 26px;
         border-radius: 999px;
         background: #111827;
         border: 1px solid #1f2937;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 14px;
+        font-size: 13px;
         flex-shrink: 0;
       }
 
@@ -139,8 +185,8 @@
       }
 
       .bubble {
-        max-width: 100%;
-        padding: 8px 11px;
+        max-width: 80%;
+        padding: 7px 10px;
         border-radius: 14px;
         font-size: 14px;
         line-height: 1.5;
@@ -158,24 +204,37 @@
         color: #022c22;
       }
 
-      /* INPUT BAR */
-      .input-bar-wrap {
-        position: sticky;
-        bottom: 0;
-        margin: 0 -12px;
-        padding: 8px 12px 12px;
-        background: linear-gradient(to top, #050816 60%, rgba(5, 8, 22, 0));
+      @media (max-width: 640px) {
+        .chat-body {
+          padding: 10px 10px 70px;
+          max-height: calc(100vh - 100px);
+        }
+
+        .bubble {
+          max-width: 88%;
+          font-size: 13px;
+        }
       }
 
-      .input-bar-inner {
-        max-width: 960px;
-        margin: 0 auto;
+      /* ===== INPUT BAR ===== */
+
+      .input-wrap {
+        position: sticky;
+        bottom: 0;
+        padding: 6px 10px 10px;
+        background: linear-gradient(
+          to top,
+          rgba(2, 6, 23, 0.98),
+          rgba(2, 6, 23, 0.92),
+          rgba(2, 6, 23, 0.7),
+          transparent
+        );
       }
 
       .input-row {
         display: flex;
-        gap: 8px;
         align-items: center;
+        gap: 6px;
         border-radius: 999px;
         border: 1px solid #374151;
         background: #020617;
@@ -199,12 +258,12 @@
       .send-btn {
         border-radius: 999px;
         border: none;
-        padding: 8px 16px;
+        padding: 7px 14px;
         background: #22c55e;
         color: #022c22;
         font-weight: 600;
         cursor: pointer;
-        font-size: 14px;
+        font-size: 13px;
         flex-shrink: 0;
       }
 
@@ -214,77 +273,64 @@
       }
 
       .small-note {
-        font-size: 11px;
+        font-size: 10px;
         opacity: 0.6;
         margin-top: 4px;
         text-align: center;
       }
 
       @media (max-width: 640px) {
-        .page {
-          padding: 0 8px;
-        }
-
-        .header {
-          padding-top: 8px;
-          padding-bottom: 8px;
-        }
-
-        .title {
-          font-size: 14px;
-        }
-
-        .subtitle {
-          font-size: 10px;
-        }
-
-        .bubble {
-          font-size: 13px;
+        .input-wrap {
+          padding: 6px 8px 9px;
         }
 
         .send-btn {
-          padding: 6px 12px;
-          font-size: 13px;
+          padding: 6px 11px;
+          font-size: 12px;
         }
 
-        .input-bar-wrap {
-          margin: 0 -8px;
-          padding: 6px 8px 10px;
+        .input-row input {
+          font-size: 13px;
         }
       }
     </style>
   </head>
 
   <body>
-    <div class="page">
-      <!-- HEADER -->
-      <header class="header">
-        <div class="header-left">
-          <div class="logo-circle">L</div>
-          <div class="title-block">
-            <div class="title">LOEW – המאמן האישי שלך</div>
-            <div class="subtitle">
-              צ'אט אימוני אופניים חכם, מותאם לכל רוכב בנפרד.
+    <div class="app">
+      <div class="chat-shell">
+        <!-- HEADER -->
+        <header class="header">
+          <div class="header-left">
+            <div class="logo-circle">L</div>
+            <div class="title-block">
+              <div class="title">LOEW – המאמן האישי שלך</div>
+              <div class="subtitle">
+                צ'אט אימון חכם שמתאים את עצמו לכל רוכב בנפרד.
+              </div>
             </div>
           </div>
-        </div>
-        <div class="header-right">
-          רוכב נוכחי:
-          <span id="user-id-label"></span><br />
-          <span style="opacity: 0.7;"
-            >כדי להחליף רוכב: הוסף ?userId=שם לכתובת</span
-          >
-        </div>
-      </header>
+          <div class="header-right">
+            <div>
+              רוכב נוכחי:
+              <strong id="user-id-label"></strong>
+            </div>
+            <div class="header-caption">
+              כדי להחליף רוכב: הוסף לכתובת
+              <code>?userId=שם</code> – למשל
+              <code>?userId=roy</code>,
+              <code>?userId=ori</code>.
+            </div>
+          </div>
+        </header>
 
-      <!-- CHAT -->
-      <main class="chat-container">
-        <div id="chat"></div>
-      </main>
+        <!-- BODY -->
+        <main class="chat-body">
+          <div id="messages" class="messages"></div>
+        </main>
 
-      <!-- INPUT BAR -->
-      <div class="input-bar-wrap">
-        <div class="input-bar-inner">
+        <!-- INPUT -->
+        <div class="input-wrap">
           <div class="input-row">
             <input
               id="input"
@@ -294,16 +340,15 @@
             <button id="send-btn" class="send-btn">שלח</button>
           </div>
           <div class="small-note">
-            טיפ: לכל רוכב יש userId משלו. למשל:
-            <br />
-            <code>?userId=roy</code>, <code>?userId=yoram</code>, <code>?userId=liraz</code>
+            טיפ: אם כמה רוכבים משתמשים באותו לינק – לכל אחד כדאי userId
+            קבוע משלו.
           </div>
         </div>
       </div>
     </div>
 
     <script>
-      // ===== USER ID HANDLING (multi rider) =====
+      // ===== USER ID LOGIC (multi rider) =====
       function getUserIdFromUrlOrStorage() {
         const params = new URLSearchParams(window.location.search);
         let id = params.get("userId");
@@ -319,7 +364,7 @@
           return stored.trim();
         }
 
-        // ברירת מחדל – אתה
+        // ברירת מחדל – אתה (רועי)
         const fallback = "roy";
         localStorage.setItem("loew_user_id", fallback);
         return fallback;
@@ -327,98 +372,107 @@
 
       const USER_ID = getUserIdFromUrlOrStorage();
 
-      const chatEl = document.getElementById("chat");
+      const messagesEl = document.getElementById("messages");
       const inputEl = document.getElementById("input");
       const sendBtn = document.getElementById("send-btn");
       const userIdLabel = document.getElementById("user-id-label");
 
       userIdLabel.textContent = USER_ID;
 
+      // ===== UI HELPERS =====
+
       function addMessage(text, who) {
         const row = document.createElement("div");
-        row.className = "message-row " + (who === "me" ? "user" : "assistant");
+        row.className = "message-row " + (who === "user" ? "user" : "assistant");
 
         const avatar = document.createElement("div");
         avatar.className =
-          "avatar " + (who === "me" ? "user" : "assistant");
-        avatar.textContent = who === "me" ? "אני" : "L";
+          "avatar " + (who === "user" ? "user" : "assistant");
+        avatar.textContent = who === "user" ? "אני" : "L";
 
         const bubble = document.createElement("div");
         bubble.className =
-          "bubble " + (who === "me" ? "user" : "assistant");
+          "bubble " + (who === "user" ? "user" : "assistant");
         bubble.textContent = text;
 
         row.appendChild(avatar);
         row.appendChild(bubble);
 
-        chatEl.appendChild(row);
-        chatEl.scrollTop = chatEl.scrollHeight;
+        messagesEl.appendChild(row);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
       }
 
-      async function sendMessage() {
-        const text = inputEl.value.trim();
-        if (!text) return;
+      // ===== NETWORK =====
 
-        addMessage(text, "me");
-        inputEl.value = "";
-        inputEl.focus();
-        sendBtn.disabled = true;
-
-        let snapshot = null;
-
+      async function fetchSnapshot() {
         try {
-          // קודם ננסה להביא snapshot מסטרבה עבור ה-userId הזה
-          const snapRes = await fetch("/api/loew/strava-snapshot", {
+          const res = await fetch("/api/loew/strava-snapshot", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ userId: USER_ID }),
           });
 
-          const snapData = await snapRes.json();
-          if (snapData.ok) {
-            snapshot = snapData.snapshot;
+          const data = await res.json();
+          if (data.ok) {
+            return data.snapshot;
           }
         } catch (err) {
-          console.warn("Snapshot failed:", err);
+          console.warn("snapshot error", err);
+        }
+        return null;
+      }
+
+      async function callChatAPI(text, snapshot) {
+        const res = await fetch("/api/loew/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: USER_ID,
+            message: text,
+            snapshot: snapshot,
+          }),
+        });
+
+        return res.json();
+      }
+
+      // ===== MAIN SEND LOGIC =====
+
+      async function sendMessage() {
+        const text = inputEl.value.trim();
+        if (!text) return;
+
+        addMessage(text, "user");
+        inputEl.value = "";
+        inputEl.focus();
+        sendBtn.disabled = true;
+
+        // 🔁 אם המשתמש ענה "כן" (או yes) לשאלה על סטרבה – נבצע redirect
+        const normalized = text.trim().toLowerCase();
+        if (normalized === "כן" || normalized === "yes" || normalized === "y") {
+          window.location.href =
+            "/auth/strava?userId=" + encodeURIComponent(USER_ID);
+          return;
         }
 
-        try {
-          const res = await fetch("/api/loew/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              userId: USER_ID,
-              message: text,
-              snapshot: snapshot,
-            }),
-          });
+        let snapshot = await fetchSnapshot();
 
-          const data = await res.json();
+        try {
+          const data = await callChatAPI(text, snapshot);
 
           if (!data.ok && data.error) {
-            addMessage("שגיאה: " + data.error, "bot");
-            return;
-          }
-
-          // אם LOEW מבקש להתחבר לסטרבה
-          if (data.onboarding && data.reply === "__STRAVA_CONNECT__") {
-            addMessage(
-              "בשביל להמשיך צריך לחבר את חשבון ה-Strava שלך. מעביר אותך לעמוד החיבור...",
-              "bot"
-            );
-            window.location.href =
-              "/auth/strava?userId=" + encodeURIComponent(USER_ID);
+            addMessage("שגיאה מהשרת: " + data.error, "assistant");
             return;
           }
 
           if (data.reply) {
-            addMessage(data.reply, "bot");
+            addMessage(data.reply, "assistant");
           } else {
-            addMessage("לא קיבלתי תשובה מ-LOEW.", "bot");
+            addMessage("לא קיבלתי תשובה מ-LOEW.", "assistant");
           }
         } catch (err) {
           console.error(err);
-          addMessage("הייתה תקלה בתקשורת עם השרת.", "bot");
+          addMessage("הייתה תקלה בתקשורת עם השרת.", "assistant");
         } finally {
           sendBtn.disabled = false;
         }
@@ -433,15 +487,17 @@
         }
       });
 
-      // הודעת פתיחה
+      // ===== INITIAL MESSAGE =====
+
       addMessage(
         "היי, אני LOEW.\n" +
-          "אתה כרגע מחובר כ־userId: " +
+          "אתה כרגע מחובר כ-userId: " +
           USER_ID +
-          ".\n" +
-          "אם תרצה רוכב אחר, תוסיף ?userId=שם לכתובת למעלה.\n\n" +
-          "תכתוב לי 'היי' או כל דבר אחר בשביל להתחיל.",
-        "bot"
+          ".\n\n" +
+          "אם תרצה רוכב אחר, תוסיף ?userId=שם לכתובת למעלה.\n" +
+          "למשל: ?userId=ori, ?userId=yoram.\n\n" +
+          "תכתוב לי 'היי', 'מה האימון שלי היום?', או כל דבר אחר כדי להתחיל.",
+        "assistant"
       );
     </script>
   </body>
