@@ -4,92 +4,198 @@
     <meta charset="UTF-8" />
     <title>LOEW Chat</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+
     <style>
+      :root {
+        color-scheme: dark;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
       body {
+        margin: 0;
         font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
           sans-serif;
-        margin: 0;
-        padding: 0;
-        background: #0f172a;
+        background: #050816;
         color: #e5e7eb;
+      }
+
+      .page {
+        min-height: 100vh;
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 0 12px;
         display: flex;
-        justify-content: center;
+        flex-direction: column;
       }
-      .app {
-        margin-top: 40px;
-        width: 100%;
-        max-width: 800px;
-        background: #020617;
-        border-radius: 16px;
-        padding: 16px;
-        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
-      }
+
+      /* ===== HEADER (כמו הפס העליון בצ'אט) ===== */
       .header {
         display: flex;
-        justify-content: space-between;
         align-items: center;
-        margin-bottom: 12px;
+        justify-content: space-between;
+        padding: 12px 0;
+        border-bottom: 1px solid #1f2937;
+        gap: 8px;
       }
-      .title {
-        font-size: 20px;
-        font-weight: 700;
+
+      .header-left {
+        display: flex;
+        align-items: center;
+        gap: 10px;
       }
-      .user-id-box {
-        font-size: 12px;
-        opacity: 0.8;
-      }
-      .strava-btn {
-        background: #fc4c02;
-        color: white;
-        border: none;
+
+      .logo-circle {
+        width: 32px;
+        height: 32px;
         border-radius: 999px;
-        padding: 6px 14px;
-        font-size: 13px;
-        cursor: pointer;
+        background: radial-gradient(circle at 30% 30%, #22c55e, #0f766e);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 18px;
+        font-weight: 700;
+        color: #ecfdf5;
+        flex-shrink: 0;
       }
-      .chat {
-        border-radius: 12px;
-        background: #020617;
-        border: 1px solid #1f2937;
-        padding: 12px;
-        height: 420px;
+
+      .title-block {
+        display: flex;
+        flex-direction: column;
+      }
+
+      .title {
+        font-size: 16px;
+        font-weight: 600;
+      }
+
+      .subtitle {
+        font-size: 11px;
+        opacity: 0.7;
+      }
+
+      .header-right {
+        font-size: 11px;
+        opacity: 0.7;
+        text-align: left;
+      }
+
+      /* ===== CHAT AREA ===== */
+      .chat-container {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        padding: 8px 0 80px; /* מקום לאינפוט */
+      }
+
+      #chat {
+        flex: 1;
         overflow-y: auto;
-        margin-bottom: 10px;
+        padding: 10px 0 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
       }
-      .msg {
-        margin-bottom: 10px;
-        max-width: 80%;
-        line-height: 1.4;
+
+      .message-row {
+        display: flex;
+        gap: 10px;
+        width: 100%;
+      }
+
+      .message-row.assistant {
+        flex-direction: row;
+      }
+
+      .message-row.user {
+        flex-direction: row-reverse;
+      }
+
+      .avatar {
+        width: 28px;
+        height: 28px;
+        border-radius: 999px;
+        background: #111827;
+        border: 1px solid #1f2937;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+        flex-shrink: 0;
+      }
+
+      .avatar.assistant {
+        background: radial-gradient(circle at 30% 30%, #22c55e, #0f766e);
+        color: #ecfdf5;
+        border: none;
+      }
+
+      .avatar.user {
+        background: #1f2937;
+        color: #e5e7eb;
+      }
+
+      .bubble {
+        max-width: 100%;
+        padding: 8px 11px;
+        border-radius: 14px;
+        font-size: 14px;
+        line-height: 1.5;
         white-space: pre-wrap;
+        word-wrap: break-word;
       }
-      .msg.me {
-        margin-left: auto;
-        background: #1d4ed8;
-        color: white;
-        padding: 8px 10px;
-        border-radius: 12px 0 12px 12px;
-      }
-      .msg.bot {
-        margin-right: auto;
+
+      .bubble.assistant {
         background: #020617;
         border: 1px solid #1f2937;
-        padding: 8px 10px;
-        border-radius: 0 12px 12px 12px;
       }
+
+      .bubble.user {
+        background: #10b981;
+        color: #022c22;
+      }
+
+      /* ===== INPUT BAR (קבוע בתחתית, כמו GPT) ===== */
+      .input-bar-wrap {
+        position: sticky;
+        bottom: 0;
+        margin: 0 -12px;
+        padding: 8px 12px 12px;
+        background: linear-gradient(to top, #050816 60%, rgba(5, 8, 22, 0));
+      }
+
+      .input-bar-inner {
+        max-width: 960px;
+        margin: 0 auto;
+      }
+
       .input-row {
         display: flex;
         gap: 8px;
-        margin-top: 8px;
-      }
-      .input-row input {
-        flex: 1;
-        padding: 8px 10px;
+        align-items: center;
         border-radius: 999px;
         border: 1px solid #374151;
         background: #020617;
-        color: #e5e7eb;
+        padding: 4px 4px 4px 8px;
       }
-      .input-row button {
+
+      .input-row input {
+        flex: 1;
+        border: none;
+        outline: none;
+        background: transparent;
+        color: #e5e7eb;
+        font-size: 14px;
+        padding: 6px 4px;
+      }
+
+      .input-row input::placeholder {
+        color: #6b7280;
+      }
+
+      .send-btn {
         border-radius: 999px;
         border: none;
         padding: 8px 16px;
@@ -97,65 +203,130 @@
         color: #022c22;
         font-weight: 600;
         cursor: pointer;
+        font-size: 14px;
+        flex-shrink: 0;
       }
+
+      .send-btn:disabled {
+        opacity: 0.6;
+        cursor: default;
+      }
+
       .small-note {
         font-size: 11px;
-        opacity: 0.7;
+        opacity: 0.6;
         margin-top: 4px;
+        text-align: center;
+      }
+
+      /* ===== RESPONSIVE ===== */
+      @media (max-width: 640px) {
+        .page {
+          padding: 0 8px;
+        }
+
+        .header {
+          padding-top: 8px;
+          padding-bottom: 8px;
+        }
+
+        .title {
+          font-size: 14px;
+        }
+
+        .subtitle {
+          font-size: 10px;
+        }
+
+        .bubble {
+          font-size: 13px;
+        }
+
+        .send-btn {
+          padding: 6px 12px;
+          font-size: 13px;
+        }
+
+        .input-bar-wrap {
+          margin: 0 -8px;
+          padding: 6px 8px 10px;
+        }
       }
     </style>
   </head>
+
   <body>
-    <div class="app">
-      <div class="header">
-        <div>
-          <div class="title">LOEW – המאמן האישי שלך</div>
-          <div class="user-id-box">
-            משתמש נוכחי:
-            <span id="user-id-label"></span>
+    <div class="page">
+      <!-- HEADER -->
+      <header class="header">
+        <div class="header-left">
+          <div class="logo-circle">L</div>
+          <div class="title-block">
+            <div class="title">LOEW – המאמן האישי שלך</div>
+            <div class="subtitle">
+              צ'אט מאמן אופניים חכם, עם תמיכה מלאה במובייל.
+            </div>
           </div>
         </div>
-        <button id="strava-btn" class="strava-btn">
-          חיבור ל-Strava
-        </button>
-      </div>
+        <div class="header-right">
+          משתמש נוכחי:
+          <span id="user-id-label"></span>
+        </div>
+      </header>
 
-      <div id="chat" class="chat"></div>
+      <!-- CHAT -->
+      <main class="chat-container">
+        <div id="chat"></div>
+      </main>
 
-      <div class="input-row">
-        <input
-          id="input"
-          type="text"
-          placeholder="תכתוב משהו ל-LOEW (למשל: מה האימון שלי היום?)"
-        />
-        <button id="send-btn">שלח</button>
-      </div>
-      <div class="small-note">
-        טיפ: בהתחלה LOEW יעשה אונבורדינג קצר (גיל, משקל, דופק, FTP, מטרה) – ואז
-        מספיק לכתוב "מה האימון שלי היום".
+      <!-- INPUT BAR -->
+      <div class="input-bar-wrap">
+        <div class="input-bar-inner">
+          <div class="input-row">
+            <input
+              id="input"
+              type="text"
+              placeholder="תכתוב משהו ל-LOEW (למשל: מה האימון שלי היום?)"
+            />
+            <button id="send-btn" class="send-btn">שלח</button>
+          </div>
+          <div class="small-note">
+            טיפ: בהתחלה LOEW יעשה אונבורדינג קצר (גיל, משקל, דופק, FTP,
+            מטרה) – ואז מספיק לכתוב "מה האימון שלי היום".
+          </div>
+        </div>
       </div>
     </div>
 
     <script>
       // ====== הגדרת userId ======
-      // כאן אתה בוחר לכל משתתף מזהה. אפשר:
-      // const USER_ID = "roy";
-      // ליורם: "yoram", לילד: "itai" וכו'.
-      const USER_ID = "roy";
+      const USER_ID = "roy"; // אפשר לשנות ליורמים, ילדים וכו'
 
       const chatEl = document.getElementById("chat");
       const inputEl = document.getElementById("input");
       const sendBtn = document.getElementById("send-btn");
-      const stravaBtn = document.getElementById("strava-btn");
       const userIdLabel = document.getElementById("user-id-label");
 
       userIdLabel.textContent = USER_ID;
 
       function addMessage(text, who) {
-        const div = document.createElement("div");
-        div.className = "msg " + who;
-        div.textContent = text;
-        chatEl.appendChild(div);
+        const row = document.createElement("div");
+        row.className = "message-row " + (who === "me" ? "user" : "assistant");
+
+        const avatar = document.createElement("div");
+        avatar.className =
+          "avatar " + (who === "me" ? "user" : "assistant");
+        avatar.textContent = who === "me" ? "אני" : "L";
+
+        const bubble = document.createElement("div");
+        bubble.className =
+          "bubble " + (who === "me" ? "user" : "assistant");
+        bubble.textContent = text;
+
+        row.appendChild(avatar);
+        row.appendChild(bubble);
+
+        chatEl.appendChild(row);
         chatEl.scrollTop = chatEl.scrollHeight;
       }
 
@@ -165,6 +336,8 @@
 
         addMessage(text, "me");
         inputEl.value = "";
+        inputEl.focus();
+        sendBtn.disabled = true;
 
         try {
           const res = await fetch("/api/loew/chat", {
@@ -173,7 +346,7 @@
             body: JSON.stringify({
               userId: USER_ID,
               message: text,
-              snapshot: null, // אפשר בעתיד להכניס כאן snapshot מ-Strava
+              snapshot: null, // בעתיד אפשר להכניס כאן snapshot מ-Strava
             }),
           });
 
@@ -184,14 +357,12 @@
             return;
           }
 
-          // במצב אונבורדינג – לפעמים הטקסט הוא "__STRAVA_CONNECT__"
+          // לוגיקת אונבורדינג – במקרה ש-LOEW מבקש חיבור לסטרבה
           if (data.onboarding && data.reply === "__STRAVA_CONNECT__") {
             addMessage(
               "בשביל להמשיך צריך לחבר את חשבון ה-Strava שלך. מעביר אותך לעמוד החיבור...",
               "bot"
             );
-
-            // הפניה ל־/auth/strava עם userId
             window.location.href =
               "/auth/strava?userId=" + encodeURIComponent(USER_ID);
             return;
@@ -205,26 +376,25 @@
         } catch (err) {
           console.error(err);
           addMessage("הייתה תקלה בתקשורת עם השרת.", "bot");
+        } finally {
+          sendBtn.disabled = false;
         }
       }
 
       sendBtn.addEventListener("click", sendMessage);
+
       inputEl.addEventListener("keydown", (e) => {
         if (e.key === "Enter") {
+          e.preventDefault();
           sendMessage();
         }
       });
 
-      // כפתור סטרבה – חיבור יזום, בלי קשר לאונבורדינג
-      stravaBtn.addEventListener("click", () => {
-        window.location.href =
-          "/auth/strava?userId=" + encodeURIComponent(USER_ID);
-      });
-
-      // הודעת פתיחה
+      // הודעת פתיחה בסגנון GPT
       addMessage(
-        "היי, אני LOEW. בוא נבנה לך פרופיל קצר – ואז נתכנן אימונים.\n" +
-          "תכתוב לי 'היי' או כל דבר בשביל להתחיל.",
+        "היי, אני LOEW.\n" +
+          "בוא נבנה לך פרופיל קצר ואז אתן לך אימונים מדויקים, פשוטים ומותאמים לזמן שלך.\n" +
+          "תכתוב לי 'היי' או כל דבר אחר בשביל להתחיל.",
         "bot"
       );
     </script>
