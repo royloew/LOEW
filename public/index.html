@@ -327,7 +327,7 @@
       </div>
     </div>
 
-    <script>
+ <script>
   // ===== USER ID LOGIC =====
   function getUserIdFromUrlOrStorage() {
     const params = new URLSearchParams(window.location.search);
@@ -364,13 +364,11 @@
     row.className = "message-row " + (who === "user" ? "user" : "assistant");
 
     const avatar = document.createElement("div");
-    avatar.className =
-      "avatar " + (who === "user" ? "user" : "assistant");
+    avatar.className = "avatar " + (who === "user" ? "user" : "assistant");
     avatar.textContent = who === "user" ? "אני" : "L";
 
     const bubble = document.createElement("div");
-    bubble.className =
-      "bubble " + (who === "user" ? "user" : "assistant");
+    bubble.className = "bubble " + (who === "user" ? "user" : "assistant");
     bubble.textContent = text;
 
     row.appendChild(avatar);
@@ -379,19 +377,16 @@
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
-  // הודעה שמכילה לינק (HTML)
   function addHtmlMessage(html, who) {
     const row = document.createElement("div");
     row.className = "message-row " + (who === "user" ? "user" : "assistant");
 
     const avatar = document.createElement("div");
-    avatar.className =
-      "avatar " + (who === "user" ? "user" : "assistant");
+    avatar.className = "avatar " + (who === "user" ? "user" : "assistant");
     avatar.textContent = who === "user" ? "אני" : "L";
 
     const bubble = document.createElement("div");
-    bubble.className =
-      "bubble " + (who === "user" ? "user" : "assistant");
+    bubble.className = "bubble " + (who === "user" ? "user" : "assistant");
     bubble.innerHTML = html;
 
     row.appendChild(avatar);
@@ -455,14 +450,11 @@
     inputEl.focus();
     sendBtn.disabled = true;
 
-    // אם אין סטרבה וכל מה שנכתב זה "כן" → ננסה גם רידיירקט אוטומטי
+    // טריגר לחיבור סטרבה כשכותבים "כן"
     const normalized = text.trim().toLowerCase().replace(/[.!?…]/g, "");
     if (!hasStrava && (normalized === "כן" || normalized === "yes" || normalized === "y")) {
-      const url =
-        "https://loew.onrender.com/auth/strava?userId=" +
-        encodeURIComponent(USER_ID);
+      const url = "/auth/strava?userId=" + encodeURIComponent(USER_ID);
       window.location.href = url;
-      // אם משום מה הדפדפן לא עושה redirect, נשחרר את הכפתור
       setTimeout(() => {
         sendBtn.disabled = false;
       }, 1500);
@@ -512,14 +504,12 @@
         "assistant"
       );
 
-      const stravaUrl =
-        "https://loew.onrender.com/auth/strava?userId=" +
-        encodeURIComponent(USER_ID);
+      const stravaUrl = "/auth/strava?userId=" + encodeURIComponent(USER_ID);
 
       addHtmlMessage(
-        "או שפשוט <a href=\"" +
+        'או שפשוט <a href="' +
           stravaUrl +
-          "\" style=\"color:#22c55e; text-decoration:underline;\">לחץ כאן להתחברות לסטרבה</a>.",
+          '" style="color:#22c55e; text-decoration:underline;">לחץ כאן להתחברות לסטרבה</a>.',
         "assistant"
       );
     } else {
@@ -531,6 +521,7 @@
     }
   })();
 </script>
+
 
   </body>
 </html>
