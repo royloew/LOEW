@@ -1,11 +1,14 @@
+// server.js – LOEW backend (Render-ready) with Strava token persistence + refresh
+
 import express from "express";
 import cors from "cors";
+import bodyParser from "body-parser";
+import fetch from "node-fetch";
 import path from "path";
 import dotenv from "dotenv";
 import { fileURLToPath } from "url";
-import fetch from "node-fetch";
-
 import OpenAI from "openai";
+import Database from "better-sqlite3";
 
 import { StravaClient } from "./stravaClient.js";
 import { StravaIngestService } from "./stravaIngest.js";
@@ -23,37 +26,180 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(express.json());
+app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, "public")));
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-/* ---------------- CONSTANTS & IN-MEMORY STATE ---------------- */
+/* ---------------- STRAVA TOKEN DB (PERSISTENCE) ---------------- */
 
-// ברירת מחדל אם הלקוח לא שולח userId
-const DEFAULT_USER_ID = "loew_single_user";
+const tokenDb = new Database("loew.db");
+tokenDb.pragma("journal_mode = WAL");
 
-// מפה לזיכרון־זמני של userId -> טוקני סטרבה
-// (משמשת גם ל-snapshot המהיר; הלוגיקה העמוקה יותר יושבת ב-DB דרך dbImpl)
+tokenDb.exec(`
+  CREATE TABLE IF NOT EXISTS strava_tokens (
+    user_id       TEXT PRIMARY KEY,
+    access_token  TEXT,
+    refresh_token TEXT,
+    expires_at    INTEGER,
+    token_type    TEXT,
+    scope         TEXT,
+    raw_json      TEXT,
+    created_at    TEXT DEFAULT (datetime('now')),
+    updated_at    TEXT DEFAULT (datetime('now'))
+  );
+`);
+
+function saveStravaTokensToDb(userId, tokenJson) {
+  const {
+    access_token,
+    refresh_token,
+    expires_at,
+    token_type,
+    scope,
+  } = tokenJson || {};
+
+  const raw_json = JSON.stringify(tokenJson || {});
+
+  tokenDb
+    .prepare(
+      `
+      INSERT INTO strava_tokens (user_id, access_token, refresh_token, expires_at, token_type, scope, raw_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+      ON CONFLICT(user_id) DO UPDATE SET
+        access_token  = excluded.access_token,
+        refresh_token = excluded.refresh_token,
+        expires_at    = excluded.expires_at,
+        token_type    = excluded.token_type,
+        scope         = excluded.scope,
+        raw_json      = excluded.raw_json,
+        updated_at    = datetime('now')
+    `
+    )
+    .run(
+      userId,
+      access_token || null,
+      refresh_token || null,
+      expires_at || null,
+      token_type || null,
+      Array.isArray(scope) ? scope.join(",") : scope || null,
+      raw_json
+    );
+}
+
+function loadStravaTokensFromDb(userId) {
+  const row = tokenDb
+    .prepare(`SELECT * FROM strava_tokens WHERE user_id = ?`)
+    .get(userId);
+  if (!row) return null;
+
+  let raw = {};
+  if (row.raw_json) {
+    try {
+      raw = JSON.parse(row.raw_json);
+    } catch {
+      raw = {};
+    }
+  }
+
+  return {
+    ...raw,
+    access_token: row.access_token,
+    refresh_token: row.refresh_token,
+    expires_at: row.expires_at,
+  };
+}
+
+/* ---------------- IN-MEMORY CACHE FOR TOKENS ---------------- */
+
 const stravaTokensByUser = new Map();
+
+/**
+ * שומר במפה + DB
+ */
+function setStravaTokens(userId, tokenJson) {
+  if (!tokenJson) return;
+  stravaTokensByUser.set(userId, tokenJson);
+  saveStravaTokensToDb(userId, tokenJson);
+}
+
+/**
+ * רענון טוקן סטרבה באמצעות refresh_token
+ */
+async function refreshStravaTokens(oldTokens) {
+  if (!oldTokens || !oldTokens.refresh_token) {
+    throw new Error("No refresh_token available for Strava");
+  }
+
+  const resp = await fetch("https://www.strava.com/oauth/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      client_id: process.env.STRAVA_CLIENT_ID,
+      client_secret: process.env.STRAVA_CLIENT_SECRET,
+      grant_type: "refresh_token",
+      refresh_token: oldTokens.refresh_token,
+    }),
+  });
+
+  const json = await resp.json();
+  if (!resp.ok) {
+    console.error("Strava refresh_token error:", json);
+    throw new Error("Failed to refresh Strava token");
+  }
+
+  return json; // כולל access_token חדש, refresh_token חדש, expires_at וכו'
+}
+
+/**
+ * פונקציה שה-StravaClient יקבל:
+ *  - טוענת טוקנים מהזיכרון / DB
+ *  - אם פג תוקף → מרעננת ומעדכנת DB + cache
+ *  - מחזירה access_token תקף
+ */
+async function getAccessTokenForUser(userId) {
+  let tokens = stravaTokensByUser.get(userId);
+
+  if (!tokens) {
+    tokens = loadStravaTokensFromDb(userId);
+    if (!tokens) {
+      throw new Error("No Strava tokens for this user: " + userId);
+    }
+    stravaTokensByUser.set(userId, tokens);
+  }
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const margin = 60;
+
+  if (tokens.expires_at && tokens.expires_at - margin <= nowSec) {
+    // צריך לרענן
+    console.log("Refreshing Strava token for user:", userId);
+    const refreshed = await refreshStravaTokens(tokens);
+    tokens = refreshed;
+    setStravaTokens(userId, tokens);
+  }
+
+  if (!tokens.access_token) {
+    throw new Error("No access_token in Strava tokens for user: " + userId);
+  }
+
+  return tokens.access_token;
+}
 
 /* ---------------- STRAVA SNAPSHOT HELPER ---------------- */
 
 /**
- * Builder מהיר ל-snapshot
- * משתמש ישירות ב-Strava API על בסיס access_token.
+ * Builder מהיר ל-snapshot מ-API של Strava.
+ * כאן אנחנו מקבלים אובייקט tokens (או לפחות access_token בפנים).
  *
  * מחזיר:
- * - training_summary (90 יום)
- * - hr_max_from_data / hr_threshold_from_data
- * - ftp_models (מ-Ftp של Strava)
- * - וגם:
- *   - latest_activity
- *   - latest_activity_date
- *   - latest_activity_is_today
- *   - recent_activities (רשימת רכיבות אחרונות)
+ *  - training_summary
+ *  - hr_max_from_data / hr_threshold_from_data
+ *  - ftp_models (מבוסס FTP של סטרבה)
+ *  - latest_activity, latest_activity_date, latest_activity_is_today
+ *  - recent_activities (רשימת רכיבות אחרונות)
  */
 async function buildStravaSnapshot(tokens) {
   if (!tokens || !tokens.access_token) return null;
@@ -73,7 +219,7 @@ async function buildStravaSnapshot(tokens) {
     }
     const athlete = await athleteResp.json();
 
-    // פעילויות אחרונות
+    // פעילויות
     const actsResp = await fetch(
       "https://www.strava.com/api/v3/athlete/activities?per_page=200",
       { headers }
@@ -84,24 +230,16 @@ async function buildStravaSnapshot(tokens) {
     }
     const acts = await actsResp.json();
 
-    // מיון מהחדשה לישנה
-    const sortedActs = (acts || [])
-      .slice()
-      .sort(
-        (a, b) => new Date(b.start_date).getTime() - new Date(a.start_date).getTime()
-      );
-
     const nowMs = Date.now();
     const days90Ms = 90 * 24 * 60 * 60 * 1000;
     const cutoff = nowMs - days90Ms;
 
-    const acts90 = sortedActs.filter((a) => {
+    const acts90 = (acts || []).filter((a) => {
       const t = new Date(a.start_date).getTime();
       return t >= cutoff;
     });
 
-    /* ----- HR max & threshold מה-90 יום ----- */
-
+    // ----- HR max & threshold -----
     let hrMaxFromData = null;
     for (const a of acts90) {
       if (a.has_heartrate && typeof a.max_heartrate === "number") {
@@ -116,8 +254,7 @@ async function buildStravaSnapshot(tokens) {
       hrThresholdFromData = Math.round(hrMaxFromData * 0.9);
     }
 
-    /* ----- סיכום נפח 90 יום ----- */
-
+    // ----- סיכום נפח 90 יום -----
     const totalSeconds = acts90.reduce(
       (sum, a) => sum + (a.moving_time || 0),
       0
@@ -141,8 +278,7 @@ async function buildStravaSnapshot(tokens) {
       avgHoursPerWeek,
     };
 
-    /* ----- FTP בסיסי על סמך athlete.ftp ----- */
-
+    // ----- FTP בסיסי -----
     const ftpFromStrava =
       typeof athlete.ftp === "number" ? athlete.ftp : null;
 
@@ -151,11 +287,8 @@ async function buildStravaSnapshot(tokens) {
     let ftpFrom3min = null;
 
     if (ftpFromStrava) {
-      // מודל 20 דקות – כאן פשוט שווה ל-FTP מסטרבה
       ftpFrom20min = ftpFromStrava;
-      // מודל 8 דקות (קצת יותר גבוה)
       ftpFrom8min = Math.round(ftpFromStrava * 1.04);
-      // מודל 3 דקות (עוד קצת יותר גבוה)
       ftpFrom3min = Math.round(ftpFromStrava * 1.08);
     }
 
@@ -165,9 +298,15 @@ async function buildStravaSnapshot(tokens) {
       from_3min: ftpFrom3min,
     };
 
-    const ftpFromStreams = null; // לוגיקה עמוקה יותר ב-dbSqlite/StravaIngest
+    const ftpFromStreams = null; // הלוגיקה המלאה יושבת ב-dbSqlite/StravaIngest
 
-    /* ----- הרכיבה האחרונה + רכיבות אחרונות ----- */
+    // ----- הרכיבה האחרונה + רשימת רכיבות -----
+
+    const sortedActs = (acts || [])
+      .slice()
+      .sort(
+        (a, b) => new Date(b.start_date).getTime() - new Date(a.start_date).getTime()
+      );
 
     let latestActivity = null;
     let latestActivityDate = null;
@@ -189,7 +328,7 @@ async function buildStravaSnapshot(tokens) {
       latestActivity = {
         id: latest.id,
         name: latest.name,
-        start_date: latest.start_date, // UTC from Strava
+        start_date: latest.start_date,
         distance_km: latest.distance ? latest.distance / 1000 : null,
         moving_time_s: latest.moving_time || null,
         total_elevation_m: latest.total_elevation_gain || null,
@@ -204,7 +343,6 @@ async function buildStravaSnapshot(tokens) {
       };
     }
 
-    // רשימת רכיבות אחרונות (נגיד 30) – לשימוש בניתוח לפי תאריך
     const recentActivities = sortedActs.slice(0, 30).map((a) => ({
       id: a.id,
       name: a.name,
@@ -214,7 +352,8 @@ async function buildStravaSnapshot(tokens) {
       total_elevation_m: a.total_elevation_gain || null,
       average_power:
         typeof a.average_watts === "number" ? a.average_watts : null,
-      max_power: typeof a.max_watts === "number" ? a.max_watts : null,
+      max_power:
+        typeof a.max_watts === "number" ? a.max_watts : null,
       average_heartrate: a.average_heartrate || null,
       max_heartrate: a.max_heartrate || null,
       has_heartrate: !!a.has_heartrate,
@@ -234,7 +373,6 @@ async function buildStravaSnapshot(tokens) {
       ftp_from_streams: ftpFromStreams,
       ftp_models: ftpModels,
 
-      // שדות חדשים:
       latest_activity: latestActivity,
       latest_activity_date: latestActivityDate,
       latest_activity_is_today: latestActivityIsToday,
@@ -246,36 +384,28 @@ async function buildStravaSnapshot(tokens) {
   }
 }
 
-/* ---------------- DB + STRAVA CLIENT + INGEST + ONBOARDING ---------------- */
+/* ---------------- DB IMPL + STRAVA CLIENT + INGEST + ONBOARDING ---------------- */
 
-// יצירת שכבת ה־DB (SQLite דרך dbSqlite.js)
-// מעבירים את getStravaTokens כדי שפונקציות עמוקות יותר יוכלו להשתמש בטוקנים מהזיכרון
 const dbImpl = createDbImpl({
+  // dbSqlite עדיין משתמש ב-getStravaTokens (למשל ל-computeHrAndFtpFromStrava)
+  // כאן נשאיר את זה כמפה בזיכרון – כי אחרי /exchange_token אנחנו ממלאים אותה.
   getStravaTokens: (userId) => stravaTokensByUser.get(userId) || null,
   buildStravaSnapshot,
 });
 
-// Strava client – מקבל access_token לכל userId מתוך ה-DB
-const stravaClient = new StravaClient(async (userId) => {
-  const tokens = await dbImpl.getStravaTokens(userId);
-  if (!tokens || !tokens.access_token) {
-    throw new Error("No Strava access token for user " + userId);
-  }
-  return tokens.access_token;
-});
+// Strava client – עכשיו מקבל פונקציה שמטפלת בטוקן + רענון + DB
+const stravaClient = new StravaClient(getAccessTokenForUser);
 
-// שירות ingest – אחראי להביא פעילויות, סטרימים, power curves וכו'
+// שירות ingest – אחראי למשוך פעילויות וסטראימים ולעדכן DB
 const stravaIngest = new StravaIngestService(stravaClient);
 
 // מנוע אונבורדינג
 const onboardingEngine = new OnboardingEngine(dbImpl);
 
-/* ---------------- CONVERSATION MEMORY + SYSTEM PROMPT ---------------- */
+/* ---------------- GENERAL CONSTANTS ---------------- */
 
-// זיכרון שיחה כפי שקורה ב-ChatGPT, פר userId
-const conversations = new Map();
+const DEFAULT_USER_ID = "loew_single_user";
 
-// System prompt מאוחד – גם מאמן אופניים (LOEW) וגם עוזר כללי
 const LOEW_ASSISTANT_SYSTEM_PROMPT = `
 You are LOEW, a world-class cycling coach, AND also a general-purpose AI assistant (like ChatGPT).
 
@@ -318,14 +448,13 @@ then:
   (ignore time-of-day). If found, base your analysis on its metrics
   (distance_km, moving_time_s, total_elevation_m, average_power, max_power,
    average_heartrate, max_heartrate). If not found, say you don't have that ride
-  and explain which date range you do have Strava data for.
+   and explain which date range you do have Strava data for.
 
 When the user asks about anything else (code, emails, work, explanations, relationships, life questions, etc.):
 - Behave like a normal, smart, general-purpose assistant.
 - Still keep answers concise, helpful, and well-structured.
 `;
 
-// זיהוי גס אם השאלה קשורה לאופניים/אימונים
 function isCyclingRelated(message) {
   const text = (message || "").toLowerCase();
 
@@ -367,13 +496,8 @@ function isCyclingRelated(message) {
   return keywords.some((kw) => text.includes(kw));
 }
 
-/* ---------------- STRAVA AUTH (MULTI USER) ---------------- */
+/* ---------------- STRAVA AUTH ---------------- */
 
-/**
- * התחלת OAuth ל-Strava.
- * הקליינט צריך לקרוא:
- *   GET /auth/strava?userId=<some-user-id>
- */
 app.get("/auth/strava", (req, res) => {
   const clientId = process.env.STRAVA_CLIENT_ID;
   const redirectUri = process.env.STRAVA_REDIRECT_URI;
@@ -396,14 +520,10 @@ app.get("/auth/strava", (req, res) => {
   res.redirect(url);
 });
 
-/**
- * callback מ-Strava אחרי אישור.
- * כאן אנחנו קוראים לטוקנים ושומרים אותם לפי userId.
- */
 app.get("/exchange_token", async (req, res) => {
   try {
     const code = req.query.code;
-    const state = req.query.state; // ה-userId שחזר מ-Strava
+    const state = req.query.state;
     const userId = state || DEFAULT_USER_ID;
 
     if (!code) {
@@ -428,14 +548,13 @@ app.get("/exchange_token", async (req, res) => {
       return res.status(500).send("Strava auth failed");
     }
 
-    // שמירת הטוקנים במפה בזיכרון
-    stravaTokensByUser.set(userId, json);
+    // שמירה במפה + DB
+    setStravaTokens(userId, json);
     console.log("Strava tokens saved for user:", userId);
 
-    // עדכון מנוע האונבורדינג (שבתוכו נקראת computeHrAndFtpFromStrava וכו')
+    // עדכון מנוע האונבורדינג (יגרור גם ingest ו-computeHrAndFtpFromStrava)
     await onboardingEngine.handleStravaConnected(userId);
 
-    // חזרה לפרונט
     return res.redirect(
       `/?strava=connected&userId=${encodeURIComponent(userId)}`
     );
@@ -447,22 +566,24 @@ app.get("/exchange_token", async (req, res) => {
 
 /* ---------------- STRAVA SNAPSHOT API ---------------- */
 
-/**
- * endpoint מהיר להחזרת snapshot מ-Strava
- * הקליינט יכול לקרוא:
- *   POST /api/loew/strava-snapshot  { userId?: string }
- */
 app.post("/api/loew/strava-snapshot", async (req, res) => {
   try {
     const { userId: bodyUserId } = req.body || {};
     const userId = bodyUserId || DEFAULT_USER_ID;
 
-    const tokens = stravaTokensByUser.get(userId);
+    let tokens = stravaTokensByUser.get(userId);
     if (!tokens) {
-      return res.status(400).json({
-        ok: false,
-        error: "No Strava tokens for this user. Please connect Strava first.",
-      });
+      // ננסה לטעון מה-DB
+      const fromDb = loadStravaTokensFromDb(userId);
+      if (!fromDb) {
+        return res.status(400).json({
+          ok: false,
+          error:
+            "No Strava tokens for this user. Please connect Strava first.",
+        });
+      }
+      tokens = fromDb;
+      stravaTokensByUser.set(userId, tokens);
     }
 
     const snapshot = await buildStravaSnapshot(tokens);
@@ -483,10 +604,6 @@ app.post("/api/loew/strava-snapshot", async (req, res) => {
 
 /* ---------------- STRAVA WEBHOOKS ---------------- */
 
-/**
- * אימות מנוי webhook מול סטרבה (Verification Challenge)
- * Strava שולחת GET עם hub.mode, hub.challenge, hub.verify_token
- */
 app.get("/strava/webhook", (req, res) => {
   try {
     const challenge = req.query["hub.challenge"];
@@ -514,14 +631,10 @@ app.get("/strava/webhook", (req, res) => {
   }
 });
 
-/**
- * קבלת אירועים מסטרבה (יצירת פעילות חדשה וכו')
- */
 app.post("/strava/webhook", async (req, res) => {
   const event = req.body || {};
   console.log("Strava webhook event:", JSON.stringify(event));
 
-  // סטרבה מצפה ל-200 מהר – מטפלים באירוע "ברקע"
   res.status(200).json({ ok: true });
 
   try {
@@ -533,14 +646,11 @@ app.post("/strava/webhook", async (req, res) => {
         `Webhook: new activity ${activityId} from athlete ${athleteId}`
       );
 
-      // כרגע: משתמש יחיד (עד שלא נוסיף מיפוי athleteId -> userId)
-      const userId = DEFAULT_USER_ID;
+      const userId = DEFAULT_USER_ID; // אם תרצה: למפות athleteId -> userId בטבלה
 
       await stravaIngest.ingestActivity(userId, activityId);
       console.log("Ingested via webhook:", activityId);
 
-      // אופציונלי: להפעיל גם computeHrAndFtpFromStrava(userId) כאן
-      // כדי לעדכן FTP/HR אחרי כל פעילות חדשה
       try {
         const metrics = await dbImpl.computeHrAndFtpFromStrava(userId);
         console.log("Recomputed HR/FTP from webhook:", {
@@ -562,11 +672,13 @@ app.post("/strava/webhook", async (req, res) => {
       );
     }
   } catch (err) {
-    console.error("Strava webhook handler error:", err);
+    console.error("Webhook error:", err);
   }
 });
 
-/* ---------------- UNIFIED CHAT – LOEW + GENERAL ASSISTANT ---------------- */
+/* ---------------- CHAT API (LOEW + GENERAL ASSISTANT) ---------------- */
+
+const conversations = new Map();
 
 app.post("/api/loew/chat", async (req, res) => {
   try {
@@ -578,12 +690,10 @@ app.post("/api/loew/chat", async (req, res) => {
     const userId = bodyUserId || DEFAULT_USER_ID;
     const text = message || "";
 
-    // סטטוס אונבורדינג
     const obState = await dbImpl.getOnboarding(userId);
     const onboardingDone = obState && obState.onboardingCompleted;
     const cyclingRelated = isCyclingRelated(text);
 
-    // אם עוד לא סיימנו אונבורדינג והשאלה קשורה לאימונים – משתמשים במנוע האונבורדינג
     if (!onboardingDone && cyclingRelated) {
       const reply = await onboardingEngine.handleMessage(userId, text);
 
@@ -596,7 +706,6 @@ app.post("/api/loew/chat", async (req, res) => {
       });
     }
 
-    // אחרי אונבורדינג, או אם הבקשה לא קשורה לאופניים → עוזר מאוחד (LOEW + כללי)
     const trainingParams = await dbImpl.getTrainingParams(userId);
     const weeklyTemplate = await dbImpl.getWeeklyTemplate(userId);
     const goal = await dbImpl.getActiveGoal(userId);
@@ -615,7 +724,6 @@ app.post("/api/loew/chat", async (req, res) => {
       conversations.set(userId, history);
     }
 
-    // מוסיפים את הודעת המשתמש להיסטוריה
     history.push({ role: "user", content: text });
 
     const messages = [
@@ -635,7 +743,6 @@ app.post("/api/loew/chat", async (req, res) => {
     const replyText =
       completion.choices[0]?.message?.content || "לא הצלחתי לענות כרגע.";
 
-    // מוסיפים את תשובת העוזר להיסטוריה
     history.push({ role: "assistant", content: replyText });
 
     return res.json({
