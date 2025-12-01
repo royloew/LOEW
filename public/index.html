@@ -114,20 +114,6 @@
         align-items: flex-start;
       }
 
-      .header-caption {
-        opacity: 0.65;
-        font-size: 10px;
-      }
-
-      code {
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-          "Liberation Mono", "Courier New", monospace;
-        font-size: 10px;
-        background: #020617;
-        border-radius: 999px;
-        padding: 2px 6px;
-      }
-
       /* ===== CHAT BODY ===== */
 
       .chat-body {
@@ -306,7 +292,7 @@
             <div class="title-block">
               <div class="title">LOEW – המאמן האישי שלך</div>
               <div class="subtitle">
-                צ'אט אימון חכם שמתאים את עצמו לכל רוכב בנפרד.
+                צ'אט אימון חכם שמתאים את עצמו לרוכב שמולו.
               </div>
             </div>
           </div>
@@ -314,12 +300,6 @@
             <div>
               רוכב נוכחי:
               <strong id="user-id-label"></strong>
-            </div>
-            <div class="header-caption">
-              כדי להחליף רוכב: הוסף לכתובת
-              <code>?userId=שם</code> – למשל
-              <code>?userId=roy</code>,
-              <code>?userId=ori</code>.
             </div>
           </div>
         </header>
@@ -340,15 +320,15 @@
             <button id="send-btn" class="send-btn">שלח</button>
           </div>
           <div class="small-note">
-            טיפ: אם כמה רוכבים משתמשים באותו לינק – לכל אחד כדאי userId
-            קבוע משלו.
+            אפשר להשתמש באותו לינק לכמה רוכבים – לכל אחד פשוט userId אחר
+            בכתובת.
           </div>
         </div>
       </div>
     </div>
 
     <script>
-      // ===== USER ID LOGIC (multi rider) =====
+      // ===== USER ID LOGIC =====
       function getUserIdFromUrlOrStorage() {
         const params = new URLSearchParams(window.location.search);
         let id = params.get("userId");
@@ -364,7 +344,6 @@
           return stored.trim();
         }
 
-        // ברירת מחדל – אתה (רועי)
         const fallback = "roy";
         localStorage.setItem("loew_user_id", fallback);
         return fallback;
@@ -376,10 +355,10 @@
       const inputEl = document.getElementById("input");
       const sendBtn = document.getElementById("send-btn");
       const userIdLabel = document.getElementById("user-id-label");
-
       userIdLabel.textContent = USER_ID;
 
-      // ===== UI HELPERS =====
+      let hasStrava = false;
+      let initialSnapshot = null;
 
       function addMessage(text, who) {
         const row = document.createElement("div");
@@ -397,12 +376,29 @@
 
         row.appendChild(avatar);
         row.appendChild(bubble);
-
         messagesEl.appendChild(row);
         messagesEl.scrollTop = messagesEl.scrollHeight;
       }
 
-      // ===== NETWORK =====
+      async function fetchSnapshotOnce() {
+        try {
+          const res = await fetch("/api/loew/strava-snapshot", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ userId: USER_ID }),
+          });
+          const data = await res.json();
+          if (data.ok) {
+            hasStrava = true;
+            initialSnapshot = data.snapshot;
+          } else {
+            hasStrava = false;
+          }
+        } catch (err) {
+          console.warn("snapshot init error", err);
+          hasStrava = false;
+        }
+      }
 
       async function fetchSnapshot() {
         try {
@@ -411,9 +407,9 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ userId: USER_ID }),
           });
-
           const data = await res.json();
           if (data.ok) {
+            hasStrava = true;
             return data.snapshot;
           }
         } catch (err) {
@@ -432,11 +428,8 @@
             snapshot: snapshot,
           }),
         });
-
         return res.json();
       }
-
-      // ===== MAIN SEND LOGIC =====
 
       async function sendMessage() {
         const text = inputEl.value.trim();
@@ -447,9 +440,9 @@
         inputEl.focus();
         sendBtn.disabled = true;
 
-        // 🔁 אם המשתמש ענה "כן" (או yes) לשאלה על סטרבה – נבצע redirect
-        const normalized = text.trim().toLowerCase();
-        if (normalized === "כן" || normalized === "yes" || normalized === "y") {
+        // אם אין סטרבה למשתמש הזה וכל מה שהוא כתב זה "כן" → חיבור לסטרבה
+        const normalized = text.trim().toLowerCase().replace(/[.!?…]/g, "");
+        if (!hasStrava && (normalized === "כן" || normalized === "yes" || normalized === "y")) {
           window.location.href =
             "/auth/strava?userId=" + encodeURIComponent(USER_ID);
           return;
@@ -479,7 +472,6 @@
       }
 
       sendBtn.addEventListener("click", sendMessage);
-
       inputEl.addEventListener("keydown", (e) => {
         if (e.key === "Enter") {
           e.preventDefault();
@@ -487,18 +479,25 @@
         }
       });
 
-      // ===== INITIAL MESSAGE =====
+      // ===== INIT =====
+      (async function init() {
+        await fetchSnapshotOnce();
 
-      addMessage(
-        "היי, אני LOEW.\n" +
-          "אתה כרגע מחובר כ-userId: " +
-          USER_ID +
-          ".\n\n" +
-          "אם תרצה רוכב אחר, תוסיף ?userId=שם לכתובת למעלה.\n" +
-          "למשל: ?userId=ori, ?userId=yoram.\n\n" +
-          "תכתוב לי 'היי', 'מה האימון שלי היום?', או כל דבר אחר כדי להתחיל.",
-        "assistant"
-      );
+        if (!hasStrava) {
+          addMessage(
+            "היי, אני LOEW.\n" +
+              "אני רואה שעוד לא חיברת חשבון Strava.\n" +
+              "יש לך סטרבה שתרצה לחבר? תכתוב 'כן' כדי להתחבר, או 'לא' אם תרצה להמשיך בלי.",
+            "assistant"
+          );
+        } else {
+          addMessage(
+            "היי, אני LOEW.\n" +
+              "יש לי נתונים מסטרבה עבורך. אתה יכול לשאול על האימון האחרון, לבקש תוכנית אימונים, או כל דבר אחר.",
+            "assistant"
+          );
+        }
+      })();
     </script>
   </body>
 </html>
