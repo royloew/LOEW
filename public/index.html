@@ -337,33 +337,19 @@
 
       // ===== CHAT API =====
 
-      async function callChatAPI(text, snapshot) {
+async function callChatAPI(text /*, snapshot */) {
   const res = await fetch("/api/loew/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       userId: USER_ID,
       message: text,
-      snapshot: snapshot,
+      // snapshot: snapshot, // לא שולחים יותר
     }),
   });
-
-  const contentType = res.headers.get("content-type") || "";
-
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "");
-    throw new Error(`HTTP ${res.status}: ${errText.slice(0, 200)}`);
-  }
-
-  if (!contentType.includes("application/json")) {
-    const errText = await res.text().catch(() => "");
-    throw new Error(
-      "Non-JSON response from server: " + errText.slice(0, 200)
-    );
-  }
-
   return res.json();
 }
+
 
 
       async function sendMessage() {
@@ -393,10 +379,10 @@
         }
 
         // בכל הודעה נביא snapshot עדכני ונעביר לשרת
-        let snapshot = await fetchSnapshot();
+        // לא צריך snapshot בשביל הצ'אט עצמו
+      try {
+        const data = await callChatAPI(text);
 
-        try {
-          const data = await callChatAPI(text, snapshot);
 
           if (!data.ok && data.error) {
             addMessage("bot", "שגיאה מהשרת: " + data.error);
