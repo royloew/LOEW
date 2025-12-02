@@ -9,50 +9,61 @@ export class OnboardingEngine {
   /**
    * טוען State מה-DB, או מחזיר State התחלתי אם אין עדיין
    */
-  async _loadState(userId) {
+    async _loadState(userId) {
     const existing = await this.db.getOnboarding(userId);
-    if (existing && existing.state_json) {
-      try {
-        return JSON.parse(existing.state_json);
-      } catch (err) {
-        console.error("Failed parsing onboarding state JSON, starting fresh", err);
-      }
+
+    if (existing && typeof existing === "object") {
+      // התאמת ה־state הקיים למה שהאונבורדר מצפה לו
+      return {
+        userId: existing.userId || userId,
+        stage: existing.stage || "intro",
+        hasStrava: !!existing.hasStrava,
+        answers: existing.answers || {},
+        onboardingDone: !!(existing.onboardingDone || existing.onboardingCompleted),
+        createdAt: existing.createdAt || new Date().toISOString(),
+        updatedAt: existing.updatedAt || new Date().toISOString(),
+        stravaConnected: !!existing.stravaConnected,
+        stravaMetrics: existing.stravaMetrics || null,
+        minRideCandidates: existing.minRideCandidates || null,
+      };
     }
-    // State התחלתי
+
+    const nowIso = new Date().toISOString();
     return {
       userId,
       stage: "intro",
+      hasStrava: false,
       answers: {},
       onboardingDone: false,
-      personalBasicsCompleted: false,
-      ftpConfirmed: false,
-      hrConfirmed: false,
-      minRideMinutesConfirmed: false,
-      goalConfirmed: false,
+      createdAt: nowIso,
+      updatedAt: nowIso,
       stravaConnected: false,
       stravaMetrics: null,
       minRideCandidates: null,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
     };
   }
+
 
   /**
    * שומר State ל-DB
    */
-  async _saveState(state) {
+   async _saveState(state) {
     state.updatedAt = new Date().toISOString();
-    await this.db.saveOnboardingState(state.userId, state);
+    // ה־DB מצפה לאובייקט עם userId ושאר השדות
+    await this.db.saveOnboarding(state);
   }
+
 
   /**
    * מבטיח שיש לנו training_params כלשהו למשתמש
    */
-  async _ensureTrainingParams(userId) {
+    async _ensureTrainingParams(userId) {
     let tp = await this.db.getTrainingParams(userId);
+
     if (!tp) {
+      const nowIso = new Date().toISOString();
       tp = {
-        user_id: userId,
+        userId,              // זה השדה שה־DB מחפש כששומרים
         age: null,
         weight_kg: null,
         height_cm: null,
@@ -61,13 +72,17 @@ export class OnboardingEngine {
         hr_threshold: null,
         min_ride_minutes: null,
         goal: null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        created_at: nowIso,
+        updated_at: nowIso,
       };
-      await this.db.saveTrainingParams(tp);
+    } else if (!tp.userId) {
+      // תאימות לאחור – אם היה רק user_id או בכלל לא
+      tp.userId = userId;
     }
+
     return tp;
   }
+
 
   /**
    * עוזר: מנקה טקסט מהודעת משתמש
@@ -565,6 +580,40 @@ export class OnboardingEngine {
       done: false,
     };
   }
+
+    /**
+   * נקרא אחרי שהחיבור לסטרבה הצליח וה־server סיים computeHrAndFtpFromStrava.
+   * המטרה: לעדכן state כדי שההודעה הבאה בצ'אט תציג סיכום קצר.
+   */
+  async handleStravaConnected(userId) {
+    const state = await this._loadState(userId);
+
+    // נסמן שיש סטרבה
+    state.hasStrava = true;
+    state.stravaConnected = true;
+
+    // ננסה להביא שוב את המטריקות מה־DB (פועל רק על loew.db, לא על ה־API של סטרבה)
+    try {
+      const metrics = await this.db.computeHrAndFtpFromStrava(userId);
+      if (metrics) {
+        state.stravaMetrics = metrics;
+      }
+    } catch (err) {
+      console.error("handleStravaConnected: computeHrAndFtpFromStrava failed", err);
+    }
+
+    // אם היינו בשלב "מחכה ליבוא" נעבור לשלב הסיכום
+    if (
+      state.stage === "wait_for_strava_import" ||
+      state.stage === "ask_strava_connect" ||
+      state.stage === "intro"
+    ) {
+      state.stage = "post_strava_summary";
+    }
+
+    await this._saveState(state);
+  }
+
 
   /**
    * טיפול ב-FTP מתוך סטרבה
