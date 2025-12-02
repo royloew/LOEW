@@ -100,15 +100,20 @@ export async function createDbImpl() {
   await init();
 
   // ===== USERS =====
-  async function ensureUser(userId) {
-  const now = Math.floor(Date.now() / 1000);
+ async function ensureUser(userId) {
+  const emptyJson = {
+    profile: {},
+    onboarding: { stage: "intro" },
+  };
 
   await run(
-    `INSERT OR IGNORE INTO users (user_id, json, created_at)
-     VALUES (?, ?, ?)`,
-    [userId, "{}", now]
+    `INSERT INTO users (user_id, json, created_at)
+     VALUES (?, ?, strftime('%s','now'))
+     ON CONFLICT(user_id) DO NOTHING`,
+    [userId, JSON.stringify(emptyJson)]
   );
 }
+
 
 
   // ===== ONBOARDING STATE =====
