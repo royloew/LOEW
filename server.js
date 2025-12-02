@@ -766,12 +766,12 @@ app.post("/api/loew/chat", async (req, res) => {
     const userId = bodyUserId || DEFAULT_USER_ID;
     const text = message || "";
 
+    // 1. לבדוק סטטוס אונבורדינג
     const obState = await dbImpl.getOnboarding(userId);
     const onboardingDone = obState && obState.onboardingCompleted;
-    const cyclingRelated = isCyclingRelated(text);
 
-    // שלב אונבורדינג – אם עוד לא הושלם ויש שאלה/בקשה שקשורה לאופניים
-    if (!onboardingDone && cyclingRelated) {
+    // 2. אם האונבורדינג עדיין לא הושלם – כל הודעה הולכת למנוע אונבורדינג
+    if (!onboardingDone) {
       const reply = await onboardingEngine.handleMessage(userId, text);
 
       return res.json({
@@ -783,6 +783,7 @@ app.post("/api/loew/chat", async (req, res) => {
       });
     }
 
+    // 3. מכאן והלאה – משתמש "onboarded": אפשר להשתמש ב־snapshot, FTP, מטרות וכו'
     const trainingParams = await dbImpl.getTrainingParams(userId);
     const weeklyTemplate = await dbImpl.getWeeklyTemplate(userId);
     const goal = await dbImpl.getActiveGoal(userId);
@@ -830,6 +831,7 @@ app.post("/api/loew/chat", async (req, res) => {
       .json({ ok: false, error: "Chat failed on server" });
   }
 });
+
 
 /* ---------------- START SERVER ---------------- */
 
