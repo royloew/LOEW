@@ -183,9 +183,10 @@ app.get("/exchange_token", async (req, res) => {
     });
 
     // לא מבצעים כאן אינג'סט מלא – זה יעשה ע"י מנוע האונבורדינג בשיחה הראשונה אחרי ההתחברות
-    const redirectUrl = `${BASE_URL}/index.html?userId=${encodeURIComponent(
-      userId
-    )}&strava=connected`;
+    const redirectUrl = `/index.html?userId=${encodeURIComponent(
+  userId
+)}&strava=connected`;
+
     res.redirect(redirectUrl);
   } catch (err) {
     console.error("/exchange_token error:", err);
