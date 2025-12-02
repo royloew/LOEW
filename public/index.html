@@ -493,33 +493,38 @@
   });
 
   // ===== INIT =====
-  (async function init() {
-    await fetchSnapshotOnce();
+  
+(async function init() {
+  const snapshot = await fetchSnapshotOnce();
 
-    if (!hasStrava) {
-      addMessage(
-        "היי, אני LOEW.\n" +
-          "אני רואה שעוד לא חיברת חשבון Strava.\n" +
-          "יש לך סטרבה שתרצה לחבר? תכתוב 'כן' כדי להתחבר, או 'לא' אם תרצה להמשיך בלי.",
-        "assistant"
-      );
+  // אם snapshot קיים → סטרבה מחובר → פתיחה נקייה
+  if (hasStrava) {
+    addMessage(
+      "היי רועי, מה תרצה לעשות היום?\nאני זמין לשאלות כמו: מה האימון שלי, נתח לי את השבוע, עידכון נתונים ועוד.",
+      "assistant"
+    );
+    return;
+  }
 
-      const stravaUrl = "/auth/strava?userId=" + encodeURIComponent(USER_ID);
+  // אם אין סטרבה מחובר → הצעת חיבור
+  addMessage(
+    "היי, אני LOEW.\n" +
+      "אני רואה שעוד לא חיברת חשבון Strava.\n" +
+      "יש לך סטרבה שתרצה לחבר? תכתוב 'כן' כדי להתחבר, או 'לא' אם תרצה להמשיך בלי.",
+    "assistant"
+  );
 
-      addHtmlMessage(
-        'או שפשוט <a href="' +
-          stravaUrl +
-          '" style="color:#22c55e; text-decoration:underline;">לחץ כאן להתחברות לסטרבה</a>.',
-        "assistant"
-      );
-    } else {
-      addMessage(
-        "היי, אני LOEW.\n" +
-          "יש לי נתונים מסטרבה עבורך. אתה יכול לשאול על האימון האחרון, לבקש תוכנית אימונים, או כל דבר אחר.",
-        "assistant"
-      );
-    }
-  })();
+  const stravaUrl = "/auth/strava?userId=" + encodeURIComponent(USER_ID);
+
+  addHtmlMessage(
+    'או שפשוט <a href="' +
+      stravaUrl +
+      '" style="color:#22c55e; text-decoration:underline;">לחץ כאן להתחברות לסטרבה</a>.',
+    "assistant"
+  );
+})();
+
+  
 </script>
 
 
