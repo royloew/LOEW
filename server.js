@@ -15,6 +15,15 @@ import { StravaIngestService } from "./stravaIngest.js";
 import { OnboardingEngine } from "./onboardingEngine.js";
 import { createDbImpl } from "./dbSqlite.js";
 
+const CYCLING_TYPES = [
+  "Ride",
+  "EBikeRide",
+  "VirtualRide",
+  "GravelRide",
+  "MountainBikeRide",
+];
+
+
 dotenv.config();
 
 /* ---------------- BASIC APP SETUP ---------------- */
@@ -199,191 +208,116 @@ async function getAccessTokenForUser(userId) {
  *  - recent_activities (רשימת רכיבות אחרונות)
  */
 async function buildStravaSnapshot(tokens) {
-  if (!tokens || !tokens.access_token) return null;
-
-  try {
-    const headers = {
-      Authorization: `Bearer ${tokens.access_token}`,
-    };
-
-    // אתלט
-    const athleteResp = await fetch("https://www.strava.com/api/v3/athlete", {
-      headers,
-    });
-    if (!athleteResp.ok) {
-      console.error("buildStravaSnapshot: athleteResp not ok");
-      return null;
-    }
-    const athlete = await athleteResp.json();
-
-    // פעילויות
-    const actsResp = await fetch(
-      "https://www.strava.com/api/v3/athlete/activities?per_page=200",
-      { headers }
-    );
-    if (!actsResp.ok) {
-      console.error("buildStravaSnapshot: actsResp not ok");
-      return null;
-    }
-    const acts = await actsResp.json();
-
-    const nowMs = Date.now();
-    const days90Ms = 90 * 24 * 60 * 60 * 1000;
-    const cutoff = nowMs - days90Ms;
-
-    const acts90 = (acts || []).filter((a) => {
-      const t = new Date(a.start_date).getTime();
-      return t >= cutoff;
-    });
-
-    // HR max & threshold
-    let hrMaxFromData = null;
-    for (const a of acts90) {
-      if (a.has_heartrate && typeof a.max_heartrate === "number") {
-        if (!hrMaxFromData || a.max_heartrate > hrMaxFromData) {
-          hrMaxFromData = a.max_heartrate;
-        }
-      }
-    }
-
-    let hrThresholdFromData = null;
-    if (hrMaxFromData) {
-      hrThresholdFromData = Math.round(hrMaxFromData * 0.9);
-    }
-
-    // סיכום נפח 90 יום
-    const totalSeconds = acts90.reduce(
-      (sum, a) => sum + (a.moving_time || 0),
-      0
-    );
-    const totalHours = totalSeconds / 3600;
-    const totalDistanceKm =
-      acts90.reduce((s, a) => s + (a.distance || 0), 0) / 1000;
-    const totalElevationM = acts90.reduce(
-      (s, a) => s + (a.total_elevation_gain || 0),
-      0
-    );
-
-    const daysWindow = 90;
-    const avgHoursPerWeek = (totalHours / daysWindow) * 7;
-
-    const trainingSummary = {
-      windowDays: daysWindow,
-      totalHours,
-      totalDistanceKm,
-      totalElevationM,
-      avgHoursPerWeek,
-    };
-
-    // FTP בסיסי מה-athlete
-    const ftpFromStrava =
-      typeof athlete.ftp === "number" ? athlete.ftp : null;
-
-    let ftpFrom20min = null;
-    let ftpFrom8min = null;
-    let ftpFrom3min = null;
-
-    if (ftpFromStrava) {
-      ftpFrom20min = ftpFromStrava;
-      ftpFrom8min = Math.round(ftpFromStrava * 1.04);
-      ftpFrom3min = Math.round(ftpFromStrava * 1.08);
-    }
-
-    const ftpModels = {
-      from_20min: ftpFrom20min,
-      from_8min: ftpFrom8min,
-      from_3min: ftpFrom3min,
-    };
-
-    const ftpFromStreams = null; // הלוגיקה המלאה ב-StravaIngest/dbSqlite
-
-    // הרכיבה האחרונה + רשימת רכיבות
-    const sortedActs = (acts || [])
-      .slice()
-      .sort(
-        (a, b) =>
-          new Date(b.start_date).getTime() - new Date(a.start_date).getTime()
-      );
-
-    let latestActivity = null;
-    let latestActivityDate = null;
-    let latestActivityIsToday = false;
-
-    if (sortedActs.length > 0) {
-      const latest = sortedActs[0];
-      const latestDate = new Date(latest.start_date);
-      latestActivityDate = latestDate.toISOString();
-
-      const now = new Date();
-      const sameDay =
-        latestDate.getUTCFullYear() === now.getUTCFullYear() &&
-        latestDate.getUTCMonth() === now.getUTCMonth() &&
-        latestDate.getUTCDate() === now.getUTCDate();
-
-      latestActivityIsToday = sameDay;
-
-      latestActivity = {
-        id: latest.id,
-        name: latest.name,
-        start_date: latest.start_date,
-        distance_km: latest.distance ? latest.distance / 1000 : null,
-        moving_time_s: latest.moving_time || null,
-        total_elevation_m: latest.total_elevation_gain || null,
-        average_power:
-          typeof latest.average_watts === "number"
-            ? latest.average_watts
-            : null,
-        max_power:
-          typeof latest.max_watts === "number" ? latest.max_watts : null,
-        average_heartrate: latest.average_heartrate || null,
-        max_heartrate: latest.max_heartrate || null,
-        has_heartrate: !!latest.has_heartrate,
-        type: latest.sport_type || latest.type || null,
-      };
-    }
-
-    const recentActivities = sortedActs.slice(0, 30).map((a) => ({
-      id: a.id,
-      name: a.name,
-      start_date: a.start_date,
-      distance_km: a.distance ? a.distance / 1000 : null,
-      moving_time_s: a.moving_time || null,
-      total_elevation_m: a.total_elevation_gain || null,
-      average_power:
-        typeof a.average_watts === "number" ? a.average_watts : null,
-      max_power:
-        typeof a.max_watts === "number" ? a.max_watts : null,
-      average_heartrate: a.average_heartrate || null,
-      max_heartrate: a.max_heartrate || null,
-      has_heartrate: !!a.has_heartrate,
-      type: a.sport_type || a.type || null,
-    }));
-
-    return {
-      user_from_strava: {
-        name: `${athlete.firstname || ""} ${
-          athlete.lastname || ""
-        }`.trim(),
-        weight_kg: athlete.weight || null,
-        sex: athlete.sex || null,
-      },
-      training_summary: trainingSummary,
-      hr_max_from_data: hrMaxFromData,
-      hr_threshold_from_data: hrThresholdFromData,
-      ftp_from_strava: ftpFromStrava,
-      ftp_from_streams: ftpFromStreams,
-      ftp_models: ftpModels,
-
-      latest_activity: latestActivity,
-      latest_activity_date: latestActivityDate,
-      latest_activity_is_today: latestActivityIsToday,
-      recent_activities: recentActivities,
-    };
-  } catch (err) {
-    console.error("buildStravaSnapshot error:", err);
-    return null;
+  if (!tokens || !tokens.access_token) {
+    return { ok: false, error: "No Strava tokens" };
   }
+
+  const accessToken = tokens.access_token;
+
+  const [athlete, acts] = await Promise.all([
+    fetch("https://www.strava.com/api/v3/athlete", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }).then((r) => r.json()),
+    fetch(
+      "https://www.strava.com/api/v3/athlete/activities?per_page=200",
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    ).then((r) => r.json()),
+  ]);
+
+  const now = Date.now();
+  const cutoff90 = now - 90 * 24 * 60 * 60 * 1000;
+
+  const acts90 = (acts || []).filter((a) => {
+    const t = new Date(a.start_date).getTime();
+    return t >= cutoff90;
+  });
+
+  const rides90 = acts90.filter((a) =>
+    CYCLING_TYPES.includes(a.sport_type || a.type || "")
+  );
+
+  const total_time_s = rides90.reduce(
+    (acc, a) => acc + (a.moving_time || 0),
+    0
+  );
+  const total_dist_m = rides90.reduce(
+    (acc, a) => acc + (a.distance || 0),
+    0
+  );
+  const total_elev_m = rides90.reduce(
+    (acc, a) => acc + (a.total_elevation_gain || 0),
+    0
+  );
+
+  const weeks = 90 / 7;
+  const total_hours = total_time_s / 3600;
+  const total_rides = rides90.length;
+  const avg_hours_per_week = weeks > 0 ? total_hours / weeks : 0;
+  const rides_per_week = weeks > 0 ? total_rides / weeks : 0;
+
+  // חישוב זמני רכיבה: מינימום/ממוצע/מקסימום
+  const durationsMin = rides90
+    .map((a) => (a.moving_time || 0) / 60)
+    .filter((v) => v > 0)
+    .sort((a, b) => a - b);
+
+  let avgRideMinutes = null;
+  let minRideMinutesCandidate = null;
+  let maxRideMinutesCandidate = null;
+  let ridesSampleCount = 0;
+
+  if (durationsMin.length) {
+    ridesSampleCount = durationsMin.length;
+    const sum = durationsMin.reduce((a, b) => a + b, 0);
+    avgRideMinutes = sum / durationsMin.length;
+
+    const shortest3 = durationsMin.slice(0, Math.min(3, durationsMin.length));
+    const longest3 = durationsMin.slice(
+      Math.max(durationsMin.length - 3, 0)
+    );
+
+    const medianLocal = (arr) => {
+      if (!arr.length) return null;
+      const sorted = [...arr].sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+      if (sorted.length % 2 === 1) return sorted[mid];
+      return (sorted[mid - 1] + sorted[mid]) / 2;
+    };
+
+    minRideMinutesCandidate = medianLocal(shortest3);
+    maxRideMinutesCandidate = medianLocal(longest3);
+  }
+
+  const training_summary = {
+    total_time_s,
+    total_dist_m,
+    total_elev_m,
+    total_rides,
+    total_hours,
+    avg_hours_per_week,
+    rides_per_week,
+    avg_ride_minutes: avgRideMinutes,
+    min_ride_minutes_candidate: minRideMinutesCandidate,
+    max_ride_minutes_candidate: maxRideMinutesCandidate,
+    rides_sample_count: ridesSampleCount,
+  };
+
+  return {
+    ok: true,
+    athlete: {
+      id: athlete.id,
+      username: athlete.username,
+      firstname: athlete.firstname,
+      lastname: athlete.lastname,
+      sex: athlete.sex,
+      weight: athlete.weight,
+      ftp: athlete.ftp,
+    },
+    training_summary,
+    raw_activities_90d: acts90,
+  };
 }
+
 
 /* ---------------- DB IMPL + STRAVA SERVICES + ONBOARDING ---------------- */
 
@@ -413,6 +347,14 @@ General behavior:
 - Always answer in the same language the user used (Hebrew or any other).
 - Be clear, structured, and concise.
 - Use a friendly, confident, grounded tone.
+
+- אם ב-Context קיים אובייקט rideDurationStats עם
+  avgRideMinutes, minRideMinutesCandidate, maxRideMinutesCandidate:
+  השתמש בערכים האלה כדי לקבוע זמני אימון ריאליים.
+  אל תציע אימונים קצרים בהרבה מ-minRideMinutesCandidate
+  אלא אם הרוכב מבקש במפורש "אימון קצר" או "Recovery",
+  ובאימונים רגילים כוון לאורך שנמצא בין המינימום למקסימום.
+
 
 When the user asks about cycling, training, FTP, heart rate, Strava, recovery or planning rides:
 - Act as LOEW the coach.

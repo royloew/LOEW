@@ -162,6 +162,10 @@ export function createDbImpl({ getStravaTokens, buildStravaSnapshot }) {
     const intensityFactor = null;
     const tss = null;
 
+
+
+
+
     return {
       activity_id: String(activity.id),
       name: activity.name,
@@ -356,6 +360,111 @@ export function createDbImpl({ getStravaTokens, buildStravaSnapshot }) {
     "MountainBikeRide",
   ];
 
+    function getRideDurationStatsInternal(userId) {
+    const rows = db
+      .prepare(`
+        SELECT moving_time_s
+        FROM strava_activities
+        WHERE user_id = ?
+          AND datetime(start_date) >= datetime('now', '-90 days')
+          AND moving_time_s IS NOT NULL
+          AND type IN ('Ride','EBikeRide','VirtualRide','GravelRide','MountainBikeRide')
+      `)
+      .all(userId);
+
+    if (!rows || !rows.length) {
+      return null;
+    }
+
+    const durationsMin = rows
+      .map((r) => (r.moving_time_s || 0) / 60)
+      .filter((v) => v > 0)
+      .sort((a, b) => a - b);
+
+    if (!durationsMin.length) {
+      return null;
+    }
+
+    const n = durationsMin.length;
+    const avgRideMinutes = average(durationsMin);
+
+    const shortest3 = durationsMin.slice(0, Math.min(3, n));
+    const longest3 = durationsMin.slice(Math.max(n - 3, 0));
+
+    const minRideMinutesCandidate = median(shortest3);
+    const maxRideMinutesCandidate = median(longest3);
+
+    return {
+      avgRideMinutes,
+      minRideMinutesCandidate,
+      maxRideMinutesCandidate,
+      ridesSampleCount: n,
+    };
+  }
+
+
+    /**
+   * מחזיר סטטיסטיקות על זמני רכיבות:
+   * - minCandidateMinutes: מדיאן של 3 הרכיבות הכי קצרות (בדקות)
+   * - avgMinutes: זמן ממוצע לרכיבה (בדקות)
+   * - maxCandidateMinutes: מדיאן של 3 הרכיבות הכי ארוכות (בדקות)
+   *
+   * מסתכל על X הימים האחרונים (ברירת מחדל 180).
+   */
+  function computeRideDurationStats(userId, daysBack = 180) {
+    const rows = db
+      .prepare(`
+        SELECT moving_time_s
+        FROM strava_activities
+        WHERE user_id = ?
+          AND moving_time_s IS NOT NULL
+          AND moving_time_s >= 600 -- מסנן שטויות/רכיבות קצרצרות < 10 דקות
+          AND type IN ('Ride','EBikeRide','VirtualRide','GravelRide','MountainBikeRide')
+          AND datetime(start_date) >= datetime('now', ?)
+      `)
+      .all(userId, "-" + daysBack + " days");
+
+    if (!rows.length) return null;
+
+    const durationsSec = rows
+      .map((r) => r.moving_time_s || 0)
+      .filter((s) => s > 0)
+      .sort((a, b) => a - b);
+
+    if (!durationsSec.length) return null;
+
+    const durationsMin = durationsSec.map((s) => s / 60);
+
+    const avgMinutes =
+      durationsMin.reduce((sum, x) => sum + x, 0) / durationsMin.length;
+
+    // helper למדיאן מתוך מערך קטן (1–3 ערכים)
+    function medianOfArray(arr) {
+      if (!arr.length) return null;
+      const sorted = arr.slice().sort((a, b) => a - b);
+      const n = sorted.length;
+      if (n === 1) return sorted[0];
+      if (n === 2) return (sorted[0] + sorted[1]) / 2;
+      // n >= 3 -> ניקח את האמצעי
+      return sorted[Math.floor(n / 2)];
+    }
+
+    const shortestThree = durationsMin.slice(0, 3);
+    const longestThree = durationsMin.slice(-3);
+
+    const minCandidateMinutes = medianOfArray(shortestThree);
+    const maxCandidateMinutes = medianOfArray(longestThree);
+
+    return {
+      minCandidateMinutes: Math.round(minCandidateMinutes),
+      avgMinutes: Math.round(avgMinutes),
+      maxCandidateMinutes: Math.round(maxCandidateMinutes),
+      sampleCount: durationsMin.length,
+    };
+  }
+
+
+
   // ---------- Public API ----------
   return {
     // Users
@@ -480,7 +589,7 @@ export function createDbImpl({ getStravaTokens, buildStravaSnapshot }) {
      *    - trainingSummary (avgHoursPerWeek, rides_count)
      *    - userWeightKg
      */
-    async computeHrAndFtpFromStrava(userId) {
+        async computeHrAndFtpFromStrava(userId) {
       const tokens = getStravaTokens && getStravaTokens(userId);
       if (!tokens || !tokens.access_token) {
         console.log("computeHrAndFtpFromStrava: no tokens, abort");
@@ -725,6 +834,15 @@ export function createDbImpl({ getStravaTokens, buildStravaSnapshot }) {
         };
       }
 
+      // 7. Ride duration stats – מינימום/ממוצע/מקסימום (מדיאן של 3 הקצרות/ארוכות)
+      const rideDurationStats = getRideDurationStatsInternal(userId);
+      if (rideDurationStats) {
+        trainingSummary = {
+          ...(trainingSummary || {}),
+          ...rideDurationStats,
+        };
+      }
+
       const userWeightKg =
         typeof athlete?.weight === "number" ? athlete.weight : null;
 
@@ -743,6 +861,7 @@ export function createDbImpl({ getStravaTokens, buildStravaSnapshot }) {
         trainingSummary,
       };
     },
+
 
     // ========= Advanced ride analytics for LOEW =========
     // רוכזים כאן פונקציות שמנתחות את הרכיבה האחרונה, רכיבה לפי תאריך,
@@ -824,6 +943,16 @@ export function createDbImpl({ getStravaTokens, buildStravaSnapshot }) {
      * עומס שבועי פשוט – סיכום שעות ו"עומס דמוי TSS" לכל שבוע.
      * weeks – כמה שבועות אחורה להסתכל (ברירת מחדל: 6).
      */
+
+    /**
+     * מחזיר סטטיסטיקות על זמני הרכיבה מה-DB של סטרבה,
+     * לשימוש באונבורדינג (שאלה על משך אימון "רגיל").
+     */
+    async getRideDurationStats(userId, daysBack = 180) {
+      return computeRideDurationStats(userId, daysBack);
+    },
+
+
     async getWeeklyLoad(userId, weeks = 6) {
       const daysBack = Math.max(1, weeks * 7);
       const rows = db
@@ -979,6 +1108,12 @@ export function createDbImpl({ getStravaTokens, buildStravaSnapshot }) {
      * Execution Score – שילוב של אינטנסיביות מול FTP + HR drift.
      * התוצאה היא ניקוד 0–100 (גבוה = ביצוע מדויק ויציב יותר).
      */
+    
+    async getRideDurationStats(userId) {
+      return getRideDurationStatsInternal(userId);
+    },
+
+
     async getExecutionScoreForActivity(userId, activityId) {
       if (!activityId) return null;
 
