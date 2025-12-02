@@ -51,8 +51,9 @@ export class OnboardingEngine {
   /**
    * נקרא אחרי שהמשתמש התחבר בהצלחה לסטרבה (ראה /exchange_token בשרת).
    * כאן אנחנו:
-   * 1. מריצים computeHrAndFtpFromStrava כדי להכניס DB שלם.
-   * 2. מעדכנים את סטטוס האונבורדינג כך שהשלב הבא יתייחס לנתוני סטרבה.
+   * 1. מריצים computeHrAndFtpFromStrava (מופעל כבר מהשרת).
+   * 2. שומרים את metrics ב-state.
+   * 3. מעבירים לשלב חדש: post_strava_summary (סיכום קצר + מעבר להשלמת נתונים אישיים).
    */
   async handleStravaConnected(userId) {
     try {
@@ -60,10 +61,11 @@ export class OnboardingEngine {
 
       const state = await this._loadState(userId);
       state.stravaMetrics = metrics || {};
-      // אם עדיין לא סיימנו אונבורדינג – נרצה להתחיל מהשלב של HR/FTP
+
       if (!state.onboardingCompleted) {
-        state.stage = "hr_from_strava";
+        state.stage = "post_strava_summary";
       }
+
       await this._saveState(state);
 
       return {
@@ -102,7 +104,212 @@ export class OnboardingEngine {
 
     const stage = state.stage || "intro";
 
-    // --- שלבי אונבורדינג ---
+    // --- שלבים חדשים אחרי חיבור סטרבה ---
+
+    // A) שלב סיכום קצר אחרי ייבוא סטרבה
+    if (stage === "post_strava_summary") {
+      const metrics = state.stravaMetrics || {};
+      const ts =
+        metrics.trainingSummary ||
+        metrics.training_summary ||
+        {};
+      const hrModels = metrics.hrModels || {};
+      const ftpModels = metrics.ftpModels || {};
+
+      const totalHours =
+        ts.total_hours ?? ts.totalHours ?? null;
+      const ridesPerWeek =
+        ts.rides_per_week ?? ts.ridesPerWeek ?? null;
+
+      const ftpRec =
+        ftpModels.ftpRecommended ?? metrics.ftpRecommended ?? null;
+
+      const hrMaxCandidate =
+        hrModels.hrMaxCandidate ?? metrics.hrMaxCandidate ?? null;
+      const hrThresholdCandidate =
+        hrModels.hrThresholdCandidate ??
+        metrics.hrThresholdCandidate ??
+        (hrMaxCandidate ? Math.round(hrMaxCandidate * 0.9) : null);
+
+      const lines = [];
+
+      if (ridesPerWeek && ridesPerWeek > 0) {
+        lines.push(
+          `• בערך ${ridesPerWeek.toFixed(1)} רכיבות בשבוע ב־90 הימים האחרונים.`
+        );
+      }
+
+      if (totalHours && totalHours > 0) {
+        lines.push(
+          `• כ-${totalHours.toFixed(1)} שעות רכיבה בשבוע בממוצע.`
+        );
+      }
+
+      if (ftpRec) {
+        lines.push(
+          `• FTP משוער סביב ${Math.round(ftpRec)}W.`
+        );
+      }
+
+      if (hrMaxCandidate) {
+        lines.push(
+          `• דופק מקסימלי משוער ~${hrMaxCandidate}, וסף סביב ${hrThresholdCandidate}.`
+        );
+      }
+
+      const summaryText =
+        lines.length > 0
+          ? "הבאתי את הנתונים האחרונים שלך מסטרבה, בקצרה:\n" +
+            lines.join("\n")
+          : "הבאתי את הנתונים האחרונים שלך מסטרבה, אבל אין לי עדיין מספיק נתונים לסיכום חכם.";
+
+      state.stage = "complete_personal_basics";
+      await this._saveState(state);
+
+      return {
+        text:
+          summaryText +
+          "\n\nבוא נשלים כמה נתונים בסיסיים שחסרים לי (כמו גיל, משקל וגובה) כדי שאוכל להיות מדויק יותר.",
+        done: false,
+      };
+    }
+
+    // B) השלמת נתונים אישיים בסיסיים (גיל, משקל, גובה) אחרי סטרבה
+    if (stage === "complete_personal_basics") {
+      const currentKey = state.currentPersonalKey || null;
+
+      // אם עדיין לא התחיל – נבדוק מה חסר
+      if (!currentKey) {
+        const missing = [];
+        if (!tp.age) missing.push("age");
+        if (!tp.weightKg) missing.push("weightKg");
+        if (!tp.heightCm) missing.push("heightCm");
+
+        if (!missing.length) {
+          // יש הכל – ממשיכים ל-HR/FTP
+          state.stage = "hr_from_strava";
+          await this._saveState(state);
+          return {
+            text:
+              "מעולה, יש לי כבר גיל, משקל וכל הנתונים הבסיסיים. נעבור עכשיו להגדרת דופק ו-FTP על בסיס הנתונים שלך.",
+            done: false,
+          };
+        }
+
+        const nextKey = missing[0];
+        state.currentPersonalKey = nextKey;
+        await this._saveState(state);
+
+        if (nextKey === "age") {
+          return {
+            text:
+              "רק שנשלים – מה הגיל שלך? (תכתוב מספר, למשל 46)",
+            done: false,
+          };
+        }
+
+        if (nextKey === "weightKg") {
+          return {
+            text:
+              "מה המשקל שלך בקילוגרמים? (תכתוב מספר, למשל 67)",
+            done: false,
+          };
+        }
+
+        // heightCm
+        return {
+          text:
+            "מה הגובה שלך בסנטימטרים? (למשל 178)",
+          done: false,
+        };
+      }
+
+      // אם אנחנו באמצע שדה מסוים – נפרש את התשובה
+      const n = this._parseNumberFromText(lower);
+
+      if (currentKey === "age") {
+        if (!n || n < 10 || n > 90) {
+          return {
+            text:
+              "לא הצלחתי להבין את הגיל. תכתוב מספר בגילאים סבירים (למשל 46).",
+            done: false,
+          };
+        }
+        tp.age = n;
+        state.answers.age = n;
+        await this.db.saveTrainingParams(tp);
+      } else if (currentKey === "weightKg") {
+        if (!n || n < 30 || n > 200) {
+          return {
+            text:
+              "לא הצלחתי להבין את המשקל. תכתוב מספר בקילוגרמים (למשל 67).",
+            done: false,
+          };
+        }
+        tp.weightKg = n;
+        state.answers.weight = n;
+        await this.db.saveTrainingParams(tp);
+      } else if (currentKey === "heightCm") {
+        if (!n || n < 120 || n > 230) {
+          return {
+            text:
+              "לא הצלחתי להבין את הגובה. תכתוב מספר בס\"מ, לדוגמה 178.",
+            done: false,
+          };
+        }
+        tp.heightCm = n;
+        state.answers.heightCm = n;
+        await this.db.saveTrainingParams(tp);
+      }
+
+      // סיימנו עם השדה – נבדוק אם נשאר עוד משהו
+      state.currentPersonalKey = null;
+      await this._saveState(state);
+
+      const stillMissing = [];
+      if (!tp.age) stillMissing.push("age");
+      if (!tp.weightKg) stillMissing.push("weightKg");
+      if (!tp.heightCm) stillMissing.push("heightCm");
+
+      if (!stillMissing.length) {
+        state.stage = "hr_from_strava";
+        await this._saveState(state);
+        return {
+          text:
+            "סגור, יש לי עכשיו את כל הנתונים האישיים הבסיסיים שלך.\nנעבור עכשיו להגדרת דופק ו-FTP.",
+          done: false,
+        };
+      }
+
+      const nextKey = stillMissing[0];
+      state.currentPersonalKey = nextKey;
+      await this._saveState(state);
+
+      if (nextKey === "age") {
+        return {
+          text:
+            "נשלים גם את הגיל – תכתוב מספר, לדוגמה 46.",
+          done: false,
+        };
+      }
+
+      if (nextKey === "weightKg") {
+        return {
+          text:
+            "נשלים גם את המשקל – תכתוב מספר בקילוגרמים, לדוגמה 67.",
+          done: false,
+        };
+      }
+
+      // heightCm
+      return {
+        text:
+          "נשלים גם את הגובה – תכתוב מספר בס\"מ, לדוגמה 178.",
+        done: false,
+      };
+    }
+
+    // --- שלבי אונבורדינג הקיימים ---
 
     // 1) פתיחה + גיל
     if (stage === "intro") {
@@ -168,12 +375,12 @@ export class OnboardingEngine {
       // אם כבר יש חיבור סטרבה – נתקדם לשלבים לפי נתוני סטרבה
       const hasStrava = await this.db.hasStravaConnection(userId);
       if (hasStrava) {
-        state.stage = "hr_from_strava";
+        state.stage = "post_strava_summary";
         await this._saveState(state);
         return {
           text:
             `סגור, רשמתי משקל ${weight} ק״ג.\n` +
-            "יש לך חיבור לסטרבה, אז בוא נשתמש בנתונים שלך כדי להגדיר דופק ו-FTP.",
+            "אני רואה שכבר מחובר לך חשבון Strava – אביא את הנתונים שלך ונעשה סיכום קצר, ואז נמשיך.",
           done: false,
         };
       } else {
@@ -241,12 +448,12 @@ export class OnboardingEngine {
       }
 
       // סיימנו חיבור – נניח ש-handleStravaConnected כבר רץ
-      state.stage = "hr_from_strava";
+      state.stage = "post_strava_summary";
       await this._saveState(state);
       return {
         text:
           "רואה שחיברת את Strava ✅\n" +
-          "בוא נשתמש עכשיו בנתונים שלך כדי להגדיר דופק ו-FTP.",
+          "אביא את הנתונים שלך, אציג לך סיכום קצר ואז נמשיך להגדרות דופק ו-FTP.",
         done: false,
       };
     }
@@ -279,7 +486,8 @@ export class OnboardingEngine {
       state.stage = "hr_from_strava_confirm";
       state.hrSuggestion = {
         hrMaxCandidate,
-        hrThresholdCandidate: hrThresholdCandidate || Math.round(hrMaxCandidate * 0.9),
+        hrThresholdCandidate:
+          hrThresholdCandidate || Math.round(hrMaxCandidate * 0.9),
       };
       await this._saveState(state);
 
@@ -302,11 +510,22 @@ export class OnboardingEngine {
       } else {
         // ננסה לחלץ מספרים מהטקסט
         const numbers = lower.match(/(\d{2,3})/g) || [];
+
         if (numbers.length === 1) {
           const n = parseInt(numbers[0], 10);
-          if (n > 100 && n < 220) {
-            hrMax = n;
-            hrTh = Math.round(n * 0.9);
+          if (n > 80 && n < 230) {
+            // אם המשתמש כתב למשל "דופק סף 153" – נבין שזה סף
+            if (lower.includes("סף") || lower.includes("threshold")) {
+              hrTh = n;
+              // נשאיר את המקסימום מההצעה
+            } else if (lower.includes("מקס") || lower.includes("max")) {
+              hrMax = n;
+              hrTh = Math.round(n * 0.9);
+            } else {
+              // התנהגות ישנה: מספר יחיד → נתייחס אליו כמקסימום
+              hrMax = n;
+              hrTh = Math.round(n * 0.9);
+            }
           }
         } else if (numbers.length >= 2) {
           const n1 = parseInt(numbers[0], 10);
@@ -503,9 +722,8 @@ export class OnboardingEngine {
       };
     }
 
-    // 7) משך אימון מינימלי על בסיס סטרבה – השלב החדש
+    // 7) משך אימון מינימלי על בסיס סטרבה
     if (stage === "min_ride_from_strava") {
-      // ננסה להביא נתונים מה-DB (strava_activities) – 3 הקצרות, ממוצע, 3 הארוכות
       let stats = null;
       try {
         stats = await this.db.getRideDurationStats(userId);

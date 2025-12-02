@@ -109,6 +109,9 @@
         line-height: 1.4;
         word-wrap: break-word;
         white-space: pre-wrap;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
       }
 
       .bubble.me {
@@ -126,6 +129,25 @@
       .bubble a {
         color: inherit;
         text-decoration: underline;
+      }
+
+      .bubble-label {
+        font-size: 11px;
+        font-weight: 600;
+        opacity: 0.9;
+      }
+
+      .bubble-label.onboarding {
+        opacity: 1;
+      }
+
+      .bubble-label.chat {
+        opacity: 0.75;
+      }
+
+      .bubble-text {
+        font-size: 14px;
+        line-height: 1.4;
       }
 
       .system-note {
@@ -231,7 +253,7 @@
     </div>
 
     <script>
-      // ===== USER ID & DOM =====
+      // ===== USER ID, STRAVA STATUS & DOM =====
       function getUserId() {
         const urlParams = new URLSearchParams(window.location.search);
         const fromUrl = urlParams.get("userId");
@@ -239,7 +261,14 @@
         return "roy";
       }
 
+      function getStravaStatus() {
+        const urlParams = new URLSearchParams(window.location.search);
+        return urlParams.get("strava") || null; // למשל: "connected"
+      }
+
       const USER_ID = getUserId();
+      const STRAVA_STATUS = getStravaStatus();
+
       const messagesEl = document.getElementById("messages");
       const inputEl = document.getElementById("input");
       const sendBtn = document.getElementById("sendBtn");
@@ -259,13 +288,34 @@
         );
       }
 
-      function addMessage(who, text) {
+      /**
+       * mode:
+       *  - "onboarding" → LOEW מצב אונבורדינג
+       *  - "chat"       → צ'אט רגיל
+       */
+      function addMessage(who, text, mode = "chat") {
         const row = document.createElement("div");
         row.className = "bubble-row " + (who === "me" ? "me" : "bot");
 
         const bubble = document.createElement("div");
         bubble.className = "bubble " + (who === "me" ? "me" : "bot");
-        bubble.innerHTML = renderTextWithLinks(text);
+
+        if (who === "bot") {
+          const label = document.createElement("div");
+          label.className =
+            "bubble-label " + (mode === "onboarding" ? "onboarding" : "chat");
+          if (mode === "onboarding") {
+            label.textContent = "LOEW · אונבורדינג";
+          } else {
+            label.textContent = "LOEW · צ'אט";
+          }
+          bubble.appendChild(label);
+        }
+
+        const textDiv = document.createElement("div");
+        textDiv.className = "bubble-text";
+        textDiv.innerHTML = renderTextWithLinks(text);
+        bubble.appendChild(textDiv);
 
         row.appendChild(bubble);
         messagesEl.appendChild(row);
@@ -337,26 +387,38 @@
 
       // ===== CHAT API =====
 
-async function callChatAPI(text /*, snapshot */) {
-  const res = await fetch("/api/loew/chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      userId: USER_ID,
-      message: text,
-      // snapshot: snapshot, // לא שולחים יותר
-    }),
-  });
-  return res.json();
-}
+      async function callChatAPI(text) {
+        const res = await fetch("/api/loew/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: USER_ID,
+            message: text,
+          }),
+        });
+        return res.json();
+      }
 
+      function handleChatReply(data) {
+        if (!data.ok && data.error) {
+          addMessage("bot", "שגיאה מהשרת: " + data.error, "chat");
+          return;
+        }
 
+        const mode = data.onboarding ? "onboarding" : "chat";
+
+        if (data.reply) {
+          addMessage("bot", data.reply, mode);
+        } else {
+          addMessage("bot", "לא קיבלתי תשובה מ-LOEW.", mode);
+        }
+      }
 
       async function sendMessage() {
         const text = inputEl.value.trim();
         if (!text) return;
 
-        addMessage("me", text);
+        addMessage("me", text, "chat");
         inputEl.value = "";
         inputEl.focus();
         sendBtn.disabled = true;
@@ -378,27 +440,17 @@ async function callChatAPI(text /*, snapshot */) {
           return;
         }
 
-        // בכל הודעה נביא snapshot עדכני ונעביר לשרת
-        // לא צריך snapshot בשביל הצ'אט עצמו
-      try {
-        const data = await callChatAPI(text);
-
-
-          if (!data.ok && data.error) {
-            addMessage("bot", "שגיאה מהשרת: " + data.error);
-            return;
-          }
-
-          if (data.reply) {
-            addMessage("bot", data.reply);
-          } else {
-            addMessage("bot", "לא קיבלתי תשובה מ-LOEW.");
-          }
+        try {
+          const data = await callChatAPI(text);
+          handleChatReply(data);
         } catch (err) {
           console.error(err);
-          addMessage("bot", "שגיאה בתקשורת עם השרת: " + (err.message || ""));
-        }
- finally {
+          addMessage(
+            "bot",
+            "שגיאה בתקשורת עם השרת: " + (err.message || ""),
+            "chat"
+          );
+        } finally {
           sendBtn.disabled = false;
         }
       }
@@ -415,32 +467,60 @@ async function callChatAPI(text /*, snapshot */) {
       (async function init() {
         const snapshot = await fetchSnapshotOnce();
 
+        // 1. חזרנו מ-Strava עם ?strava=connected
+        if (STRAVA_STATUS === "connected") {
+          addMessage(
+            "bot",
+            "החיבור לסטרבה הצליח ✅\nאני מייבא את הנתונים שלך… זה לוקח בדרך כלל פחות מדקה.",
+            "onboarding"
+          );
+
+          try {
+            // שולח הודעה אוטומטית ל-LOEW כדי שייתן:
+            // 1. סיכום נתונים + פרופיל רוכב קצר
+            // 2. המשך אונבורדינג (השלמת נתונים חסרים וכו')
+            const data = await callChatAPI("היי");
+            handleChatReply(data);
+          } catch (err) {
+            console.error("auto onboarding after Strava error:", err);
+            addMessage(
+              "bot",
+              "משהו השתבש אחרי חיבור לסטרבה. נסה לכתוב לי הודעה בצ'אט כדי להמשיך.",
+              "chat"
+            );
+          }
+
+          return;
+        }
+
+        // 2. אין סטרבה – מסך פתיחה שדוחף לחיבור לסטרבה
         if (!hasStrava) {
-          const authUrl =
-            "/auth/strava?userId=" + encodeURIComponent(USER_ID);
+          const authUrl = "/auth/strava?userId=" + encodeURIComponent(USER_ID);
 
           addMessage(
             "bot",
             "היי, אני LOEW.\n" +
               'נראה שעבור המשתמש "' +
               USER_ID +
-              '" עוד לא מחובר חשבון Strava.'
+              '" עוד לא מחובר חשבון Strava.',
+            "onboarding"
           );
 
           addMessage(
             "bot",
             "אם יש לך סטרבה ותרצה שאנתח את האימונים שלך, אתה יכול להתחבר דרך הקישור הבא (לחיץ):\n" +
               window.location.origin +
-              authUrl
+              authUrl,
+            "onboarding"
           );
 
           addSystemNote(
-            "טיפ: אפשר גם לכתוב \"כן\" כדי לפתוח את מסך ההתחברות לסטרבה מהצ'אט."
+            'טיפ: אפשר גם לכתוב "כן" כדי לפתוח את מסך ההתחברות לסטרבה מהצ\'אט.'
           );
           return;
         }
 
-        // יש סטרבה – פתיחה "נקייה"
+        // 3. יש סטרבה – פתיחה "נקייה" (אם האונבורדינג כבר הושלם LOEW יזהה בצד שרת)
         addMessage(
           "bot",
           "היי " +
@@ -448,7 +528,8 @@ async function callChatAPI(text /*, snapshot */) {
             " 👋\nיש לי נתונים מסטרבה עבורך. אתה יכול לשאול:\n" +
             "• מה האימון שלי למחר?\n" +
             "• תנתח לי את האימון האחרון.\n" +
-            "• תראה לי את העומס השבועי או הניתוחים המתקדמים."
+            "• תראה לי את העומס השבועי או הניתוחים המתקדמים.",
+          "chat"
         );
       })();
     </script>
