@@ -35,12 +35,19 @@ function all(sql, params = []) {
 
 async function init() {
   // טבלת משתמשים
-  await run(
-    `CREATE TABLE IF NOT EXISTS users (
-      user_id TEXT PRIMARY KEY,
-      created_at INTEGER
-    )`
+  // נדרוס את הטבלה הישנה אם קיימת – כדי לוודא שהסכמה חדשה
+await run(`
+  DROP TABLE IF EXISTS users;
+`);
+
+await run(`
+  CREATE TABLE IF NOT EXISTS users (
+    user_id TEXT PRIMARY KEY,
+    json TEXT NOT NULL,
+    created_at INTEGER NOT NULL
   );
+`);
+
 
   // טבלת סטייט של אונבורדינג (JSON)
   await run(
