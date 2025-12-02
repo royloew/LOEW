@@ -30,8 +30,11 @@ const dbImpl = await createDbImpl();
 const onboarding = new OnboardingEngine(dbImpl);
 
 // ===== STATIC FRONTEND (index.html) =====
-app.use(express.static(__dirname)); // מגיש את index.html והקבצים מאותה תיקייה
 
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "LOEW Chat.html"));
+  // אם הקובץ שלך נקרא אחרת (למשל index.html) – תעדכן את השם פה
+});
 // ===== UTIL =====
 function getUserIdFromBody(req) {
   const userId =
