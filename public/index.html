@@ -338,17 +338,33 @@
       // ===== CHAT API =====
 
       async function callChatAPI(text, snapshot) {
-        const res = await fetch("/api/loew/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            userId: USER_ID,
-            message: text,
-            snapshot: snapshot,
-          }),
-        });
-        return res.json();
-      }
+  const res = await fetch("/api/loew/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      userId: USER_ID,
+      message: text,
+      snapshot: snapshot,
+    }),
+  });
+
+  const contentType = res.headers.get("content-type") || "";
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`HTTP ${res.status}: ${errText.slice(0, 200)}`);
+  }
+
+  if (!contentType.includes("application/json")) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(
+      "Non-JSON response from server: " + errText.slice(0, 200)
+    );
+  }
+
+  return res.json();
+}
+
 
       async function sendMessage() {
         const text = inputEl.value.trim();
@@ -394,8 +410,9 @@
           }
         } catch (err) {
           console.error(err);
-          addMessage("bot", "הייתה תקלה בתקשורת עם השרת.");
-        } finally {
+          addMessage("bot", "שגיאה בתקשורת עם השרת: " + (err.message || ""));
+        }
+ finally {
           sendBtn.disabled = false;
         }
       }
