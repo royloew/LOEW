@@ -23,7 +23,6 @@ const CYCLING_TYPES = [
   "MountainBikeRide",
 ];
 
-
 dotenv.config();
 
 /* ---------------- BASIC APP SETUP ---------------- */
@@ -318,7 +317,6 @@ async function buildStravaSnapshot(tokens) {
   };
 }
 
-
 /* ---------------- DB IMPL + STRAVA SERVICES + ONBOARDING ---------------- */
 
 const dbImpl = createDbImpl({
@@ -333,7 +331,7 @@ const stravaClient = new StravaClient(getAccessTokenForUser);
 // שירות ingest – אחראי למשוך פעילויות וסטראימים ולעדכן DB
 const stravaIngest = new StravaIngestService(stravaClient);
 
-// מנוע אונבורדינג
+// מנוע אונבורדינג – כאן המקום הנכון ליצור אותו (אחרי שיש dbImpl!)
 const onboardingEngine = new OnboardingEngine(dbImpl);
 
 /* ---------------- GENERAL CONSTANTS ---------------- */
@@ -711,8 +709,10 @@ app.post("/api/loew/chat", async (req, res) => {
     // 1. לבדוק סטטוס אונבורדינג
     const obState = await dbImpl.getOnboarding(userId);
     const onboardingDone = obState && obState.onboardingCompleted;
+    // אפשר להשאיר isCyclingRelated לשימוש אחר, אבל לא לחסום אונבורדינג
+    // const cyclingRelated = isCyclingRelated(text);
 
-    // 2. אם האונבורדינג עדיין לא הושלם – כל הודעה הולכת למנוע אונבורדינג
+    // 2. אם האונבורדינג עדיין לא הושלם – מעבירים הכל ל-OnboardingEngine
     if (!onboardingDone) {
       const reply = await onboardingEngine.handleMessage(userId, text);
 
@@ -773,7 +773,6 @@ app.post("/api/loew/chat", async (req, res) => {
       .json({ ok: false, error: "Chat failed on server" });
   }
 });
-
 
 /* ---------------- START SERVER ---------------- */
 
