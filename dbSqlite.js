@@ -129,15 +129,16 @@ export function createDbImpl({ getStravaTokens, buildStravaSnapshot }) {
   // ---------- Strava helpers ----------
 
   async function fetchJson(url, accessToken) {
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Strava fetch failed ${res.status}: ${text}`);
-    }
-    return res.json();
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Strava fetch failed ${res.status}: ${text}`);
   }
+  return res.json();
+}
+
 
   async function fetchActivityStreams(userId, activityId, accessToken) {
     const url = new URL(`https://www.strava.com/api/v3/activities/${activityId}/streams`);
@@ -156,7 +157,7 @@ export function createDbImpl({ getStravaTokens, buildStravaSnapshot }) {
     const avgHr = hr.length ? hr.reduce((a, b) => a + b, 0) / hr.length : null;
     const maxHr = hr.length ? Math.max(...hr) : null;
 
-    // בשלב ראשון: NP / IF / TSS – placeholder
+    // בשלב ראשון: NP / IF / TSS – placeholder (אחר כך נעדכן)
     const np = avgPower ?? null;
     const intensityFactor = null;
     const tss = null;
@@ -339,8 +340,6 @@ export function createDbImpl({ getStravaTokens, buildStravaSnapshot }) {
     return arr.reduce((a, b) => a + b, 0) / arr.length;
   }
 
-
-
   function median(arr) {
     if (!arr || !arr.length) return null;
     const sorted = [...arr].sort((a, b) => a - b);
@@ -348,7 +347,6 @@ export function createDbImpl({ getStravaTokens, buildStravaSnapshot }) {
     if (sorted.length % 2 === 1) return sorted[mid];
     return (sorted[mid - 1] + sorted[mid]) / 2;
   }
-
 
   const CYCLING_TYPES = [
     "Ride",
@@ -576,8 +574,7 @@ export function createDbImpl({ getStravaTokens, buildStravaSnapshot }) {
         }
       }
 
-      // 4. HRmax candidate – from max_hr in 180 days (rides only, עם נתוני דופק)
-            // 4. HRmax candidate – Top3 מה-180 ימים האחרונים, רק רכיבות אופניים
+      // 4. HRmax candidate – Top3 מה-180 ימים האחרונים, רק רכיבות אופניים
       const hrRows = db
         .prepare(`
           SELECT max_hr
@@ -603,9 +600,7 @@ export function createDbImpl({ getStravaTokens, buildStravaSnapshot }) {
       const hrThresholdCandidate =
         hrMaxCandidate != null ? Math.round(hrMaxCandidate * 0.9) : null;
 
-
       // 5. FTP models from power_curves (rides with power + HR, last 90 days)
-            // 5. FTP models from power_curves (rides with power + HR, last 90 days)
       const rows = db
         .prepare(`
           SELECT
@@ -705,7 +700,6 @@ export function createDbImpl({ getStravaTokens, buildStravaSnapshot }) {
         hrThresholdCandidate,
       };
 
-
       // 6. Training volume (rides only, last 90 days, עם דופק ווואטים)
       const tsRow = db
         .prepare(`
@@ -734,7 +728,7 @@ export function createDbImpl({ getStravaTokens, buildStravaSnapshot }) {
       const userWeightKg =
         typeof athlete?.weight === "number" ? athlete.weight : null;
 
-        return {
+      return {
         hrMaxCandidate,
         hrMaxTop3,
         hrThresholdCandidate,
@@ -748,7 +742,325 @@ export function createDbImpl({ getStravaTokens, buildStravaSnapshot }) {
         userWeightKg,
         trainingSummary,
       };
+    },
 
+    // ========= Advanced ride analytics for LOEW =========
+    // רוכזים כאן פונקציות שמנתחות את הרכיבה האחרונה, רכיבה לפי תאריך,
+    // עומס שבועי, DRIFT ו-Execution Score. כל הפונקציות עובדות רק על
+    // מה שיש כבר ב-loew.db ולא קוראות שוב ל-Strava.
+
+    /**
+     * מחזיר תקציר של הרכיבה האחרונה (לפי start_date) מתוך DB סטרבה.
+     */
+    async getLatestActivitySummary(userId) {
+      const row = db
+        .prepare(`
+          SELECT *
+          FROM strava_activities
+          WHERE user_id = ?
+          ORDER BY datetime(start_date) DESC
+          LIMIT 1
+        `)
+        .get(userId);
+
+      if (!row) return null;
+
+      return {
+        activityId: row.activity_id,
+        name: row.name,
+        type: row.type,
+        startDate: row.start_date,
+        distanceKm: row.distance_m != null ? row.distance_m / 1000 : null,
+        movingTimeSec: row.moving_time_s,
+        elapsedTimeSec: row.elapsed_time_s,
+        avgPower: row.avg_power,
+        maxPower: row.max_power,
+        avgHr: row.avg_hr,
+        maxHr: row.max_hr,
+        tss: row.tss,
+        np: row.np,
+        intensityFactor: row.intensity_factor,
+        isCommute: !!row.is_commute,
+        isRace: !!row.is_race,
+      };
+    },
+
+    /**
+     * מחזיר את כל הרכיבות שנעשו בתאריך מסוים (YYYY-MM-DD) לפי DB סטרבה.
+     */
+    async getActivitySummaryByDate(userId, isoDate) {
+      if (!isoDate) return [];
+      const rows = db
+        .prepare(`
+          SELECT *
+          FROM strava_activities
+          WHERE user_id = ?
+            AND date(start_date) = date(?)
+          ORDER BY datetime(start_date) DESC
+        `)
+        .all(userId, isoDate);
+
+      return rows.map((row) => ({
+        activityId: row.activity_id,
+        name: row.name,
+        type: row.type,
+        startDate: row.start_date,
+        distanceKm: row.distance_m != null ? row.distance_m / 1000 : null,
+        movingTimeSec: row.moving_time_s,
+        elapsedTimeSec: row.elapsed_time_s,
+        avgPower: row.avg_power,
+        maxPower: row.max_power,
+        avgHr: row.avg_hr,
+        maxHr: row.max_hr,
+        tss: row.tss,
+        np: row.np,
+        intensityFactor: row.intensity_factor,
+        isCommute: !!row.is_commute,
+        isRace: !!row.is_race,
+      }));
+    },
+
+    /**
+     * עומס שבועי פשוט – סיכום שעות ו"עומס דמוי TSS" לכל שבוע.
+     * weeks – כמה שבועות אחורה להסתכל (ברירת מחדל: 6).
+     */
+    async getWeeklyLoad(userId, weeks = 6) {
+      const daysBack = Math.max(1, weeks * 7);
+      const rows = db
+        .prepare(`
+          SELECT start_date, moving_time_s, avg_power
+          FROM strava_activities
+          WHERE user_id = ?
+            AND datetime(start_date) >= datetime('now', ?)
+            AND moving_time_s IS NOT NULL
+            AND avg_power IS NOT NULL
+            AND type IN ('Ride','EBikeRide','VirtualRide','GravelRide','MountainBikeRide')
+        `)
+        .all(userId, "-" + daysBack + " days");
+
+      if (!rows.length) return [];
+
+      const paramsRow = getJson("training_params", userId) || {};
+      const ftp =
+        typeof paramsRow.ftpRecommended === "number" && paramsRow.ftpRecommended > 0
+          ? paramsRow.ftpRecommended
+          : typeof paramsRow.ftpFromStrava === "number" && paramsRow.ftpFromStrava > 0
+          ? paramsRow.ftpFromStrava
+          : null;
+
+      const weeksMap = new Map();
+
+      for (const r of rows) {
+        const d = new Date(r.start_date);
+        if (Number.isNaN(d.getTime())) continue;
+
+        // ISO style week start (Monday) in UTC
+        const day = d.getUTCDay() || 7; // Sunday = 0 -> 7
+        const monday = new Date(
+          Date.UTC(
+            d.getUTCFullYear(),
+            d.getUTCMonth(),
+            d.getUTCDate() - day + 1
+          )
+        );
+        const weekKey = monday.toISOString().slice(0, 10);
+
+        let entry = weeksMap.get(weekKey);
+        if (!entry) {
+          entry = {
+            weekStart: weekKey,
+            totalTimeHours: 0,
+            ridesCount: 0,
+            simpleLoad: 0,
+            tssLike: 0,
+          };
+          weeksMap.set(weekKey, entry);
+        }
+
+        const timeH = (r.moving_time_s || 0) / 3600;
+        const avgPower = r.avg_power || 0;
+
+        entry.totalTimeHours += timeH;
+        entry.ridesCount += 1;
+        entry.simpleLoad += timeH * avgPower;
+
+        if (ftp && ftp > 0 && avgPower > 0) {
+          const ifRatio = avgPower / ftp;
+          entry.tssLike += timeH * ifRatio * ifRatio * 100;
+        }
+      }
+
+      const result = Array.from(weeksMap.values()).sort((a, b) =>
+        a.weekStart < b.weekStart ? -1 : a.weekStart > b.weekStart ? 1 : 0
+      );
+
+      return result;
+    },
+
+    /**
+     * מחשב HR drift פשוט לרכיבה (20% התחלה מול 20% סוף) + מגמות וואטים.
+     */
+    async getDriftForActivity(userId, activityId) {
+      if (!activityId) return null;
+
+      const hrRow = db
+        .prepare(`
+          SELECT data_json
+          FROM strava_streams
+          WHERE user_id = ?
+            AND activity_id = ?
+            AND stream_type = 'heartrate'
+        `)
+        .get(userId, String(activityId));
+
+      const wattsRow = db
+        .prepare(`
+          SELECT data_json
+          FROM strava_streams
+          WHERE user_id = ?
+            AND activity_id = ?
+            AND stream_type = 'watts'
+        `)
+        .get(userId, String(activityId));
+
+      if (!hrRow || !hrRow.data_json) return null;
+
+      let hr;
+      let watts;
+      try {
+        hr = JSON.parse(hrRow.data_json) || [];
+      } catch {
+        hr = [];
+      }
+      try {
+        watts =
+          wattsRow && wattsRow.data_json ? JSON.parse(wattsRow.data_json) : [];
+      } catch {
+        watts = [];
+      }
+
+      if (!Array.isArray(hr) || hr.length < 20) {
+        return null;
+      }
+
+      const n = hr.length;
+      const segmentSize = Math.floor(n * 0.2);
+      if (segmentSize < 5) return null;
+
+      const firstHr = hr.slice(0, segmentSize);
+      const lastHr = hr.slice(n - segmentSize);
+      const firstAvgHr = average(firstHr);
+      const lastAvgHr = average(lastHr);
+
+      let hrDriftPct = null;
+      if (firstAvgHr && lastAvgHr) {
+        hrDriftPct = (lastAvgHr - firstAvgHr) / firstAvgHr;
+      }
+
+      let firstAvgPower = null;
+      let lastAvgPower = null;
+      if (Array.isArray(watts) && watts.length === n) {
+        firstAvgPower = average(watts.slice(0, segmentSize));
+        lastAvgPower = average(watts.slice(n - segmentSize));
+      }
+
+      return {
+        activityId: String(activityId),
+        samplesCount: n,
+        firstAvgHr,
+        lastAvgHr,
+        hrDriftPct,
+        firstAvgPower,
+        lastAvgPower,
+      };
+    },
+
+    /**
+     * Execution Score – שילוב של אינטנסיביות מול FTP + HR drift.
+     * התוצאה היא ניקוד 0–100 (גבוה = ביצוע מדויק ויציב יותר).
+     */
+    async getExecutionScoreForActivity(userId, activityId) {
+      if (!activityId) return null;
+
+      const actRow = db
+        .prepare(`
+          SELECT *
+          FROM strava_activities
+          WHERE user_id = ?
+            AND activity_id = ?
+        `)
+        .get(userId, String(activityId));
+
+      if (!actRow) return null;
+
+      const paramsRow = getJson("training_params", userId) || {};
+      const ftp =
+        typeof paramsRow.ftpRecommended === "number" && paramsRow.ftpRecommended > 0
+          ? paramsRow.ftpRecommended
+          : typeof paramsRow.ftpFromStrava === "number" &&
+            paramsRow.ftpFromStrava > 0
+          ? paramsRow.ftpFromStrava
+          : null;
+
+      const avgPower = actRow.avg_power || null;
+      const durationMin = actRow.moving_time_s
+        ? actRow.moving_time_s / 60
+        : null;
+
+      let intensityScore = null;
+      if (ftp && avgPower) {
+        const targetIf = 0.7; // יעד ברירת מחדל לרכיבת Endurance/Tempo קלאסית
+        const actualIf = avgPower / ftp;
+        const diff = Math.abs(actualIf - targetIf);
+        const baseScore = Math.max(0, 1 - diff * 1.5); // ענישה על סטייה גדולה
+        intensityScore = baseScore * 100;
+      }
+
+      let driftScore = null;
+      try {
+        const drift = await this.getDriftForActivity(userId, activityId);
+        if (
+          drift &&
+          typeof drift.hrDriftPct === "number" &&
+          isFinite(drift.hrDriftPct)
+        ) {
+          const d = drift.hrDriftPct;
+          if (d <= 0.02) {
+            driftScore = 100; // יציב מאוד
+          } else if (d <= 0.08) {
+            driftScore = 80; // יציב סביר
+          } else if (d <= 0.15) {
+            driftScore = 60; // דריפט מורגש
+          } else {
+            driftScore = 40; // דריפט גדול מאוד
+          }
+        }
+      } catch {
+        // אם חישוב drift נכשל – מתעלמים
+      }
+
+      let score = null;
+      if (typeof intensityScore === "number" && typeof driftScore === "number") {
+        score = 0.6 * intensityScore + 0.4 * driftScore;
+      } else if (typeof intensityScore === "number") {
+        score = intensityScore;
+      } else if (typeof driftScore === "number") {
+        score = driftScore;
+      }
+
+      if (score != null) {
+        score = Math.round(Math.max(0, Math.min(100, score)));
+      }
+
+      return {
+        activityId: String(activityId),
+        avgPower,
+        durationMin,
+        ftpUsed: ftp || null,
+        intensityScore,
+        driftScore,
+        executionScore: score,
+      };
     },
   };
 }
