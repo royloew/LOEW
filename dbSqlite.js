@@ -101,18 +101,15 @@ export async function createDbImpl() {
 
   // ===== USERS =====
   async function ensureUser(userId) {
-    const existing = await get(
-      `SELECT user_id FROM users WHERE user_id = ?`,
-      [userId]
-    );
-    if (!existing) {
-      const now = Math.floor(Date.now() / 1000);
-      await run(
-        `INSERT INTO users (user_id, created_at) VALUES (?, ?)`,
-        [userId, now]
-      );
-    }
-  }
+  const now = Math.floor(Date.now() / 1000);
+
+  await run(
+    `INSERT OR IGNORE INTO users (user_id, json, created_at)
+     VALUES (?, ?, ?)`,
+    [userId, "{}", now]
+  );
+}
+
 
   // ===== ONBOARDING STATE =====
   async function getOnboardingState(userId) {
