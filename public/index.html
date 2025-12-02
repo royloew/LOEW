@@ -497,12 +497,38 @@
       });
 
       // ===== INIT =====
-      (async function init() {
-        await fetchSnapshotOnce();
+      // ===== INIT =====
+(async function init() {
+  const snapshot = await fetchSnapshotOnce();
 
-        // פתיחה נקייה, בלי לדבר על סטרבה
-        addMessage("היי, אני LOEW.\nאיך אפשר לעזור לך היום?", "assistant");
-      })();
+  if (!hasStrava) {
+    // אין טוקנים / אין סטרבה – מסבירים למשתמש ונותנים לינק
+    const authUrl = "/auth/strava?userId=" + encodeURIComponent(USER_ID);
+
+    addMessage(
+      "היי, אני LOEW.\n" +
+        "נראה שכרגע לא מחובר לחשבון Strava עבור המשתמש \"" + USER_ID + "\".",
+      "assistant"
+    );
+
+    addMessage(
+      "אם יש לך סטרבה ותרצה שאנתח את האימונים שלך, תחבר את החשבון דרך הקישור הבא (להדביק בשורת הכתובת בדפדפן אם צריך):\n" +
+        window.location.origin + authUrl,
+      "assistant"
+    );
+
+    addMessage(
+      "אחרי החיבור תוכל לשאול דברים כמו: \"מה האימון האחרון שלי?\" או \"מה האימון שלי למחר?\"",
+      "assistant"
+    );
+
+    return;
+  }
+
+  // יש סטרבה – פתיחה רגילה
+  addMessage("היי, אני LOEW.\nאיך אפשר לעזור לך היום?", "assistant");
+})();
+
     </script>
   </body>
 </html>
