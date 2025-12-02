@@ -602,6 +602,122 @@ app.post("/api/loew/strava-snapshot", async (req, res) => {
   }
 });
 
+/* ---------------- ADVANCED LOAD & ANALYTICS API ---------------- */
+
+/**
+ * עומס שבועי – מחזיר רשימת שבועות עם:
+ * weekStart, totalTimeHours, ridesCount, tssLike
+ */
+app.post("/api/loew/weekly-load", async (req, res) => {
+  try {
+    const { userId: bodyUserId } = req.body || {};
+    const userId = bodyUserId || DEFAULT_USER_ID;
+
+    const weeklyLoad = await dbImpl.getWeeklyLoad(userId, 6);
+    return res.json({ ok: true, userId, weeklyLoad });
+  } catch (err) {
+    console.error("/api/loew/weekly-load error:", err);
+    return res
+      .status(500)
+      .json({ ok: false, error: "Weekly load failed on server" });
+  }
+});
+
+/**
+ * הרכיבה האחרונה מתוך DB סטרבה
+ */
+app.post("/api/loew/latest-ride", async (req, res) => {
+  try {
+    const { userId: bodyUserId } = req.body || {};
+    const userId = bodyUserId || DEFAULT_USER_ID;
+
+    const latestRide = await dbImpl.getLatestActivitySummary(userId);
+    if (!latestRide) {
+      return res.json({
+        ok: false,
+        userId,
+        error: "No activities found for this user",
+      });
+    }
+
+    return res.json({ ok: true, userId, latestRide });
+  } catch (err) {
+    console.error("/api/loew/latest-ride error:", err);
+    return res
+      .status(500)
+      .json({ ok: false, error: "Latest ride failed on server" });
+  }
+});
+
+/**
+ * Drift (HR decoupling) לרכיבה מסוימת
+ * body: { userId, activityId }
+ */
+app.post("/api/loew/drift", async (req, res) => {
+  try {
+    const { userId: bodyUserId, activityId } = req.body || {};
+    const userId = bodyUserId || DEFAULT_USER_ID;
+
+    if (!activityId) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "activityId is required" });
+    }
+
+    const drift = await dbImpl.getDriftForActivity(userId, activityId);
+    if (!drift) {
+      return res.json({
+        ok: false,
+        userId,
+        activityId,
+        error: "No drift data for this activity",
+      });
+    }
+
+    return res.json({ ok: true, userId, drift });
+  } catch (err) {
+    console.error("/api/loew/drift error:", err);
+    return res
+      .status(500)
+      .json({ ok: false, error: "Drift analysis failed on server" });
+  }
+});
+
+/**
+ * Execution Score – ציון ביצוע לאימון בודד
+ * body: { userId, activityId }
+ */
+app.post("/api/loew/execution-score", async (req, res) => {
+  try {
+    const { userId: bodyUserId, activityId } = req.body || {};
+    const userId = bodyUserId || DEFAULT_USER_ID;
+
+    if (!activityId) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "activityId is required" });
+    }
+
+    const score = await dbImpl.getExecutionScoreForActivity(userId, activityId);
+    if (!score) {
+      return res.json({
+        ok: false,
+        userId,
+        activityId,
+        error: "No execution score for this activity",
+      });
+    }
+
+    return res.json({ ok: true, userId, score });
+  } catch (err) {
+    console.error("/api/loew/execution-score error:", err);
+    return res
+      .status(500)
+      .json({ ok: false, error: "Execution score failed on server" });
+  }
+});
+
+
 /* ---------------- STRAVA WEBHOOKS ---------------- */
 
 app.get("/strava/webhook", (req, res) => {
