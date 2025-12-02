@@ -22,8 +22,6 @@
         color: #e5e7eb;
       }
 
-      /* ===== LAYOUT ===== */
-
       .app {
         min-height: 100vh;
         display: flex;
@@ -59,7 +57,7 @@
         }
       }
 
-      /* ===== HEADER ===== */
+      /* HEADER */
 
       .header {
         display: flex;
@@ -114,7 +112,7 @@
         align-items: flex-start;
       }
 
-      /* ===== CHAT BODY ===== */
+      /* CHAT BODY */
 
       .chat-body {
         flex: 1;
@@ -202,7 +200,7 @@
         }
       }
 
-      /* ===== INPUT BAR ===== */
+      /* INPUT */
 
       .input-wrap {
         position: sticky;
@@ -321,14 +319,14 @@
           </div>
           <div class="small-note">
             אפשר להשתמש באותו לינק לכמה רוכבים – לכל אחד פשוט userId אחר
-            בכתובת.
+            בכתובת (למשל ?userId=yoram).
           </div>
         </div>
       </div>
     </div>
 
     <script>
-      // ===== USER ID LOGIC =====
+      // ===== USER ID =====
       function getUserIdFromUrlOrStorage() {
         const params = new URLSearchParams(window.location.search);
         let id = params.get("userId");
@@ -380,26 +378,7 @@
         messagesEl.scrollTop = messagesEl.scrollHeight;
       }
 
-      function addHtmlMessage(html, who) {
-        const row = document.createElement("div");
-        row.className =
-          "message-row " + (who === "user" ? "user" : "assistant");
-
-        const avatar = document.createElement("div");
-        avatar.className =
-          "avatar " + (who === "user" ? "user" : "assistant");
-        avatar.textContent = who === "user" ? "אני" : "L";
-
-        const bubble = document.createElement("div");
-        bubble.className =
-          "bubble " + (who === "user" ? "user" : "assistant");
-        bubble.innerHTML = html;
-
-        row.appendChild(avatar);
-        row.appendChild(bubble);
-        messagesEl.appendChild(row);
-        messagesEl.scrollTop = messagesEl.scrollHeight;
-      }
+      // ===== STRAVA SNAPSHOT HELPERS =====
 
       async function fetchSnapshotOnce() {
         try {
@@ -409,14 +388,10 @@
             body: JSON.stringify({ userId: USER_ID }),
           });
           const data = await res.json();
-
           if (data.ok && data.snapshot) {
-            if (typeof data.snapshot.hasStrava === "boolean") {
-              hasStrava = data.snapshot.hasStrava;
-            } else {
-              // אם חזר snapshot – נניח שיש סטרבה (fallback)
-              hasStrava = true;
-            }
+            hasStrava = true;
+            // אפשר לראות בקונסול לצורכי דיבאג
+            console.log("Initial snapshot:", data.snapshot);
             return data.snapshot;
           } else {
             hasStrava = false;
@@ -437,20 +412,18 @@
             body: JSON.stringify({ userId: USER_ID }),
           });
           const data = await res.json();
-
           if (data.ok && data.snapshot) {
-            if (typeof data.snapshot.hasStrava === "boolean") {
-              hasStrava = data.snapshot.hasStrava;
-            } else {
-              hasStrava = true;
-            }
+            hasStrava = true;
             return data.snapshot;
           }
         } catch (err) {
           console.warn("snapshot error", err);
         }
+        hasStrava = false;
         return null;
       }
+
+      // ===== CHAT API =====
 
       async function callChatAPI(text, snapshot) {
         const res = await fetch("/api/loew/chat", {
@@ -474,16 +447,14 @@
         inputEl.focus();
         sendBtn.disabled = true;
 
-        // טריגר לחיבור סטרבה כשכותבים "כן"
+        // טריגר לחיבור סטרבה כשכותבים "כן" והפרונט חושב שאין סטרבה
         const normalized = text
           .trim()
           .toLowerCase()
           .replace(/[.!?…]/g, "");
         if (
           !hasStrava &&
-          (normalized === "כן" ||
-            normalized === "yes" ||
-            normalized === "y")
+          (normalized === "כן" || normalized === "yes" || normalized === "y")
         ) {
           const url = "/auth/strava?userId=" + encodeURIComponent(USER_ID);
           window.location.href = url;
@@ -493,6 +464,7 @@
           return;
         }
 
+        // בכל הודעה נביא snapshot עדכני ונעביר לשרת
         let snapshot = await fetchSnapshot();
 
         try {
@@ -526,35 +498,10 @@
 
       // ===== INIT =====
       (async function init() {
-        const snapshot = await fetchSnapshotOnce();
+        await fetchSnapshotOnce();
 
-        if (hasStrava) {
-          // פתיחה "נקייה" לשימוש שוטף
-          addMessage(
-            "היי, אני LOEW.\n" +
-              "יש לי נתונים עבורך. אתה יכול לשאול מה האימון שלך היום, לבקש ניתוח שבועי, או לעדכן נתונים אישיים.",
-            "assistant"
-          );
-          return;
-        }
-
-        // אין סטרבה – מציעים להתחבר
-        addMessage(
-          "היי, אני LOEW.\n" +
-            "אני רואה שעוד לא חיברת חשבון Strava.\n" +
-            "יש לך סטרבה שתרצה לחבר? תכתוב 'כן' כדי להתחבר, או 'לא' אם תרצה להמשיך בלי.",
-          "assistant"
-        );
-
-        const stravaUrl =
-          "/auth/strava?userId=" + encodeURIComponent(USER_ID);
-
-        addHtmlMessage(
-          'או שפשוט <a href="' +
-            stravaUrl +
-            '" style="color:#22c55e; text-decoration:underline;">לחץ כאן להתחברות לסטרבה</a>.',
-          "assistant"
-        );
+        // פתיחה נקייה, בלי לדבר על סטרבה
+        addMessage("היי, אני LOEW.\nאיך אפשר לעזור לך היום?", "assistant");
       })();
     </script>
   </body>
