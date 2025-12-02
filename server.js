@@ -28,12 +28,16 @@ const onboarding = new OnboardingEngine(dbImpl);
 
 // ===== STATIC FRONTEND (index.html) =====
 
-app.use(express.static(__dirname));
+// ===== STATIC FRONTEND (index.html) =====
 
+// מגיש את כל הקבצים מתוך public (index.html, style.css וכו')
+app.use(express.static(path.join(__dirname, "public")));
+
+// כשנכנסים ל-root, מגיש את public/index.html
 app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "index.html"));
-  // אם הקובץ שלך נקרא אחרת (למשל index.html) – תעדכן את השם פה
+  res.sendFile(path.join(__dirname, "public", "index.html"));
 });
+
 // ===== UTIL =====
 function getUserIdFromBody(req) {
   const userId =
