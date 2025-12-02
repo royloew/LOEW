@@ -11,9 +11,6 @@ import { OnboardingEngine } from "./onboardingEngine.js";
 import path from "path";
 
 
-app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "index.html"));
-});
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -31,8 +28,10 @@ const onboarding = new OnboardingEngine(dbImpl);
 
 // ===== STATIC FRONTEND (index.html) =====
 
+app.use(express.static(__dirname));
+
 app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "LOEW Chat.html"));
+  res.sendFile(path.join(__dirname, "index.html"));
   // אם הקובץ שלך נקרא אחרת (למשל index.html) – תעדכן את השם פה
 });
 // ===== UTIL =====
