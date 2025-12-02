@@ -174,7 +174,6 @@ async function getAccessTokenForUser(userId) {
   const margin = 60;
 
   if (tokens.expires_at && tokens.expires_at - margin <= nowSec) {
-    // צריך לרענן
     console.log("Refreshing Strava token for user:", userId);
     const refreshed = await refreshStravaTokens(tokens);
     tokens = refreshed;
@@ -192,8 +191,6 @@ async function getAccessTokenForUser(userId) {
 
 /**
  * Builder מהיר ל-snapshot מ-API של Strava.
- * כאן אנחנו מקבלים אובייקט tokens (או לפחות access_token בפנים).
- *
  * מחזיר:
  *  - training_summary
  *  - hr_max_from_data / hr_threshold_from_data
@@ -239,7 +236,7 @@ async function buildStravaSnapshot(tokens) {
       return t >= cutoff;
     });
 
-    // ----- HR max & threshold -----
+    // HR max & threshold
     let hrMaxFromData = null;
     for (const a of acts90) {
       if (a.has_heartrate && typeof a.max_heartrate === "number") {
@@ -254,7 +251,7 @@ async function buildStravaSnapshot(tokens) {
       hrThresholdFromData = Math.round(hrMaxFromData * 0.9);
     }
 
-    // ----- סיכום נפח 90 יום -----
+    // סיכום נפח 90 יום
     const totalSeconds = acts90.reduce(
       (sum, a) => sum + (a.moving_time || 0),
       0
@@ -278,7 +275,7 @@ async function buildStravaSnapshot(tokens) {
       avgHoursPerWeek,
     };
 
-    // ----- FTP בסיסי -----
+    // FTP בסיסי מה-athlete
     const ftpFromStrava =
       typeof athlete.ftp === "number" ? athlete.ftp : null;
 
@@ -298,14 +295,14 @@ async function buildStravaSnapshot(tokens) {
       from_3min: ftpFrom3min,
     };
 
-    const ftpFromStreams = null; // הלוגיקה המלאה יושבת ב-dbSqlite/StravaIngest
+    const ftpFromStreams = null; // הלוגיקה המלאה ב-StravaIngest/dbSqlite
 
-    // ----- הרכיבה האחרונה + רשימת רכיבות -----
-
+    // הרכיבה האחרונה + רשימת רכיבות
     const sortedActs = (acts || [])
       .slice()
       .sort(
-        (a, b) => new Date(b.start_date).getTime() - new Date(a.start_date).getTime()
+        (a, b) =>
+          new Date(b.start_date).getTime() - new Date(a.start_date).getTime()
       );
 
     let latestActivity = null;
@@ -333,7 +330,9 @@ async function buildStravaSnapshot(tokens) {
         moving_time_s: latest.moving_time || null,
         total_elevation_m: latest.total_elevation_gain || null,
         average_power:
-          typeof latest.average_watts === "number" ? latest.average_watts : null,
+          typeof latest.average_watts === "number"
+            ? latest.average_watts
+            : null,
         max_power:
           typeof latest.max_watts === "number" ? latest.max_watts : null,
         average_heartrate: latest.average_heartrate || null,
@@ -362,7 +361,9 @@ async function buildStravaSnapshot(tokens) {
 
     return {
       user_from_strava: {
-        name: `${athlete.firstname || ""} ${athlete.lastname || ""}`.trim(),
+        name: `${athlete.firstname || ""} ${
+          athlete.lastname || ""
+        }`.trim(),
         weight_kg: athlete.weight || null,
         sex: athlete.sex || null,
       },
@@ -384,16 +385,15 @@ async function buildStravaSnapshot(tokens) {
   }
 }
 
-/* ---------------- DB IMPL + STRAVA CLIENT + INGEST + ONBOARDING ---------------- */
+/* ---------------- DB IMPL + STRAVA SERVICES + ONBOARDING ---------------- */
 
 const dbImpl = createDbImpl({
   // dbSqlite עדיין משתמש ב-getStravaTokens (למשל ל-computeHrAndFtpFromStrava)
-  // כאן נשאיר את זה כמפה בזיכרון – כי אחרי /exchange_token אנחנו ממלאים אותה.
   getStravaTokens: (userId) => stravaTokensByUser.get(userId) || null,
   buildStravaSnapshot,
 });
 
-// Strava client – עכשיו מקבל פונקציה שמטפלת בטוקן + רענון + DB
+// Strava client – מקבל פונקציה שמטפלת בטוקן + רענון + DB
 const stravaClient = new StravaClient(getAccessTokenForUser);
 
 // שירות ingest – אחראי למשוך פעילויות וסטראימים ולעדכן DB
@@ -441,97 +441,65 @@ then:
   use latest_activity and latest_activity_is_today to answer clearly.
   Explicitly say up to which date/time you have data and give a short summary
   (duration, distance, elevation, average power and heart rate if available).
-
-- When the user asks to analyse a specific ride by date
-  (for example: "תנתח לי את הרכיבה מ-2025-11-30"),
-  scan recent_activities for a ride whose start_date falls on that calendar day
-  (ignore time-of-day). If found, base your analysis on its metrics
-  (distance_km, moving_time_s, total_elevation_m, average_power, max_power,
-   average_heartrate, max_heartrate). If not found, say you don't have that ride
-   and explain which date range you do have Strava data for.
-
-When the user asks about anything else (code, emails, work, explanations, relationships, life questions, etc.):
-- Behave like a normal, smart, general-purpose assistant.
-- Still keep answers concise, helpful, and well-structured.
 `;
 
-function isCyclingRelated(message) {
-  const text = (message || "").toLowerCase();
+/* ---------------- HELPERS ---------------- */
 
+function isCyclingRelated(text) {
+  if (!text) return false;
+  const t = text.toLowerCase();
   const keywords = [
-    "bike",
-    "ride",
-    "cycling",
-    "training",
-    "interval",
-    "ftp",
-    "watt",
-    "watts",
-    "heart rate",
-    "strava",
-    "gran fondo",
-    "mtb",
-    "road ride",
-    "trainer",
-    "zwift",
-    // עברית
     "אימון",
     "אימונים",
     "אופניים",
     "רכיבה",
-    "עליה",
-    "עליות",
+    "ftp",
     "וואט",
-    "וואטים",
-    "דופק",
-    "סטרבה",
-    "גרן פונדו",
-    "טריינר",
-    "קצב",
-    "ספרינט",
+    "watt",
     "זון",
-    "זונ",
+    "zones",
+    "מאמן",
+    "strava",
+    "סטרבה",
   ];
-
-  return keywords.some((kw) => text.includes(kw));
+  return keywords.some((k) => t.includes(k));
 }
 
-/* ---------------- STRAVA AUTH ---------------- */
+/* ---------------- ROOT & STATIC ---------------- */
+
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
+/* ---------------- STRAVA OAUTH FLOW ---------------- */
 
 app.get("/auth/strava", (req, res) => {
-  const clientId = process.env.STRAVA_CLIENT_ID;
-  const redirectUri = process.env.STRAVA_REDIRECT_URI;
   const userId = req.query.userId || DEFAULT_USER_ID;
+  const redirectUri =
+    process.env.STRAVA_REDIRECT_URI ||
+    "https://loew.onrender.com/exchange_token";
 
-  if (!clientId || !redirectUri) {
-    console.error("Missing STRAVA_CLIENT_ID or STRAVA_REDIRECT_URI in .env");
-    return res.status(500).send("Strava not configured");
-  }
+  const url = new URL("https://www.strava.com/oauth/authorize");
+  url.searchParams.set("client_id", process.env.STRAVA_CLIENT_ID);
+  url.searchParams.set("redirect_uri", redirectUri);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("approval_prompt", "auto");
+  url.searchParams.set("scope", "read,activity:read_all");
+  url.searchParams.set("state", userId);
 
-  const url =
-    "https://www.strava.com/oauth/mobile/authorize" +
-    `?client_id=${clientId}` +
-    `&response_type=code` +
-    `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-    `&approval_prompt=auto` +
-    `&scope=read,activity:read_all,profile:read_all` +
-    `&state=${encodeURIComponent(userId)}`;
-
-  res.redirect(url);
+  res.redirect(url.toString());
 });
 
 app.get("/exchange_token", async (req, res) => {
+  const { code, state } = req.query;
+  const userId = state || DEFAULT_USER_ID;
+
+  if (!code) {
+    return res.status(400).send("Missing 'code'");
+  }
+
   try {
-    const code = req.query.code;
-    const state = req.query.state;
-    const userId = state || DEFAULT_USER_ID;
-
-    if (!code) {
-      console.error("Missing code from Strava");
-      return res.status(400).send("Missing code");
-    }
-
-    const tokenResp = await fetch("https://www.strava.com/oauth/token", {
+    const resp = await fetch("https://www.strava.com/oauth/token", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -542,25 +510,96 @@ app.get("/exchange_token", async (req, res) => {
       }),
     });
 
-    const json = await tokenResp.json();
-    if (!tokenResp.ok) {
-      console.error("Strava token error:", json);
-      return res.status(500).send("Strava auth failed");
+    const json = await resp.json();
+    if (!resp.ok) {
+      console.error("Error exchanging Strava code:", json);
+      return res.status(500).send("Failed to exchange Strava code");
     }
 
-    // שמירה במפה + DB
     setStravaTokens(userId, json);
-    console.log("Strava tokens saved for user:", userId);
 
-    // עדכון מנוע האונבורדינג (יגרור גם ingest ו-computeHrAndFtpFromStrava)
-    await onboardingEngine.handleStravaConnected(userId);
+    try {
+      const metrics = await dbImpl.computeHrAndFtpFromStrava(userId);
+      console.log("computeHrAndFtpFromStrava after connect:", metrics);
+    } catch (err) {
+      console.error("Error computeHrAndFtpFromStrava:", err);
+    }
 
-    return res.redirect(
-      `/?strava=connected&userId=${encodeURIComponent(userId)}`
-    );
+    try {
+      await onboardingEngine.handleStravaConnected(userId);
+    } catch (err) {
+      console.error("Error in handleStravaConnected:", err);
+    }
+
+    const redirectUrl = `/?userId=${encodeURIComponent(
+      userId
+    )}&strava=connected`;
+    res.redirect(redirectUrl);
   } catch (err) {
-    console.error("Strava /exchange_token error:", err);
-    res.status(500).send("Strava auth failed");
+    console.error("exchange_token error:", err);
+    res.status(500).send("Strava exchange_token failed");
+  }
+});
+
+/* ---------------- STRAVA WEBHOOK (OPTIONAL) ---------------- */
+
+// אימות webhook
+app.get("/api/strava/webhook", (req, res) => {
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+
+  if (mode === "subscribe" && token === process.env.STRAVA_VERIFY_TOKEN) {
+    console.log("Strava webhook verified");
+    return res.json({ "hub.challenge": challenge });
+  }
+
+  res.status(403).send("Verification failed");
+});
+
+// קבלת events מ-Strava
+app.post("/api/strava/webhook", async (req, res) => {
+  const event = req.body || {};
+  console.log("Strava webhook event:", event);
+
+  res.status(200).json({ ok: true });
+
+  try {
+    if (event.object_type === "activity" && event.aspect_type === "create") {
+      const activityId = event.object_id;
+      const athleteId = event.owner_id;
+
+      console.log(
+        `Webhook: new activity ${activityId} from athlete ${athleteId}`
+      );
+
+      const userId = DEFAULT_USER_ID; // אפשר בהמשך למפות athleteId -> userId
+
+      await stravaIngest.ingestActivity(userId, activityId);
+      console.log("Ingested via webhook:", activityId);
+
+      try {
+        const metrics = await dbImpl.computeHrAndFtpFromStrava(userId);
+        console.log("Recomputed HR/FTP from webhook:", {
+          hrMax: metrics?.hrMaxCandidate,
+          hrThreshold: metrics?.hrThresholdCandidate,
+          ftpRecommended: metrics?.ftpRecommended,
+        });
+      } catch (err) {
+        console.error(
+          "Error while recomputing metrics from Strava after webhook:",
+          err
+        );
+      }
+    } else {
+      console.log(
+        "Strava webhook: event ignored (not activity/create):",
+        event.object_type,
+        event.aspect_type
+      );
+    }
+  } catch (err) {
+    console.error("Webhook error:", err);
   }
 });
 
@@ -571,26 +610,22 @@ app.post("/api/loew/strava-snapshot", async (req, res) => {
     const { userId: bodyUserId } = req.body || {};
     const userId = bodyUserId || DEFAULT_USER_ID;
 
-    let tokens = stravaTokensByUser.get(userId);
+    const tokens = loadStravaTokensFromDb(userId);
     if (!tokens) {
-      // ננסה לטעון מה-DB
-      const fromDb = loadStravaTokensFromDb(userId);
-      if (!fromDb) {
-        return res.status(400).json({
-          ok: false,
-          error:
-            "No Strava tokens for this user. Please connect Strava first.",
-        });
-      }
-      tokens = fromDb;
-      stravaTokensByUser.set(userId, tokens);
+      return res.json({
+        ok: false,
+        error: "No Strava tokens for this user. Please connect Strava first.",
+        userId,
+      });
     }
 
     const snapshot = await buildStravaSnapshot(tokens);
     if (!snapshot) {
-      return res
-        .status(500)
-        .json({ ok: false, error: "Failed to build Strava snapshot" });
+      return res.json({
+        ok: false,
+        error: "Failed to build Strava snapshot",
+        userId,
+      });
     }
 
     return res.json({ ok: true, snapshot, userId });
@@ -708,87 +743,12 @@ app.post("/api/loew/execution-score", async (req, res) => {
       });
     }
 
-    return res.json({ ok: true, userId, score });
+    return res.json({ ok: true, userId, execution: score });
   } catch (err) {
     console.error("/api/loew/execution-score error:", err);
     return res
       .status(500)
       .json({ ok: false, error: "Execution score failed on server" });
-  }
-});
-
-
-/* ---------------- STRAVA WEBHOOKS ---------------- */
-
-app.get("/strava/webhook", (req, res) => {
-  try {
-    const challenge = req.query["hub.challenge"];
-    const verifyToken = req.query["hub.verify_token"];
-    const expectedToken = process.env.STRAVA_WEBHOOK_VERIFY_TOKEN;
-
-    if (!challenge) {
-      console.warn("Strava webhook verification: missing hub.challenge");
-      return res.status(400).send("Missing hub.challenge");
-    }
-
-    if (expectedToken && verifyToken !== expectedToken) {
-      console.warn(
-        "Strava webhook verification failed: invalid verify_token",
-        verifyToken
-      );
-      return res.status(403).send("Invalid verify_token");
-    }
-
-    console.log("Strava webhook verified successfully");
-    return res.status(200).json({ "hub.challenge": challenge });
-  } catch (err) {
-    console.error("Strava webhook verification error:", err);
-    return res.status(500).send("Verification error");
-  }
-});
-
-app.post("/strava/webhook", async (req, res) => {
-  const event = req.body || {};
-  console.log("Strava webhook event:", JSON.stringify(event));
-
-  res.status(200).json({ ok: true });
-
-  try {
-    if (event.object_type === "activity" && event.aspect_type === "create") {
-      const activityId = event.object_id;
-      const athleteId = event.owner_id;
-
-      console.log(
-        `Webhook: new activity ${activityId} from athlete ${athleteId}`
-      );
-
-      const userId = DEFAULT_USER_ID; // אם תרצה: למפות athleteId -> userId בטבלה
-
-      await stravaIngest.ingestActivity(userId, activityId);
-      console.log("Ingested via webhook:", activityId);
-
-      try {
-        const metrics = await dbImpl.computeHrAndFtpFromStrava(userId);
-        console.log("Recomputed HR/FTP from webhook:", {
-          hrMax: metrics?.hrMaxCandidate,
-          hrThreshold: metrics?.hrThresholdCandidate,
-          ftpRecommended: metrics?.ftpRecommended,
-        });
-      } catch (err) {
-        console.error(
-          "Error while recomputing metrics from Strava after webhook:",
-          err
-        );
-      }
-    } else {
-      console.log(
-        "Strava webhook: event ignored (not activity/create):",
-        event.object_type,
-        event.aspect_type
-      );
-    }
-  } catch (err) {
-    console.error("Webhook error:", err);
   }
 });
 
@@ -810,6 +770,7 @@ app.post("/api/loew/chat", async (req, res) => {
     const onboardingDone = obState && obState.onboardingCompleted;
     const cyclingRelated = isCyclingRelated(text);
 
+    // שלב אונבורדינג – אם עוד לא הושלם ויש שאלה/בקשה שקשורה לאופניים
     if (!onboardingDone && cyclingRelated) {
       const reply = await onboardingEngine.handleMessage(userId, text);
 
@@ -861,15 +822,12 @@ app.post("/api/loew/chat", async (req, res) => {
 
     history.push({ role: "assistant", content: replyText });
 
-    return res.json({
-      ok: true,
-      reply: replyText,
-      onboarding: false,
-      userId,
-    });
+    return res.json({ ok: true, reply: replyText, userId });
   } catch (err) {
-    console.error("unified chat error:", err);
-    return res.status(500).json({ ok: false, error: "Chat failed" });
+    console.error("/api/loew/chat error:", err);
+    return res
+      .status(500)
+      .json({ ok: false, error: "Chat failed on server" });
   }
 });
 
