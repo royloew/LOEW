@@ -280,46 +280,23 @@ export class OnboardingEngine {
       state.stage = "personal_details_intro";
       await this._saveState(userId, state);
 
-      return { reply: msg1, onboarding: true };
-    }
-
-    // fallback – אין מספיק נתונים ל-90 יום
-    state.stage = "personal_details_intro";
-    await this._saveState(userId, state);
-
-    return {
-      reply:
-        "לא מצאתי מספיק רכיבות מ־90 הימים האחרונים כדי להציג סיכום נפח.\n" +
-        "בוא נעבור לנתונים האישיים שלך.",
-      onboarding: true,
-    };
-  }
-
-    // מוודא שיש לנו volume + ftp models + training summary
-    state = await this._ensureStravaMetrics(userId, state);
-
-    const ts = state.data.trainingSummary;
-    const volume = state.data.volume;
-
-    if (ts && ts.rides_count > 0) {
-      const hours = (ts.totalMovingTimeSec / 3600).toFixed(1);
-      const km = ts.totalDistanceKm.toFixed(1);
-      const elevation = Math.round(ts.totalElevationGainM);
-      const avgStr = this._formatMinutes(ts.avgDurationSec);
-      const offPct =
-        ts.offroadPct != null ? Math.round(ts.offroadPct) : null;
-      const roadPct =
-        offPct != null ? Math.max(0, 100 - offPct) : null;
-
-      let msg1 = "אני רואה לפי סטרבה שב־~90 הימים האחרונים:\n";
-      msg1 += `1. רכבת ${hours} שעות\n`;
-      msg1 += `2. רכבת ${km} ק״מ\n`;
-      msg1 += `3. טיפסת ${elevation} מטר\n`;
-      msg1 += `4. משך רכיבה ממוצעת שלך הוא ${avgStr}\n`;
-      if (offPct != null && roadPct != null) {
-        msg1 += `5. רכבת בערך ${offPct}% שטח ו־${roadPct}% כביש`;
+        return { reply: msg1, onboarding: true };
       }
 
+      // fallback – אין מספיק נתונים ל-90 יום
+      state.stage = "personal_details_intro";
+      await this._saveState(userId, state);
+
+      return {
+        reply:
+          "לא מצאתי מספיק רכיבות מ־90 הימים האחרונים כדי להציג סיכום נפח.\n" +
+          "בוא נעבור לנתונים האישיים שלך.",
+        onboarding: true,
+      };
+    }
+
+     
+     
       state.stage = "personal_details_intro";
       await this._saveState(userId, state);
       return { reply: msg1, onboarding: true };
