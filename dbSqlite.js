@@ -53,8 +53,7 @@ function all(sql, params = []) {
 // ---------- Schema init ----------
 
 async function init() {
-  // משתמשים – עם json כדי שנוכל לשמור future profile/chat אם צריך
-  await run(`DROP TABLE IF EXISTS users;`);
+  
   await run(`
     CREATE TABLE IF NOT EXISTS users (
       user_id   TEXT PRIMARY KEY,
@@ -88,6 +87,23 @@ async function init() {
       updated_at        INTEGER
     );
   `);
+
+    // לוודא שהעמודות החדשות של מודלי FTP קיימות גם ב-DB ישן
+  try {
+    await run(`ALTER TABLE training_params ADD COLUMN ftp_from_20min INTEGER;`);
+  } catch (e) {
+    // מתעלם משגיאה אם העמודה כבר קיימת
+  }
+  try {
+    await run(`ALTER TABLE training_params ADD COLUMN ftp_from_3min INTEGER;`);
+  } catch (e) {}
+  try {
+    await run(`ALTER TABLE training_params ADD COLUMN ftp_from_cp INTEGER;`);
+  } catch (e) {}
+  try {
+    await run(`ALTER TABLE training_params ADD COLUMN ftp_recommended INTEGER;`);
+  } catch (e) {}
+
 
   await run(`
     CREATE TABLE IF NOT EXISTS strava_tokens (
@@ -651,14 +667,61 @@ export async function createDbImpl() {
   }
 
   // נקראת ע"י מנוע האונבורדינג – גם אינג'סט וגם חישוב
+    // נקראת ע"י מנוע האונבורדינג – גם אינג'סט וגם חישוב
   async function ingestAndComputeFromStrava(userId) {
     const tokens = await getStravaTokens(userId);
     if (!tokens) return null;
 
+    // מביאים ומכניסים את כל הנתונים הגולמיים
     await fetchAndStoreStravaData(userId);
+
+    // מחשבים מודלים של FTP + דופק + ווליום וכו'
     const metrics = await computeMetricsFromDb(userId);
+
+    // שומרים את מודלי ה-FTP בטבלת training_params (בעמודות החדשות)
+    if (metrics) {
+      const now = Math.floor(Date.now() / 1000);
+      const {
+        ftpFrom20min,
+        ftpFrom3minModel,
+        ftpFromCP,
+        ftpRecommended,
+      } = metrics;
+
+      const existing = await get(
+        `SELECT user_id FROM training_params WHERE user_id = ?`,
+        [userId]
+      );
+
+      const values = [
+        ftpFrom20min ?? null,
+        ftpFrom3minModel ?? null,
+        ftpFromCP ?? null,
+        ftpRecommended ?? null,
+        now,
+        userId,
+      ];
+
+      if (!existing) {
+        await run(
+          `INSERT INTO training_params
+           (ftp_from_20min, ftp_from_3min, ftp_from_cp, ftp_recommended, updated_at, user_id)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          values
+        );
+      } else {
+        await run(
+          `UPDATE training_params
+           SET ftp_from_20min = ?, ftp_from_3min = ?, ftp_from_cp = ?, ftp_recommended = ?, updated_at = ?
+           WHERE user_id = ?`,
+          values
+        );
+      }
+    }
+
     return metrics;
   }
+
 
   // משמשת ב-_ensureStravaMetrics לפני/אחרי אינג'סט
   async function getVolumeSummaryFromDb(userId) {
