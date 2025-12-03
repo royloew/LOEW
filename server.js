@@ -182,6 +182,15 @@ app.get("/exchange_token", async (req, res) => {
       expiresAt,
     });
 
+try {
+  console.log("[STRAVA] Starting ingestAndComputeFromStrava for", userId);
+  const metrics = await dbImpl.ingestAndComputeFromStrava(userId);
+  console.log("[STRAVA] Ingest done for", userId, "metrics:", metrics);
+} catch (err) {
+  console.error("[STRAVA] ingestAndComputeFromStrava failed:", err);
+}
+
+
     // לא מבצעים כאן אינג'סט מלא – זה יעשה ע"י מנוע האונבורדינג בשיחה הראשונה אחרי ההתחברות
     const redirectUrl = `/index.html?userId=${encodeURIComponent(
   userId
