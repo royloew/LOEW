@@ -2,7 +2,8 @@ import sqlite3 from "sqlite3";
 
 sqlite3.verbose();
 
-const DB_FILE = process.env.LOEW_DB_FILE || "./loew.db";
+const DB_FILE = process.env.LOEW_DB_FILE || "/tmp/loew.db";
+
 const db = new sqlite3.Database(DB_FILE);
 
 // ---------- Helpers for sqlite ----------
