@@ -270,7 +270,8 @@ export class OnboardingEngine {
 
     const num = this._extractNumber(text);
 
-        if (!p.age) {
+    // ---- גיל ----
+    if (!p.age) {
       if (!num) {
         return {
           reply:
@@ -311,15 +312,7 @@ export class OnboardingEngine {
       };
     }
 
-      p.age = Math.round(num);
-      state.data.profile = p;
-      await this._saveState(userId, state);
-      return {
-        reply: `רשמתי: גיל ${p.age}.\nמה המשקל הנוכחי שלך בק״ג?`,
-        onboarding: true,
-      };
-    }
-
+    // ---- משקל ----
     if (!p.weight) {
       if (!num) {
         return {
@@ -337,6 +330,7 @@ export class OnboardingEngine {
       };
     }
 
+    // ---- גובה ----
     if (!p.height) {
       if (!num) {
         return {
