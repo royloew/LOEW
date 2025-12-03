@@ -270,13 +270,47 @@ export class OnboardingEngine {
 
     const num = this._extractNumber(text);
 
-    if (!p.age) {
+        if (!p.age) {
       if (!num) {
         return {
-          reply: "כדי שנמשיך, תכתוב לי את הגיל שלך (מספר שנים, למשל 46).",
+          reply:
+            "כדי שנמשיך, תכתוב לי את הגיל שלך (מספר שנים, למשל 46).",
           onboarding: true,
         };
       }
+
+      p.age = Math.round(num);
+      state.data.profile = p;
+      await this._saveState(userId, state);
+
+      // מנסה להביא משקל שהגיע מסטרבה (אם נשמר ב-training_params)
+      let weightFromDb = null;
+      try {
+        const params = await this.db.getTrainingParams(userId);
+        if (params && params.weight != null) {
+          weightFromDb = Number(params.weight.toFixed(1));
+        }
+      } catch (err) {
+        // אם יש בעיה – פשוט נתעלם ונמשיך כרגיל
+      }
+
+      if (weightFromDb != null) {
+        return {
+          reply:
+            `רשמתי: גיל ${p.age}.\n` +
+            `לפי הנתונים מסטרבה, המשקל שלך הוא בערך ${weightFromDb} ק״ג.\n` +
+            `אם זה עדיין נכון, תכתוב לי את המשקל שלך כדי לאשר (למשל "${weightFromDb}"). ואם יש עדכון – תכתוב את המשקל המעודכן שלך בק״ג.`,
+          onboarding: true,
+        };
+      }
+
+      // אין לנו משקל מסטרבה → שאלה רגילה כמו קודם
+      return {
+        reply: `רשמתי: גיל ${p.age}.\nמה המשקל הנוכחי שלך בק״ג?`,
+        onboarding: true,
+      };
+    }
+
       p.age = Math.round(num);
       state.data.profile = p;
       await this._saveState(userId, state);
@@ -391,7 +425,7 @@ export class OnboardingEngine {
     const msg =
       "עבור FTP חישבתי כמה מודלים שונים מהנתונים שלך (אם היו מספיק רכיבות עם וואטים):\n\n" +
       `• מודל 20 דקות: ${f20}\n` +
-      `• מודל 3 דקות/Power Curve: ${f3}\n` +
+      `• מודל 3 דקות (Power Curve): ${f3}\n` +
       `• מודל קריטי (CP): ${fcp}\n\n` +
       `לפי כל אלו, ההמלצה שלי ל-FTP התחלתי היא: ${frec}.\n\n` +
       'אם הערך הזה נשמע לך הגיוני, תכתוב לי אותו (למשל "FTP 240"). אם אתה יודע ערך אחר שמתאים יותר למציאות – תכתוב אותו ואני אעדכן.';

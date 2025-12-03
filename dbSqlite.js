@@ -446,6 +446,31 @@ export async function createDbImpl() {
     }));
   }
 
+  async function fetchStravaAthleteProfile(tokens) {
+    const headers = {
+      Authorization: `Bearer ${tokens.accessToken}`,
+    };
+    const url = new URL("https://www.strava.com/api/v3/athlete");
+
+    try {
+      const res = await fetch(url.toString(), { headers });
+      if (!res.ok) {
+        const text = await res.text();
+        console.warn("Strava athlete fetch failed:", text);
+        return null;
+      }
+      const data = await res.json();
+      if (data && typeof data.weight === "number") {
+        return { weightKg: data.weight };
+      }
+      return null;
+    } catch (err) {
+      console.warn("Strava athlete fetch error:", err);
+      return null;
+    }
+  }
+
+
   async function fetchStreamsForActivity(tokens, activityId) {
     const headers = {
       Authorization: `Bearer ${tokens.accessToken}`,
@@ -490,6 +515,17 @@ export async function createDbImpl() {
     if (!tokens) return null;
 
     const activities = await fetchStravaActivitiesFromAPI(userId, tokens);
+
+        // מביא משקל מהפרופיל של סטרבה, אם קיים, ושומר כ-weight התחלתי
+    try {
+      const athlete = await fetchStravaAthleteProfile(tokens);
+      if (athlete && athlete.weightKg) {
+        await saveTrainingParams(userId, { weight: athlete.weightKg });
+      }
+    } catch (err) {
+      console.warn("saving Strava weight failed:", err);
+    }
+
 
     await clearStravaData(userId);
     await insertStravaActivities(userId, activities);
@@ -604,7 +640,7 @@ export async function createDbImpl() {
       hrThresholdCandidate = Math.round(hrMaxCandidate * 0.9);
     }
 
-    // Volume summary – min/avg/max משך לכל הפעילויות (שנה אחרונה)
+        // Volume summary – "טיפוסי": קצר/ממוצע/ארוך (שנה אחרונה)
     const volRows = await all(
       `SELECT moving_time
        FROM strava_activities
@@ -614,24 +650,43 @@ export async function createDbImpl() {
 
     let volumeSummary = null;
     if (volRows.length > 0) {
-      const durations = volRows
+      const baseDurations = volRows
         .map((r) => r.moving_time || 0)
         .filter((x) => x > 0)
         .sort((a, b) => a - b);
-      if (durations.length > 0) {
-        const minDuration = durations[0];
-        const maxDuration = durations[durations.length - 1];
+
+      if (baseDurations.length > 0) {
+        // מסנן "שטויות" מאוד קצרות אם יש מספיק רכיבות
+        const filtered =
+          baseDurations.length >= 10
+            ? baseDurations.filter((x) => x >= 600) // 10 דקות ומעלה
+            : baseDurations;
+
+        const durations =
+          filtered.length > 0 ? filtered : baseDurations;
+
         const avgDuration =
           durations.reduce((s, v) => s + v, 0) /
           Math.max(durations.length, 1);
+
+        const percentile = (p) => {
+          if (durations.length === 1) return durations[0];
+          const idx = Math.floor((durations.length - 1) * p);
+          return durations[idx];
+        };
+
+        const shortSec = percentile(0.25); // "קצר טיפוסי"
+        const longSec = percentile(0.75); // "ארוך טיפוסי"
+
         volumeSummary = {
-          ridesCount: durations.length,
-          minDurationSec: minDuration,
+          ridesCount: baseDurations.length,
+          minDurationSec: shortSec,
           avgDurationSec: avgDuration,
-          maxDurationSec: maxDuration,
+          maxDurationSec: longSec,
         };
       }
     }
+
 
     // training summary – 90 הימים האחרונים
     const days90 = 90 * 24 * 3600;
@@ -724,32 +779,49 @@ export async function createDbImpl() {
 
 
   // משמשת ב-_ensureStravaMetrics לפני/אחרי אינג'סט
-  async function getVolumeSummaryFromDb(userId) {
+    async function getVolumeSummaryFromDb(userId) {
     const rows = await all(
       `SELECT moving_time FROM strava_activities WHERE user_id = ?`,
       [userId]
     );
     if (!rows || rows.length === 0) return null;
 
-    const durations = rows
+    const baseDurations = rows
       .map((r) => r.moving_time || 0)
       .filter((x) => x > 0)
       .sort((a, b) => a - b);
 
-    if (durations.length === 0) return null;
+    if (baseDurations.length === 0) return null;
 
-    const minDuration = durations[0];
-    const maxDuration = durations[durations.length - 1];
+    const filtered =
+      baseDurations.length >= 10
+        ? baseDurations.filter((x) => x >= 600)
+        : baseDurations;
+
+    const durations =
+      filtered.length > 0 ? filtered : baseDurations;
+
     const avgDuration =
-      durations.reduce((s, v) => s + v, 0) / Math.max(durations.length, 1);
+      durations.reduce((s, v) => s + v, 0) /
+      Math.max(durations.length, 1);
+
+    const percentile = (p) => {
+      if (durations.length === 1) return durations[0];
+      const idx = Math.floor((durations.length - 1) * p);
+      return durations[idx];
+    };
+
+    const shortSec = percentile(0.25);
+    const longSec = percentile(0.75);
 
     return {
-      ridesCount: durations.length,
-      minDurationSec: minDuration,
+      ridesCount: baseDurations.length,
+      minDurationSec: shortSec,
       avgDurationSec: avgDuration,
-      maxDurationSec: maxDuration,
+      maxDurationSec: longSec,
     };
   }
+
 
   // האובייקט שהשרת וה-onboardingEngine משתמשים בו
   return {
