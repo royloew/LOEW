@@ -142,6 +142,14 @@ async function init() {
     );
   `);
 
+    // לוודא שיש עמודת type גם ב-DB ישן
+  try {
+    await run(`ALTER TABLE strava_activities ADD COLUMN type TEXT;`);
+  } catch (e) {
+    // אם כבר קיימת – מתעלמים מהשגיאה
+  }
+
+
   // power curves – best watts לכל חלון זמן בפר פעילות
   await run(`
     CREATE TABLE IF NOT EXISTS power_curves (
@@ -355,11 +363,11 @@ export async function createDbImpl() {
 
   async function insertStravaActivities(userId, activities) {
     const sql = `
-      INSERT OR REPLACE INTO strava_activities
-      (id, user_id, start_date, moving_time, elapsed_time, distance,
-       total_elevation_gain, avg_power, max_power, avg_hr, max_hr, has_power)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `;
+  INSERT OR REPLACE INTO strava_activities
+  (id, user_id, start_date, moving_time, elapsed_time, distance,
+   total_elevation_gain, avg_power, max_power, avg_hr, max_hr, has_power, type)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`;
     for (const a of activities) {
       await run(sql, [
         a.id,
@@ -374,6 +382,7 @@ export async function createDbImpl() {
         a.avg_hr,
         a.max_hr,
         a.has_power ? 1 : 0,
+        a.type || null,
       ]);
     }
   }
@@ -432,18 +441,20 @@ export async function createDbImpl() {
     });
 
     return filtered.map((a) => ({
-      id: a.id,
-      start_date: Math.floor(new Date(a.start_date).getTime() / 1000),
-      moving_time: a.moving_time || 0,
-      elapsed_time: a.elapsed_time || a.moving_time || 0,
-      distance: a.distance || 0,
-      total_elevation_gain: a.total_elevation_gain || 0,
-      avg_power: a.average_watts || null,
-      max_power: a.max_watts || null,
-      avg_hr: a.average_heartrate || null,
-      max_hr: a.max_heartrate || null,
-      has_power: !!(a.average_watts || a.max_watts || a.device_watts),
-    }));
+  id: a.id,
+  start_date: Math.floor(new Date(a.start_date).getTime() / 1000),
+  moving_time: a.moving_time || 0,
+  elapsed_time: a.elapsed_time || a.moving_time || 0,
+  distance: a.distance || 0,
+  total_elevation_gain: a.total_elevation_gain || 0,
+  avg_power: a.average_watts || null,
+  max_power: a.max_watts || null,
+  avg_hr: a.average_heartrate || null,
+  max_hr: a.max_heartrate || null,
+  has_power: !!(a.average_watts || a.max_watts || a.device_watts),
+  type: a.type || null, // <--- חדש
+}));
+
   }
 
   async function fetchStravaAthleteProfile(tokens) {
@@ -689,25 +700,52 @@ export async function createDbImpl() {
 
 
     // training summary – 90 הימים האחרונים
+        // training summary – 90 הימים האחרונים
     const days90 = 90 * 24 * 3600;
     const tsRows = await all(
-      `SELECT moving_time
+      `SELECT moving_time, distance, total_elevation_gain, type
        FROM strava_activities
        WHERE user_id = ? AND start_date >= ?`,
       [userId, nowSec - days90]
     );
+
     let trainingSummary = null;
     if (tsRows.length > 0) {
-      const secs = tsRows.map((r) => r.moving_time || 0);
-      const totalSec = secs.reduce((s, v) => s + v, 0);
-      const ridesCount = secs.length;
+      let totalSec = 0;
+      let totalDist = 0;
+      let totalElev = 0;
+      let offroadCount = 0;
+
+      const offroadTypes = new Set(["GravelRide", "MountainBikeRide", "EBikeRide"]);
+
+      for (const r of tsRows) {
+        const sec = r.moving_time || 0;
+        totalSec += sec;
+        totalDist += r.distance || 0;
+        totalElev += r.total_elevation_gain || 0;
+        if (r.type && offroadTypes.has(r.type)) {
+          offroadCount += 1;
+        }
+      }
+
+      const ridesCount = tsRows.length;
       const weeks = 90 / 7;
-      const avgHoursPerWeek = (totalSec / 3600) / weeks;
+      const totalHours = totalSec / 3600;
+      const avgHoursPerWeek = totalHours / weeks;
+      const avgDurationSec = ridesCount > 0 ? totalSec / ridesCount : 0;
+      const offroadPct = ridesCount > 0 ? (offroadCount / ridesCount) * 100 : 0;
+
       trainingSummary = {
-        avgHoursPerWeek,
+        avgHoursPerWeek,            // נשאיר כדי לא לשבור לוגים קיימים
         rides_count: ridesCount,
+        totalHours,                 // סך שעות ב-90 יום
+        totalKm: totalDist / 1000,  // ק״מ
+        totalElevationGainM: totalElev,
+        avgDurationSec,
+        offroadPct,
       };
     }
+
 
     return {
       ftpFrom20min,
@@ -834,5 +872,6 @@ export async function createDbImpl() {
     saveStravaTokens,
     ingestAndComputeFromStrava,
     getVolumeSummaryFromDb,
+    computeMetricsFromDb,
   };
 }

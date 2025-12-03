@@ -110,22 +110,49 @@ export class OnboardingEngine {
   }
 
   // מוודא שיש לנו נתוני סטרבה עדכניים (FTP/HR/Volume/TrainingSummary)
-  async _ensureStravaMetrics(userId, state) {
+    async _ensureStravaMetrics(userId, state) {
+    // אם כבר יש volume + מודלים של FTP/דופק – לא צריך שוב
     if (
       state.data.volume &&
-      state.data.trainingSummary &&
       state.data.ftpModels &&
-      state.data.ftpModels.ftpRecommended
+      state.data.ftpModels.ftpRecommended &&
+      state.data.trainingSummary
     ) {
       return state;
     }
 
-    const metrics = await this.db.ingestAndComputeFromStrava(userId);
-    if (!metrics) {
+    // מנסה להביא מה-DB אם כבר קיימות פעילויות
+    const volumeFromDb = await this.db.getVolumeSummaryFromDb(userId);
+    if (volumeFromDb) {
+      state.data.volume = volumeFromDb;
+
+      // אם יש לנו פונקציה לחישוב מלא מה-DB, נשתמש בה כדי להביא גם trainingSummary ו-FTP/HR
+      if (this.db.computeMetricsFromDb) {
+        const metrics = await this.db.computeMetricsFromDb(userId);
+        if (metrics) {
+          state.data.trainingSummary = metrics.trainingSummary || null;
+          state.data.ftpModels = {
+            ftpFrom20min: metrics.ftpFrom20min ?? null,
+            ftpFrom3minModel: metrics.ftpFrom3minModel ?? null,
+            ftpFromCP: metrics.ftpFromCP ?? null,
+            ftpRecommended: metrics.ftpRecommended ?? null,
+            hrMaxCandidate: metrics.hrMaxCandidate ?? null,
+            hrThresholdCandidate: metrics.hrThresholdCandidate ?? null,
+          };
+        }
+      }
+
       return state;
     }
 
-    state.data.volume = metrics.volumeSummary || state.data.volume || null;
+    // אחרת – מבצע אינג'סט מסטרבה
+    const metrics = await this.db.ingestAndComputeFromStrava(userId);
+    if (!metrics) {
+      // אין סטרבה או כשל – ממשיכים בלי
+      return state;
+    }
+
+    state.data.volume = metrics.volumeSummary || null;
     state.data.trainingSummary = metrics.trainingSummary || null;
     state.data.ftpModels = {
       ftpFrom20min: metrics.ftpFrom20min ?? null,
@@ -138,6 +165,7 @@ export class OnboardingEngine {
 
     return state;
   }
+
 
   // ===== MAIN PUBLIC METHOD =====
   async handleMessage(userId, message) {
@@ -243,7 +271,79 @@ export class OnboardingEngine {
   // ===== FLOW STEPS =====
 
   // אחרי שחזרנו מסטרבה – סיכום נפח/ווליום 90 ימים אחרונים
+    // אחרי שחזרנו מסטרבה (או אין סטרבה) – סיכום נפח קצר
   async _stepAfterStravaSummary(userId, text, state) {
+    // מוודא שיש נפח + trainingSummary + מודלים
+    state = await this._ensureStravaMetrics(userId, state);
+
+    const ts = state.data.trainingSummary;
+
+    if (ts && ts.rides_count > 0) {
+      // 1. שעות ב-90 יום
+      let hours = ts.totalHours != null ? ts.totalHours : null;
+      if (hours == null && ts.avgHoursPerWeek != null) {
+        // גיבוי: אם יש רק avgHoursPerWeek – נכפיל ב-~12.9 שבועות
+        hours = ts.avgHoursPerWeek * (90 / 7);
+      }
+      const hoursStr =
+        hours != null ? hours.toFixed(1) : "לא הצלחתי לחשב שעות";
+
+      // 2. ק״מ
+      const km =
+        ts.totalKm != null ? ts.totalKm.toFixed(1) : "לא הצלחתי לחשב ק\"מ";
+
+      // 3. טיפוס
+      const elevation =
+        ts.totalElevationGainM != null
+          ? Math.round(ts.totalElevationGainM)
+          : null;
+      const elevationStr =
+        elevation != null ? `${elevation}` : "לא הצלחתי לחשב טיפוס";
+
+      // 4. משך ממוצע
+      const avgStr =
+        ts.avgDurationSec != null
+          ? this._formatMinutes(ts.avgDurationSec)
+          : "-";
+
+      // 5. חלוקה שטח/כביש
+      let offPct = null;
+      let roadPct = null;
+      if (ts.offroadPct != null) {
+        offPct = Math.round(ts.offroadPct);
+        roadPct = 100 - offPct;
+      }
+
+      let msg1 =
+        "אני רואה לפי סטרבה שב־~90 הימים האחרונים:\n" +
+        `1. רכבת בערך ${hoursStr} שעות\n` +
+        `2. רכבת בערך ${km} ק״מ\n` +
+        `3. טיפסת בערך ${elevationStr} מטר\n` +
+        `4. משך רכיבה ממוצעת שלך הוא ${avgStr}\n`;
+
+      if (offPct != null && roadPct != null) {
+        msg1 += `5. ${offPct}% שטח ו־${roadPct}% כביש`;
+      }
+
+      // שולחים רק את ההודעה הזו עכשיו
+      state.stage = "personal_details_intro";
+      await this._saveState(userId, state);
+
+      return { reply: msg1, onboarding: true };
+    }
+
+    // fallback – אין מספיק נתונים ל-90 יום
+    state.stage = "personal_details_intro";
+    await this._saveState(userId, state);
+
+    return {
+      reply:
+        "לא מצאתי מספיק רכיבות מ־90 הימים האחרונים כדי להציג סיכום נפח.\n" +
+        "בוא נעבור לנתונים האישיים שלך.",
+      onboarding: true,
+    };
+  }
+
     // מוודא שיש לנו volume + ftp models + training summary
     state = await this._ensureStravaMetrics(userId, state);
 
