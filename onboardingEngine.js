@@ -148,7 +148,20 @@ export class OnboardingEngine {
     }
 
     // אם אין stage – זו הודעה ראשונה → הודעת פתיחה
+        // אם אין stage – זו הודעה ראשונה
     if (!state.stage) {
+      // בודק אם כבר יש לנו נתוני סטרבה ב-DB (כלומר חזרנו מחיבור סטרבה)
+      const volumeFromDb = await this.db.getVolumeSummaryFromDb(userId);
+
+      if (volumeFromDb) {
+        // יש כבר נפח מסטרבה → מדלגים על הסבר הפתיחה ועוברים ישר לסיכום + גיל
+        state.data.volume = volumeFromDb;
+        state.stage = "opening_done";
+        await this._saveState(userId, state);
+        return await this._stepAfterStravaSummary(userId, text, state);
+      }
+
+      // אין סטרבה / אין נפח → זה באמת משתמש חדש לגמרי → הודעת פתיחה מלאה
       state.stage = "opening_done";
       await this._saveState(userId, state);
       const reply =
@@ -157,6 +170,7 @@ export class OnboardingEngine {
         "יש לך כבר חשבון Strava מחובר? אם כן, תתחבר דרך הקישור בפרונט ואז נחזור לפה ונמשיך עם הנתונים שלך.";
       return { reply, onboarding: true };
     }
+
 
     // משלב זה – אנחנו בתוך FLOW של אונבורדינג
     switch (state.stage) {
@@ -313,50 +327,78 @@ export class OnboardingEngine {
   }
 
   // שלב FTP
+    // שלב FTP
   async _stepFtp(userId, text, state) {
     const p = state.data.profile;
-    const models = state.data.ftpModels || {};
 
-    if (!p.ftp) {
-      const num = this._extractNumber(text);
-      if (num) {
-        p.ftp = Math.round(num);
-        state.data.profile = p;
-        state.stage = "hr_max";
-        await this._saveState(userId, state);
-        return await this._stepHrMax(userId, "", state);
-      }
+    // ----- שליפת מודלים של FTP מה-DB + מה-state -----
+    const trainingParams = await this.db.getTrainingParams(userId);
 
-      // מציג חישובים
-      const f20 = models.ftpFrom20min
-        ? `${models.ftpFrom20min}W`
-        : "אין מספיק נתונים";
-      const f3 = models.ftpFrom3minModel
-        ? `${models.ftpFrom3minModel}W`
-        : "אין מספיק נתונים";
-      const fcp = models.ftpFromCP
-        ? `${models.ftpFromCP}W`
-        : "אין מספיק נתונים";
-      const frec = models.ftpRecommended
-        ? `${models.ftpRecommended}W`
-        : "אין מספיק נתונים";
+    const modelsFromState = state.data.ftpModels || {};
 
-      let msg =
-        "עבור FTP חישבתי כמה מודלים שונים מהנתונים שלך (אם היו מספיק רכיבות עם וואטים):\n\n" +
-        `• מודל 20 דקות: ${f20}\n` +
-        `• מודל 3 דקות/Power Curve: ${f3}\n` +
-        `• מודל קריטי (CP): ${fcp}\n\n` +
-        `לפי כל אלו, ההמלצה שלי ל-FTP התחלתי היא: ${frec}.\n\n` +
-        "אם הערך הזה נשמע לך הגיוני, תכתוב לי אותו (למשל \"FTP 240\"). אם אתה יודע ערך אחר שמתאים יותר למציאות – תכתוב אותו ואני אעדכן.";
+    const ftpFrom20min =
+      modelsFromState.ftpFrom20min ??
+      (trainingParams ? trainingParams.ftp_from_20min : null);
 
-      return { reply: msg, onboarding: true };
+    const ftpFrom3min =
+      modelsFromState.ftpFrom3minModel ??
+      (trainingParams ? trainingParams.ftp_from_3min : null);
+
+    const ftpFromCP =
+      modelsFromState.ftpFromCP ??
+      (trainingParams ? trainingParams.ftp_from_cp : null);
+
+    const ftpRecommended =
+      modelsFromState.ftpRecommended ??
+      (trainingParams ? trainingParams.ftp_recommended : null);
+
+    // מעדכן ב-state כדי שיהיה זמין גם לשלבים הבאים
+    state.data.ftpModels = {
+      ...modelsFromState,
+      ftpFrom20min,
+      ftpFrom3minModel: ftpFrom3min,
+      ftpFromCP,
+      ftpRecommended,
+    };
+
+    // ----- אם כבר יש FTP בפרופיל → ממשיכים לדופק מקסימלי -----
+    if (p.ftp) {
+      state.stage = "hr_max";
+      await this._saveState(userId, state);
+      return await this._stepHrMax(userId, text, state);
     }
 
-    // אם כבר יש FTP → הלאה לדופק מקסימלי
-    state.stage = "hr_max";
-    await this._saveState(userId, state);
-    return await this._stepHrMax(userId, text, state);
+    // מנסה להוציא מספר אם המשתמש כתב FTP ידנית
+    const num = this._extractNumber(text);
+    if (num) {
+      p.ftp = Math.round(num);
+      state.data.profile = p;
+      state.stage = "hr_max";
+      await this._saveState(userId, state);
+      return await this._stepHrMax(userId, "", state);
+    }
+
+    // ----- מציג חישובים למשתמש -----
+    const f20 =
+      ftpFrom20min != null ? `${ftpFrom20min}W` : "אין מספיק נתונים";
+    const f3 =
+      ftpFrom3min != null ? `${ftpFrom3min}W` : "אין מספיק נתונים";
+    const fcp =
+      ftpFromCP != null ? `${ftpFromCP}W` : "אין מספיק נתונים";
+    const frec =
+      ftpRecommended != null ? `${ftpRecommended}W` : "אין מספיק נתונים";
+
+    const msg =
+      "עבור FTP חישבתי כמה מודלים שונים מהנתונים שלך (אם היו מספיק רכיבות עם וואטים):\n\n" +
+      `• מודל 20 דקות: ${f20}\n` +
+      `• מודל 3 דקות/Power Curve: ${f3}\n` +
+      `• מודל קריטי (CP): ${fcp}\n\n` +
+      `לפי כל אלו, ההמלצה שלי ל-FTP התחלתי היא: ${frec}.\n\n` +
+      'אם הערך הזה נשמע לך הגיוני, תכתוב לי אותו (למשל "FTP 240"). אם אתה יודע ערך אחר שמתאים יותר למציאות – תכתוב אותו ואני אעדכן.';
+
+    return { reply: msg, onboarding: true };
   }
+
 
   // שלב דופק מקסימלי
   async _stepHrMax(userId, text, state) {
