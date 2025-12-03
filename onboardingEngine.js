@@ -274,56 +274,7 @@ export class OnboardingEngine {
     // אחרי שחזרנו מסטרבה (או אין סטרבה) – סיכום נפח קצר
   async _stepAfterStravaSummary(userId, text, state) {
     // מוודא שיש נפח + trainingSummary + מודלים
-    state = await this._ensureStravaMetrics(userId, state);
-
-    const ts = state.data.trainingSummary;
-
-    if (ts && ts.rides_count > 0) {
-      // 1. שעות ב-90 יום
-      let hours = ts.totalHours != null ? ts.totalHours : null;
-      if (hours == null && ts.avgHoursPerWeek != null) {
-        // גיבוי: אם יש רק avgHoursPerWeek – נכפיל ב-~12.9 שבועות
-        hours = ts.avgHoursPerWeek * (90 / 7);
-      }
-      const hoursStr =
-        hours != null ? hours.toFixed(1) : "לא הצלחתי לחשב שעות";
-
-      // 2. ק״מ
-      const km =
-        ts.totalKm != null ? ts.totalKm.toFixed(1) : "לא הצלחתי לחשב ק\"מ";
-
-      // 3. טיפוס
-      const elevation =
-        ts.totalElevationGainM != null
-          ? Math.round(ts.totalElevationGainM)
-          : null;
-      const elevationStr =
-        elevation != null ? `${elevation}` : "לא הצלחתי לחשב טיפוס";
-
-      // 4. משך ממוצע
-      const avgStr =
-        ts.avgDurationSec != null
-          ? this._formatMinutes(ts.avgDurationSec)
-          : "-";
-
-      // 5. חלוקה שטח/כביש
-      let offPct = null;
-      let roadPct = null;
-      if (ts.offroadPct != null) {
-        offPct = Math.round(ts.offroadPct);
-        roadPct = 100 - offPct;
-      }
-
-      let msg1 =
-        "אני רואה לפי סטרבה שב־~90 הימים האחרונים:\n" +
-        `1. רכבת בערך ${hoursStr} שעות\n` +
-        `2. רכבת בערך ${km} ק״מ\n` +
-        `3. טיפסת בערך ${elevationStr} מטר\n` +
-        `4. משך רכיבה ממוצעת שלך הוא ${avgStr}\n`;
-
-      if (offPct != null && roadPct != null) {
-        msg1 += `5. ${offPct}% שטח ו־${roadPct}% כביש`;
-      }
+    
 
       // שולחים רק את ההודעה הזו עכשיו
       state.stage = "personal_details_intro";
