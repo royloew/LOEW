@@ -2,9 +2,24 @@ import sqlite3 from "sqlite3";
 
 sqlite3.verbose();
 
+// ברירת מחדל: /tmp/loew.db (מתאים ל-Render)
+// אפשר לשנות עם משתנה סביבה LOEW_DB_FILE אם תרצה
 const DB_FILE = process.env.LOEW_DB_FILE || "/tmp/loew.db";
 
-const db = new sqlite3.Database(DB_FILE);
+console.log("[DB] Trying to open SQLite file at:", DB_FILE);
+
+const db = new sqlite3.Database(
+  DB_FILE,
+  sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE,
+  (err) => {
+    if (err) {
+      console.error("[DB] Failed to open DB:", err);
+    } else {
+      console.log("[DB] SQLite DB opened OK");
+    }
+  }
+);
+
 
 // ---------- Helpers for sqlite ----------
 
