@@ -7,7 +7,7 @@
   <style>
     body {
       font-family: Arial, sans-serif;
-      background: #f5f5f5;
+      background: #e9eef5;
       margin: 0;
       padding: 0;
       direction: rtl;
@@ -30,6 +30,13 @@
       font-size: 16px;
       line-height: 1.45;
       white-space: pre-wrap;
+    }
+
+    .bubble-text {
+      text-align: right;
+      direction: rtl;
+      white-space: pre-wrap;
+      line-height: 1.5;
     }
 
     .assistant {
@@ -95,8 +102,6 @@
     const input = document.getElementById("user-input");
     const sendBtn = document.getElementById("send-btn");
 
-    
-
     function scrollToBottom() {
       messagesDiv.scrollTop = messagesDiv.scrollHeight;
     }
@@ -107,7 +112,7 @@
         // קישורים מלאים
         .replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank">$1</a>')
         // קישורים של סטרבה שמתחילים ב־ /
-        .replace(/(\/auth\/strava\?userId=[^\s]+)/g, '<a href="$1">$1</a>');
+        .replace(/(\/auth\/strava\?userId=[^\s]+)/g, '<a href="$1">חבר אותי לסטרבה</a>');
     }
 
     function addMessage(text, sender = "assistant") {
@@ -117,15 +122,12 @@
       const textDiv = document.createElement("div");
       textDiv.className = "bubble-text";
 
-      // *** התיקון הקריטי ***
       textDiv.innerHTML = linkify(text);
 
       bubble.appendChild(textDiv);
       messagesDiv.appendChild(bubble);
       scrollToBottom();
     }
-
-    // ---- SEND MESSAGE ----
 
     async function sendMessage() {
       const txt = input.value.trim();
