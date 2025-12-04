@@ -116,93 +116,50 @@ export class OnboardingEngine {
   }
 
   // 1) הודעת פתיחה – תמיד פעם אחת בלבד למשתמש שלא סיים אונבורדינג
-  async _stageIntro(userId, state, userInput) {
-    const msg =
-      "נעים מאוד, אני LOEW — המאמן האישי שלך.\n" +
-      "אני מבסס את ההמלצות על ידע מקצועי, מתודולוגיות אימון מהטופ העולמי וניתוח פרסונלי של הנתונים שלך — כולל שינה, תחושה, עומס, בריאות ותזונה.\n\n" +
-      "השלב הראשון שלנו יהיה להתחבר לסטרבה כדי שאוכל ללמוד את ההיסטוריה שלך.";
+  // 1) הודעת פתיחה – תמיד פעם אחת בלבד למשתמש שלא סיים אונבורדינג
+async _stageIntro(userId, state, userInput) {
+  const msg =
+    "נעים מאוד, אני LOEW — המאמן האישי שלך.\n" +
+    "אני מבסס את ההמלצות על ידע מקצועי, מתודולוגיות אימון מהטופ העולמי וניתוח פרסונלי של הנתונים שלך — כולל שינה, תחושה, עומס, בריאות ותזונה.\n\n" +
+    "השלב הראשון שלנו יהיה להתחבר לסטרבה כדי שאוכל ללמוד את ההיסטוריה שלך.";
 
-    // מיד עוברים ל-await_strava_connect באותה קריאה
-    state.stage = "await_strava_connect";
-    return {
-      newMessages: [msg],
-      waitForUser: false,   // ממשיכים מיד לסטייג' הבא
-      consumeInput: false,  // לא אכפת לנו מהטקסט שהמשתמש כתב כאן
-    };
-  }
+  // מעדכן סטייג' הבא, אבל *לא* ממשיך אליו באותה בקשה
+  state.stage = "await_strava_connect";
+
+  return {
+    newMessages: [msg],
+    waitForUser: true,   // ✅ עוצרים כאן, מחכים להודעה הבאה מהמשתמש
+    consumeInput: true,  // ✅ "היי" נצרך, לא ממשיך הלאה
+  };
+}
+
 
   // 2) שלב סטרבה – הכל קורה אוטומטית:
   // אם יש סטרבה -> ישר סיכום נפח
   // אם אין סטרבה -> מיד הודעה עם לינק
   // אחרי פעמיים בלי סטרבה -> ממשיכים בלי סטרבה לנתונים אישיים
-  async _stageAwaitStrava(userId, state, userInput) {
-    if (!state.data) state.data = {};
-    const txt = (userInput || "").trim();
+  async _stageIntro(userId, state, userInput) {
+  const introMsg =
+    "נעים מאוד, אני LOEW — המאמן האישי שלך.\n" +
+    "אני מבסס את ההמלצות על ידע מקצועי, מתודולוגיות אימון מהטופ העולמי וניתוח פרסונלי של הנתונים שלך — כולל שינה, תחושה, עומס, בריאות ותזונה.\n\n" +
+    "השלב הראשון שלנו יהיה להתחבר לסטרבה כדי שאוכל ללמוד את ההיסטוריה שלך.";
 
-    // מונה ניסיונות בלי סטרבה
-    state.data.noStravaTries = state.data.noStravaTries || 0;
+  const connectUrl = `/auth/strava?userId=${encodeURIComponent(userId)}`;
+  const stravaMsg =
+    "כדי שאוכל לנתח את ההיסטוריה שלך אני צריך שתתחבר לסטרבה.\n\n" +
+    `לחץ על הלינק להתחברות לסטרבה:\n${connectUrl}\n\n` +
+    "אחרי שתאשר את הגישה בסטרבה, תחזור לכאן ונמשיך משם.";
 
-    // 2.1 – ננסה לראות אם כבר יש סטרבה מה-DB
-    if (
-      this.db &&
-      typeof this.db.getStravaOnboardingSnapshot === "function"
-    ) {
-      try {
-        const snap = await this.db.getStravaOnboardingSnapshot(userId);
-        if (snap && (snap.trainingSummary || snap.volume || snap.ftpModels)) {
-          state.data.stravaConnected = true;
-          this._applyStravaSnapshotToState(state, snap);
-          state.stage = "post_strava_import";
-          return {
-            newMessages: [],
-            waitForUser: false,
-            consumeInput: true,
-          };
-        }
-      } catch (err) {
-        console.error("getStravaOnboardingSnapshot error (await_strava):", err);
-      }
-    }
+  // אחרי הודעת הפתיחה + סטרבה אנחנו עוברים ל-stage שמחכה לסטטוס סטרבה
+  state.stage = "await_strava_connect";
 
-    // 2.2 – אין סטרבה
-    state.data.noStravaTries += 1;
+  return {
+    newMessages: [introMsg, stravaMsg],
+    waitForUser: true,   // מחכים לפעולה (או חיבור סטרבה או 'היי' נוסף)
+    consumeInput: true,  // התוכן 'היי' לא חשוב, סיימנו איתו
+  };
+}
 
-    // אם ניסינו כבר פעמיים בלי סטרבה – ממשיכים בלי
-    if (state.data.noStravaTries >= 2) {
-      const msgs = [];
-      msgs.push(
-        "לא מצאתי חיבור פעיל לסטרבה.\n" +
-          "זה בסדר, נמשיך לבנות את הפרופיל שלך גם בלי ההיסטוריה, ותמיד נוכל להתחבר לסטרבה בהמשך."
-      );
-
-      state.stage = "personal_details_collect";
-      const personal = state.data.personal || (state.data.personal = {});
-      const firstQuestion = this._nextPersonalQuestion(state);
-      if (firstQuestion) {
-        personal.pendingField = firstQuestion.field;
-        msgs.push(firstQuestion.message);
-      }
-
-      return {
-        newMessages: msgs,
-        waitForUser: true,
-        consumeInput: true,
-      };
-    }
-
-    // 2.3 – ניסיון ראשון: מציגים לינק סטרבה מיידית
-    const connectUrl = `/auth/strava?userId=${encodeURIComponent(userId)}`;
-    const msg =
-      "כדי שאוכל לנתח את ההיסטוריה שלך אני צריך שתתחבר לסטרבה.\n\n" +
-      `לחץ על הלינק להתחברות לסטרבה:\n${connectUrl}\n\n` +
-      "אחרי שתאשר את הגישה בסטרבה, נחזור לצ'אט ונמשיך אוטומטית.";
-
-    return {
-      newMessages: [msg],
-      waitForUser: true,
-      consumeInput: true,
-    };
-  }
 
   // 3) סיכום נפח מסטרבה + מעבר לנתונים אישיים
   async _stagePostStravaSummary(userId, state) {
