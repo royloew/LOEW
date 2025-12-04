@@ -6,14 +6,9 @@ import bodyParser from "body-parser";
 import { fileURLToPath } from "url";
 
 import { createDbImpl } from "./dbSqlite.js";
-import { createOnboardingEngine } from "./onboardingEngine.js";
-const onboarding = createOnboardingEngine(dbImpl);
-
+import { OnboardingEngine } from "./onboardingEngine.js";
 
 import path from "path";
-
-
-
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -25,10 +20,9 @@ app.use(bodyParser.json());
 const PORT = process.env.PORT || 3000;
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 
+// יצירת DB ואובייקט אונבורדינג *פעם אחת בלבד*
 const dbImpl = await createDbImpl();
 const onboarding = new OnboardingEngine(dbImpl);
-
-// ===== STATIC FRONTEND (index.html) =====
 
 // ===== STATIC FRONTEND (index.html) =====
 
@@ -148,23 +142,22 @@ app.get("/exchange_token", async (req, res) => {
       process.env.STRAVA_REDIRECT_URI || `${BASE_URL}/exchange_token`;
 
     if (!clientId || !clientSecret) {
-      return res.status(500).send("חסרים STRAVA_CLIENT_ID / STRAVA_CLIENT_SECRET");
+      return res
+        .status(500)
+        .send("חסרים STRAVA_CLIENT_ID / STRAVA_CLIENT_SECRET");
     }
 
-    const tokenRes = await fetch(
-      "https://www.strava.com/oauth/token",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          client_id: clientId,
-          client_secret: clientSecret,
-          code,
-          grant_type: "authorization_code",
-          redirect_uri: redirectUri,
-        }),
-      }
-    );
+    const tokenRes = await fetch("https://www.strava.com/oauth/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        client_id: clientId,
+        client_secret: clientSecret,
+        code,
+        grant_type: "authorization_code",
+        redirect_uri: redirectUri,
+      }),
+    });
 
     if (!tokenRes.ok) {
       const text = await tokenRes.text();
@@ -184,19 +177,17 @@ app.get("/exchange_token", async (req, res) => {
       expiresAt,
     });
 
-try {
-  console.log("[STRAVA] Starting ingestAndComputeFromStrava for", userId);
-  const metrics = await dbImpl.ingestAndComputeFromStrava(userId);
-  console.log("[STRAVA] Ingest done for", userId, "metrics:", metrics);
-} catch (err) {
-  console.error("[STRAVA] ingestAndComputeFromStrava failed:", err);
-}
+    try {
+      console.log("[STRAVA] Starting ingestAndComputeFromStrava for", userId);
+      const metrics = await dbImpl.ingestAndComputeFromStrava(userId);
+      console.log("[STRAVA] Ingest done for", userId, "metrics:", metrics);
+    } catch (err) {
+      console.error("[STRAVA] ingestAndComputeFromStrava failed:", err);
+    }
 
-
-    // לא מבצעים כאן אינג'סט מלא – זה יעשה ע"י מנוע האונבורדינג בשיחה הראשונה אחרי ההתחברות
     const redirectUrl = `/index.html?userId=${encodeURIComponent(
-  userId
-)}&strava=connected`;
+      userId
+    )}&strava=connected`;
 
     res.redirect(redirectUrl);
   } catch (err) {
