@@ -1,17 +1,23 @@
 // onboardingEngine.js
-// מנוע אונבורדינג לפי ה-FLOW שלנו, מותאם ל-dbSqlite.js ול-server.js שלך.
+// מנוע אונבורדינג לפי ה-FLOW שלנו, מותאם ל-dbSqlite.js ול-server.js
 
 export class OnboardingEngine {
   constructor(dbImpl) {
     this.db = dbImpl;
   }
 
-  // נקודת כניסה עיקרית מהשרת (/api/loew/chat)
+  // נקודת כניסה עיקרית
   async handleMessage(userId, textRaw) {
-    const text = (textRaw || "").trim();
+    let text = (textRaw || "").trim();
     let state = await this._loadState(userId);
 
-    if (!state || (!state.stage && !state.data)) {
+    // אם האונבורדינג כבר הושלם – לא חוזרים לפתיחה
+    if (state && state.stage === "done") {
+      return await this._handleAfterOnboarding(userId, text);
+    }
+
+    // משתמש חדש / state שבור -> אתחול
+    if (!state || !state.stage || !state.data) {
       state = {
         stage: "intro",
         data: {
@@ -32,11 +38,8 @@ export class OnboardingEngine {
     const messages = [];
 
     while (true) {
-      const {
-        newMessages,
-        waitForUser,
-        consumeInput,
-      } = await this._runStage(userId, state, pendingInput);
+      const { newMessages, waitForUser, consumeInput } =
+        await this._runStage(userId, state, pendingInput);
 
       if (newMessages && newMessages.length) {
         messages.push(...newMessages);
@@ -57,45 +60,31 @@ export class OnboardingEngine {
     };
   }
 
-  // אופציונלי – אם בעתיד תרצה לקרוא לזה מהשרת אחרי /exchange_token
-  async handleStravaConnected(userId) {
-    let state = await this._loadState(userId);
-    if (!state || (!state.stage && !state.data)) {
-      state = {
-        stage: "intro",
-        data: {
-          personal: {},
-          ftp: null,
-          ftpFinal: null,
-          hr: null,
-          hrFinal: null,
-          goal: null,
-          volume: null,
-          trainingSummary: null,
-          stravaConnected: false,
-        },
-      };
+  // תגובה אחרי שהאונבורדינג כבר הסתיים
+  async _handleAfterOnboarding(userId, text) {
+    // TODO: פה בעתיד יחיה המאמן "הרגיל" של LOEW.
+    // בינתיים – הודעה עדינה שלא חוזרים לאונבורדינג.
+    if (!text) {
+      text = "היי";
     }
 
-    state.data.stravaConnected = true;
-    state.stage = "post_strava_import";
-    state = await this._ensureStravaMetrics(userId, state);
-    await this._saveState(userId, state);
+    const reply =
+      "האונבורדינג שלך כבר הושלם ✅\n" +
+      "בגרסה הנוכחית אני עדיין במוד אונבורדינג בלבד, אבל הנתונים שלך שמורים.\n" +
+      "בקרוב אוכל לתת גם המלצות אימון חכמות מתוך הפרופיל שלך.";
 
     return {
-      reply:
-        "התחברתי לסטרבה שלך וסיימתי לייבא את הנתונים.\n" +
-        "בוא נחזור לצ'אט ונעשה סיכום קצר ונמשיך משם.",
-      onboarding: true,
+      reply,
+      onboarding: false,
     };
   }
 
-  // ---------- לוגיקת סטייג'ים ----------
+  // ---------------- לוגיקת סטייג'ים ----------------
 
   async _runStage(userId, state, userInput) {
     switch (state.stage) {
       case "intro":
-        return this._stageIntro(state);
+        return await this._stageIntro(userId, state, userInput);
 
       case "await_strava_connect":
         return await this._stageAwaitStrava(userId, state, userInput);
@@ -103,7 +92,6 @@ export class OnboardingEngine {
       case "post_strava_import":
         return await this._stagePostStravaSummary(userId, state);
 
-      case "personal_details_intro":
       case "personal_details_collect":
         return this._stagePersonalDetails(state, userInput);
 
@@ -123,62 +111,98 @@ export class OnboardingEngine {
 
       default:
         state.stage = "intro";
-        return this._stageIntro(state);
+        return await this._stageIntro(userId, state, userInput);
     }
   }
 
-  // 1) הודעת פתיחה
-  _stageIntro(state) {
+  // 1) הודעת פתיחה – תמיד פעם אחת בלבד למשתמש שלא סיים אונבורדינג
+  async _stageIntro(userId, state, userInput) {
     const msg =
       "נעים מאוד, אני LOEW — המאמן האישי שלך.\n" +
       "אני מבסס את ההמלצות על ידע מקצועי, מתודולוגיות אימון מהטופ העולמי וניתוח פרסונלי של הנתונים שלך — כולל שינה, תחושה, עומס, בריאות ותזונה.\n\n" +
-      "השלב הראשון שלנו יהיה להתחבר לסטרבה כדי שאוכל ללמוד את ההיסטוריה שלך.\n" +
-      "לחץ על כפתור/קישור החיבור לסטרבה שמופיע במסך, וברגע שתאשר את הגישה נחזור לפה ונמשיך.";
+      "השלב הראשון שלנו יהיה להתחבר לסטרבה כדי שאוכל ללמוד את ההיסטוריה שלך.";
 
+    // מיד עוברים ל-await_strava_connect באותה קריאה
     state.stage = "await_strava_connect";
+    return {
+      newMessages: [msg],
+      waitForUser: false,   // ממשיכים מיד לסטייג' הבא
+      consumeInput: false,  // לא אכפת לנו מהטקסט שהמשתמש כתב כאן
+    };
+  }
+
+  // 2) שלב סטרבה – הכל קורה אוטומטית:
+  // אם יש סטרבה -> ישר סיכום נפח
+  // אם אין סטרבה -> מיד הודעה עם לינק
+  // אחרי פעמיים בלי סטרבה -> ממשיכים בלי סטרבה לנתונים אישיים
+  async _stageAwaitStrava(userId, state, userInput) {
+    if (!state.data) state.data = {};
+    const txt = (userInput || "").trim();
+
+    // מונה ניסיונות בלי סטרבה
+    state.data.noStravaTries = state.data.noStravaTries || 0;
+
+    // 2.1 – ננסה לראות אם כבר יש סטרבה מה-DB
+    if (
+      this.db &&
+      typeof this.db.getStravaOnboardingSnapshot === "function"
+    ) {
+      try {
+        const snap = await this.db.getStravaOnboardingSnapshot(userId);
+        if (snap && (snap.trainingSummary || snap.volume || snap.ftpModels)) {
+          state.data.stravaConnected = true;
+          this._applyStravaSnapshotToState(state, snap);
+          state.stage = "post_strava_import";
+          return {
+            newMessages: [],
+            waitForUser: false,
+            consumeInput: true,
+          };
+        }
+      } catch (err) {
+        console.error("getStravaOnboardingSnapshot error (await_strava):", err);
+      }
+    }
+
+    // 2.2 – אין סטרבה
+    state.data.noStravaTries += 1;
+
+    // אם ניסינו כבר פעמיים בלי סטרבה – ממשיכים בלי
+    if (state.data.noStravaTries >= 2) {
+      const msgs = [];
+      msgs.push(
+        "לא מצאתי חיבור פעיל לסטרבה.\n" +
+          "זה בסדר, נמשיך לבנות את הפרופיל שלך גם בלי ההיסטוריה, ותמיד נוכל להתחבר לסטרבה בהמשך."
+      );
+
+      state.stage = "personal_details_collect";
+      const personal = state.data.personal || (state.data.personal = {});
+      const firstQuestion = this._nextPersonalQuestion(state);
+      if (firstQuestion) {
+        personal.pendingField = firstQuestion.field;
+        msgs.push(firstQuestion.message);
+      }
+
+      return {
+        newMessages: msgs,
+        waitForUser: true,
+        consumeInput: true,
+      };
+    }
+
+    // 2.3 – ניסיון ראשון: מציגים לינק סטרבה מיידית
+    const connectUrl = `/auth/strava?userId=${encodeURIComponent(userId)}`;
+    const msg =
+      "כדי שאוכל לנתח את ההיסטוריה שלך אני צריך שתתחבר לסטרבה.\n\n" +
+      `לחץ על הלינק להתחברות לסטרבה:\n${connectUrl}\n\n` +
+      "אחרי שתאשר את הגישה בסטרבה, נחזור לצ'אט ונמשיך אוטומטית.";
+
     return {
       newMessages: [msg],
       waitForUser: true,
       consumeInput: true,
     };
   }
-
-  // 2) מחכים לחיבור סטרבה – אבל מזהים לבד אם כבר יש נתונים ב-DB
-  async _stageAwaitStrava(userId, state, userInput) {
-  // 1) ננסה לטעון נתוני סטרבה מה-DB
-  if (this.db && typeof this.db.getStravaOnboardingSnapshot === "function") {
-    try {
-      const snap = await this.db.getStravaOnboardingSnapshot(userId);
-      if (snap && (snap.trainingSummary || snap.volume || snap.ftpModels)) {
-        state.data.stravaConnected = true;
-        this._applyStravaSnapshotToState(state, snap);
-        state.stage = "post_strava_import";
-        return {
-          newMessages: [],
-          waitForUser: false,
-          consumeInput: true
-        };
-      }
-    } catch (err) {
-      console.error("Strava snapshot error:", err);
-    }
-  }
-
-  // 2) אין סטרבה → מציגים לינק להתחברות מיד, בלי חכות לאוקיי
-  const connectUrl = `/auth/strava?userId=${userId}`;
-  const msg =
-    "כדי שאוכל לנתח את ההיסטוריה שלך אני צריך שתתחבר לסטרבה.\n\n" +
-    `לחץ כאן להתחברות:\n${connectUrl}\n\n` +
-    "אחרי החיבור נחזור לכאן ונמשיך אוטומטית.";
-
-  // נשארים ב-stage זה עד שהמשתמש חוזר מדפדפן סטרבה
-  return {
-    newMessages: [msg],
-    waitForUser: true,
-    consumeInput: true
-  };
-}
-
 
   // 3) סיכום נפח מסטרבה + מעבר לנתונים אישיים
   async _stagePostStravaSummary(userId, state) {
@@ -229,10 +253,12 @@ export class OnboardingEngine {
     );
 
     state.stage = "personal_details_collect";
+
+    // מוודא שיש personal
     const personal = state.data.personal || (state.data.personal = {});
     const firstQuestion = this._nextPersonalQuestion(state);
     if (firstQuestion) {
-      personal.pendingField = firstQuestion.field; 
+      personal.pendingField = firstQuestion.field;
       msgs.push(firstQuestion.message);
       return {
         newMessages: msgs,
@@ -241,7 +267,7 @@ export class OnboardingEngine {
       };
     }
 
-    // אם כבר יש הכל
+    // אם איכשהו כבר יש הכל
     state.stage = "ftp_intro";
     return {
       newMessages: msgs,
@@ -711,7 +737,7 @@ export class OnboardingEngine {
     };
   }
 
-  // 8) סיכום + שמירה ל-training_params
+  // 8) סיכום + שמירה ל-training_params + סימון done
   async _stageSummary(userId, state) {
     const d = state.data;
     const p = d.personal || {};
@@ -742,7 +768,7 @@ export class OnboardingEngine {
       "\nמכאן נוכל להתחיל לבנות לך אימונים חכמים, לנתח עומס שבועי ולעקוב אחרי ההתקדמות שלך."
     );
 
-    // שמירה ל-training_params בקיים
+    // שמירה ל-training_params
     if (this.db && typeof this.db.saveTrainingParams === "function") {
       try {
         await this.db.saveTrainingParams(userId, {
@@ -766,6 +792,7 @@ export class OnboardingEngine {
       }
     }
 
+    // סימון שהאונבורדינג הושלם
     state.stage = "done";
 
     return {
@@ -788,7 +815,7 @@ export class OnboardingEngine {
       d.ftp.ftp20 = m.ftpFrom20min ?? null;
       d.ftp.ftpFrom3min = m.ftpFrom3minModel ?? null;
       d.ftp.ftpFromCP = m.ftpFromCP ?? null;
-      d.ftp.ftpFromStrava = null;
+      d.ftp.ftpFromStrava = null; // אם תרצה, אפשר להוסיף תמיכה בערך הזה מה-DB
       d.ftp.ftpRecommended = m.ftpRecommended ?? null;
 
       d.hr = d.hr || {};
