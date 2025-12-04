@@ -553,6 +553,7 @@ export async function createDbImpl() {
     }
 
     // HR – טופ 3 דפקים
+        // HR – טופ דפקים מחצי השנה האחרונה, עם הגנה מפני ספייקים לא ריאליים
     const nowSec = Math.floor(Date.now() / 1000);
     const days180 = 180 * 24 * 3600;
     const sinceTs = nowSec - days180;
@@ -569,15 +570,33 @@ export async function createDbImpl() {
 
     let hrMaxCandidate = null;
     if (hrRows.length > 0) {
-      const vals = hrRows.slice(0, 3).map((r) => r.max_hr);
-      const sum = vals.reduce((a, b) => a + b, 0);
-      hrMaxCandidate = Math.round(sum / vals.length);
+      // ממירים למערך ערכים, מסננים זבל, ממיינים מהגבוה לנמוך
+      const valsDesc = hrRows
+        .map((r) => r.max_hr)
+        .filter((v) => v != null && v > 0)
+        .sort((a, b) => b - a);
+
+      if (valsDesc.length > 0) {
+        // לוקחים עד טופ 3
+        const top = valsDesc.slice(0, 3);
+
+        let use = top;
+        // אם הערך הגבוה ביותר רחוק מאוד מהשני (למשל ספייק 199 מול 179) – זורקים אותו
+        if (top.length >= 2 && top[0] - top[1] >= 10) {
+          use = top.slice(1); // משתמשים רק בשני/שלישי
+        }
+
+        const sum = use.reduce((a, b) => a + b, 0);
+        hrMaxCandidate = Math.round(sum / use.length);
+      }
     }
 
     let hrThresholdCandidate = null;
     if (hrMaxCandidate != null) {
+      // דופק סף ~90% מה- HRmax – זה רק נקודת פתיחה, אתה מאשר ביד
       hrThresholdCandidate = Math.round(hrMaxCandidate * 0.9);
     }
+
 
     // FTP recommended – מדיום של המודלים הסבירים
     const candidates = [];
