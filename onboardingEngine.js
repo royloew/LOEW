@@ -1,703 +1,908 @@
 // onboardingEngine.js
+// מנוע אונבורדינג לפי ה-FLOW שסיכמנו, עם לולאה פנימית ומבנה מסודר.
 
-/**
- * מנוע אונבורדינג ל-LOEW
- *
- * FLOW רשמי:
- * 1) הודעת פתיחה קבועה למשתמש חדש
- * 2) אם יש סטרבה: אינג'סט + סיכום נפח (ללא FTP/דופק)
- * 3) השלמת נתונים אישיים חסרים: גיל, משקל, גובה
- * 4) FTP – הצגת שלושת החישובים + הסבר + אישור/שינוי
- * 5) דופק מקסימלי – הצגת ערך מסטרבה + אישור/שינוי
- * 6) דופק סף – חישוב ראשוני + אישור/שינוי
- * 7) משך אימון טיפוסי – min/avg/max מהנפח + אישור/שינוי
- * 8) מטרה – המשתמש מזין
- * 9) סיכום גדול + פרופיל רוכב + סיום אונבורדינג
- */
+// ציפיות מ-dbImpl (תתאם לפי מה שיש לך בפועל):
+// - getOnboardingState(userId) -> { stage, data } | null
+// - saveOnboardingState(userId, state)
+// - markOnboardingCompleted(userId, finalProfile)   (אופציונלי)
+// - getStravaSnapshot(userId) -> { volume, trainingSummary, ftp, hr }  (אופציונלי)
+//   * ftp: { ftp20, ftpFrom3min, ftpFromCP, ftpFromStrava, ftpRecommended }
+//   * hr:  { hrMaxTop3, hrThresholdRecommended, hrModelsDetails }
+//
+// הערה: אם יש לך שמות אחרים (למשל getStravaOnboardingMetrics במקום getStravaSnapshot)
+// פשוט תעדכן את הפונקציה _ensureStravaMetrics לממשק הקיים.
 
-const OPENING_MESSAGE = `
-נעים מאוד, אני LOEW — המאמן האישי שלך.
-אני מבסס את כל ההמלצות על ידע מקצועי, מתודולוגיות אימון מהטופ העולמי וניתוח פרסונלי של הנתונים שלך — כולל שינה, תחושה, עומס, בריאות, תזונה וכל מה שמשפיע על הביצועים שלך.
-
-המטרה שלי: לבנות עבורך אימונים חכמים, פשוטים לביצוע, שמתקדמים בקצב הנכון — בלי לשרוף אותך ובלי לפספס פוטנציאל.
-
-בוא נתחיל בלהכיר אותך ואת הנתונים שלך.
-`.trim();
-
-export class OnboardingEngine {
+export default class OnboardingEngine {
   constructor(dbImpl) {
     this.db = dbImpl;
   }
 
-  // עוזר קטן – מושך ומאחד state
-  async _loadState(userId) {
-    const onboardingStateRaw = await this.db.getOnboardingState(userId);
-    const onboardingState =
-      onboardingStateRaw || {
-        stage: null,
-        data: {},
+  // נקודת הכניסה העיקרית מהשרת /api/loew/chat
+  async handleMessage(userId, textRaw) {
+    const text = (textRaw || "").trim();
+    let state = await this._loadState(userId);
+
+    // אם אין state — משתמש חדש
+    if (!state) {
+      state = {
+        stage: "intro",
+        data: {
+          personal: {}, // age, weightKg, heightCm וכו'
+          ftp: null, // כל המודלים
+          ftpFinal: null,
+          hr: null, // מודלים וערכים
+          hrFinal: null,
+          goal: null,
+          volume: null,
+          trainingSummary: null,
+          stravaConnected: false,
+        },
       };
-
-    const trainingParams = await this.db.getTrainingParams(userId);
-
-    const data = onboardingState.data || {};
-    if (!data.profile) data.profile = {};
-    if (!data.ftpModels) data.ftpModels = {};
-    if (!data.volume) data.volume = null;
-    if (!data.trainingSummary) data.trainingSummary = null;
-    if (typeof data.onboardingComplete !== "boolean") {
-      data.onboardingComplete = false;
     }
 
-    if (trainingParams) {
-      const p = data.profile;
+    let pendingInput = text || null;
+    const messages = [];
 
-      p.age ??= trainingParams.age ?? null;
+    // לולאה פנימית: מתקדמים בין סטייג'ים כל עוד לא חייבים תשובת משתמש
+    // או פעולה חיצונית (כמו חיבור סטרבה)
+    while (true) {
+      const {
+        newMessages,
+        waitForUser,
+        consumeInput,
+      } = await this._runStage(userId, state, pendingInput);
 
-      // לא מאשרים משקל אוטומטית – שומרים כ-candidate מהסטרבה
-      if (p.weight == null && trainingParams.weight != null) {
-        p.weightFromStrava ??= trainingParams.weight;
+      if (newMessages && newMessages.length) {
+        messages.push(...newMessages);
       }
 
-      p.height ??= trainingParams.height ?? null;
-      p.ftp ??= trainingParams.ftp ?? null;
-      p.hrMax ??= trainingParams.hr_max ?? null;
-      p.hrThreshold ??= trainingParams.hr_threshold ?? null;
-      p.minDuration ??= trainingParams.min_duration ?? null;
-      p.typicalDuration ??= trainingParams.typical_duration ?? null;
-      p.maxDuration ??= trainingParams.max_duration ?? null;
-      p.goal ??= trainingParams.goal ?? null;
+      if (consumeInput) {
+        pendingInput = null;
+      }
 
-      const fm = data.ftpModels;
-      fm.ftpFrom20min ??= trainingParams.ftp_from_20min ?? null;
-      fm.ftpFrom3minModel ??= trainingParams.ftp_from_3min ?? null;
-      fm.ftpFromCP ??= trainingParams.ftp_from_cp ?? null;
-      fm.ftpRecommended ??= trainingParams.ftp_recommended ?? null;
-      data.ftpModels = fm;
+      await this._saveState(userId, state);
+
+      if (waitForUser) {
+        break;
+      }
     }
 
+    const reply = messages.join("\n\n");
+    return { reply, onboarding: true };
+  }
+
+  // נקודה שהשרת יקרא אחרי שסטרבה מחזירה קוד / טוקן
+  // לדוגמה ב-/exchange_token
+  async handleStravaConnected(userId) {
+    let state = await this._loadState(userId);
+    if (!state) {
+      state = {
+        stage: "intro",
+        data: {
+          personal: {},
+          ftp: null,
+          ftpFinal: null,
+          hr: null,
+          hrFinal: null,
+          goal: null,
+          volume: null,
+          trainingSummary: null,
+          stravaConnected: false,
+        },
+      };
+    }
+
+    state.data.stravaConnected = true;
+    state.stage = "post_strava_import"; // בשיחה הבאה נציג סיכום ונעבור לנתונים אישיים
+
+    // מנסה לטעון כבר עכשיו את המטריקות מסטרבה – אם זמין
+    state = await this._ensureStravaMetrics(userId, state);
+
+    await this._saveState(userId, state);
+
     return {
-      stage: onboardingState.stage,
-      data,
+      reply:
+        "התחברתי לסטרבה שלך וסיימתי לייבא את הנתונים.\n" +
+        "בוא נחזור לצ'אט ונעשה סיכום קצר ונמשיך משם.",
+      onboarding: true,
     };
   }
 
-  async _saveState(userId, state) {
-    await this.db.saveOnboardingState(userId, state);
+  // -------- לוגיקת הסטייג'ים --------
 
-    // אם יש כבר פרופיל מלא יחסית – מעדכנים גם training_params
-    const p = state.data.profile || {};
-    const hasCore =
-      p.ftp != null &&
-      p.hrMax != null &&
-      p.hrThreshold != null &&
-      p.typicalDuration != null;
+  async _runStage(userId, state, userInput) {
+    switch (state.stage) {
+      case "intro":
+        return this._stageIntro(state);
 
-    if (hasCore) {
-      await this.db.saveTrainingParams(userId, {
-        age: p.age ?? null,
-        weight: p.weight ?? null,
-        height: p.height ?? null,
-        ftp: p.ftp ?? null,
-        hr_max: p.hrMax ?? null,
-        hr_threshold: p.hrThreshold ?? null,
-        min_duration: p.minDuration ?? null,
-        typical_duration: p.typicalDuration ?? null,
-        max_duration: p.maxDuration ?? null,
-        goal: p.goal ?? null,
-        ftp_from_20min: state.data.ftpModels?.ftpFrom20min ?? null,
-        ftp_from_3min: state.data.ftpModels?.ftpFrom3minModel ?? null,
-        ftp_from_cp: state.data.ftpModels?.ftpFromCP ?? null,
-        ftp_recommended: state.data.ftpModels?.ftpRecommended ?? null,
-      });
+      case "await_strava_connect":
+        return this._stageAwaitStrava(state, userInput);
+
+      case "post_strava_import":
+        return this._stagePostStravaSummary(userId, state);
+
+      case "personal_details_intro":
+      case "personal_details_collect":
+        return this._stagePersonalDetails(state, userInput);
+
+      case "ftp_intro":
+      case "ftp_confirm":
+        return this._stageFtp(state, userInput);
+
+      case "hr_intro":
+      case "hr_confirm":
+        return this._stageHr(state, userInput);
+
+      case "goal":
+        return this._stageGoal(state, userInput);
+
+      case "summary":
+        return this._stageSummary(userId, state);
+
+      default:
+        // fallback בטוח
+        state.stage = "intro";
+        return this._stageIntro(state);
     }
   }
 
-  // עוזר: ניסיון להוציא מספר מהטקסט
-  _extractNumber(text) {
-    const m = String(text).match(/(\d+(\.\d+)?)/);
-    if (!m) return null;
-    return Number(m[1]);
+  // 1) הודעת פתיחה
+  _stageIntro(state) {
+    const msg =
+      "נעים מאוד, אני LOEW — המאמן האישי שלך.\n" +
+      "אני מבסס את ההמלצות על ידע מקצועי, מתודולוגיות אימון מהטופ העולמי וניתוח פרסונלי של הנתונים שלך — כולל שינה, תחושה, עומס, בריאות ותזונה.\n\n" +
+      "השלב הראשון שלנו יהיה להתחבר לסטרבה כדי שאוכל ללמוד את ההיסטוריה שלך.\n" +
+      "לחץ על כפתור/קישור החיבור לסטרבה שמופיע במסך, וברגע שתאשר את הגישה נחזור לפה ונמשיך.";
+
+    state.stage = "await_strava_connect";
+    return {
+      newMessages: [msg],
+      waitForUser: true, // עכשיו צריך פעולה חיצונית – חיבור סטרבה
+      consumeInput: true,
+    };
   }
 
-  _formatMinutes(sec) {
-    if (sec == null) return "-";
-    const mins = Math.round(sec / 60);
-    return `${mins} דק'`;
-  }
+  // 2) מחכים לחיבור סטרבה
+  _stageAwaitStrava(state, userInput) {
+    const txt = (userInput || "").trim();
 
-  /**
-   * מוודא שיש לנו volume + trainingSummary + ftpModels מה-DB/Strava
-   */
-  async _ensureStravaMetrics(userId, state) {
-    const d = state.data || {};
-
-    const hasSummary =
-      d.trainingSummary && typeof d.trainingSummary === "object";
-    const hasVolume = d.volume && typeof d.volume === "object";
-
-    if (hasSummary && hasVolume) {
-      return state;
-    }
-
-    let metrics = null;
-    try {
-      if (
-        this.db.getStravaOnboardingSnapshot &&
-        typeof this.db.getStravaOnboardingSnapshot === "function"
-      ) {
-        metrics = await this.db.getStravaOnboardingSnapshot(userId);
-      } else if (
-        this.db.ingestAndComputeFromStrava &&
-        typeof this.db.ingestAndComputeFromStrava === "function"
-      ) {
-        metrics = await this.db.ingestAndComputeFromStrava(userId);
-      }
-    } catch (err) {
-      console.error("_ensureStravaMetrics error:", err);
-      return state;
-    }
-
-    if (!metrics || typeof metrics !== "object") {
-      return state;
-    }
-
-    if (metrics.trainingSummary && !d.trainingSummary) {
-      d.trainingSummary = metrics.trainingSummary;
-    }
-    if (metrics.volume && !d.volume) {
-      d.volume = metrics.volume;
-    }
-    if (metrics.ftpModels) {
-      d.ftpModels = {
-        ...(d.ftpModels || {}),
-        ...metrics.ftpModels,
+    // אם המשתמש כותב "התחברתי", "סיימתי" – אפשר להשיב טכנית,
+    // אבל בפועל השרת יקרא handleStravaConnected אחרי סטרבה.
+    if (!state.data.stravaConnected) {
+      const msg =
+        "לפני שנמשיך אני צריך שתתחבר לסטרבה.\n" +
+        "לחץ על כפתור/קישור החיבור לסטרבה, תאשר את הבקשה, ואז תחזור לצ'אט.";
+      return {
+        newMessages: txt ? [msg] : [msg],
+        waitForUser: true,
+        consumeInput: true,
       };
     }
 
-    state.data = d;
-    await this._saveState(userId, state);
-    return state;
+    // אם כבר מסומן connected אבל עוד לא עברנו ל-post_strava_import (מקרה קצה)
+    state.stage = "post_strava_import";
+    return {
+      newMessages: [],
+      waitForUser: false,
+      consumeInput: false,
+    };
   }
 
-  /**
-   * בונה טקסט סיכום Strava לפי trainingSummary ו-volume
-   * בלי FTP/דופק – רק נפח.
-   */
-  _buildStravaSummary(state) {
+  // 3) סיכום נפח מסטרבה + מעבר לנתונים אישיים
+  async _stagePostStravaSummary(userId, state) {
+    state = await this._ensureStravaMetrics(userId, state);
     const ts = state.data.trainingSummary;
     const volume = state.data.volume;
 
-    if (!ts || typeof ts !== "object") {
-      return null;
-    }
-    if (!ts.rides_count || ts.rides_count <= 0) {
-      return null;
-    }
+    let msgs = [];
 
-    const rides = ts.rides_count;
-    const hours = ts.totalMovingTimeSec
-      ? (ts.totalMovingTimeSec / 3600).toFixed(1)
-      : null;
-    const km = ts.totalDistanceKm ? ts.totalDistanceKm.toFixed(1) : null;
-    const elevation = ts.totalElevationGainM
-      ? Math.round(ts.totalElevationGainM)
-      : null;
-    const avgDurStr = ts.avgDurationSec
-      ? this._formatMinutes(ts.avgDurationSec)
-      : null;
-    const offPct =
-      ts.offroadPct != null ? Math.round(ts.offroadPct) : null;
+    if (ts && ts.rides_count > 0) {
+      const hoursTotal = (ts.totalMovingTimeSec / 3600).toFixed(1);
+      const hoursAvg = (ts.avgDurationSec / 3600).toFixed(1);
+      const km = ts.totalDistanceKm != null ? ts.totalDistanceKm.toFixed(1) : null;
+      const elevation = ts.totalElevationGainM != null
+        ? Math.round(ts.totalElevationGainM)
+        : null;
+      const offPct =
+        ts.offroadPct != null ? Math.round(ts.offroadPct) : null;
 
-    let msg = "לפני שנתחיל, הנה סיכום קצר של 90 הימים האחרונים לפי סטרבה:\n\n";
-    msg += `• מספר רכיבות: ${rides}\n`;
-    if (hours != null) {
-      msg += `• זמן רכיבה מצטבר: ${hours} שעות\n`;
-    }
-    if (km != null) {
-      msg += `• מרחק מצטבר: ${km} ק״מ\n`;
-    }
-    if (elevation != null) {
-      msg += `• טיפוס מצטבר: כ-${elevation} מטר\n`;
-    }
-    if (avgDurStr != null) {
-      msg += `• זמן רכיבה ממוצע: ${avgDurStr}\n`;
-    }
-    if (offPct != null) {
-      msg += `• אחוז שטח משוער: כ-${offPct}%\n`;
-    }
+      let line =
+        `בדקתי את הרכיבות שלך מהתקופה האחרונה.\n` +
+        `מצאתי ${ts.rides_count} רכיבות בתקופה שניתחתי.\n` +
+        `סה\"כ זמן רכיבה: ~${hoursTotal} שעות, זמן ממוצע לרכיבה: ~${hoursAvg} שעות.`;
 
-    if (volume && typeof volume === "object") {
-      if (
-        volume.minDurationSec ||
-        volume.avgDurationSec ||
-        volume.maxDurationSec
-      ) {
-        msg += "\nמשכי אימון אופייניים מהנתונים:\n";
-        if (volume.minDurationSec) {
-          msg += `• קצר טיפוסי: ${this._formatMinutes(
-            volume.minDurationSec
-          )}\n`;
-        }
-        if (volume.avgDurationSec) {
-          msg += `• ממוצע: ${this._formatMinutes(
-            volume.avgDurationSec
-          )}\n`;
-        }
-        if (volume.maxDurationSec) {
-          msg += `• ארוך טיפוסי: ${this._formatMinutes(
-            volume.maxDurationSec
-          )}\n`;
-        }
+      if (km != null) {
+        line += `\nסה\"כ מרחק: ~${km} ק\"מ.`;
       }
-    }
-
-    msg +=
-      "\nעכשיו בוא נשלים כמה נתונים אישיים שחסרים לי (גיל, משקל, גובה), כדי שאוכל להתאים אליך את האימונים בצורה מדויקת.";
-
-    return msg;
-  }
-
-  // שלב נתונים אישיים – גיל, משקל, גובה
-  async _stepPersonalDetails(userId, text, state) {
-    const p = state.data.profile;
-    const num = this._extractNumber(text);
-
-    // ---- גיל ----
-    if (!p.age) {
-      if (!num) {
-        return {
-          reply:
-            "כדי שנמשיך, תכתוב לי את הגיל שלך (מספר שנים, למשל 46).",
-          onboarding: true,
-        };
+      if (elevation != null) {
+        line += `\nסה\"כ טיפוס: ~${elevation} מטר.`;
+      }
+      if (offPct != null) {
+        line += `\nבערך ${offPct}% מהרכיבות הן שטח / גרבל.`;
       }
 
-      p.age = Math.round(num);
-      state.data.profile = p;
-      await this._saveState(userId, state);
-
-      // האם יש לנו משקל מועמד מסטרבה?
-      let weightCandidate = null;
-      if (p.weightFromStrava != null) {
-        const raw = p.weightFromStrava;
-        weightCandidate =
-          typeof raw === "number" ? Number(raw.toFixed(1)) : Number(raw);
-      } else {
-        try {
-          const params = await this.db.getTrainingParams(userId);
-          if (params && params.weight != null) {
-            const raw = params.weight;
-            weightCandidate =
-              typeof raw === "number" ? Number(raw.toFixed(1)) : Number(raw);
-            p.weightFromStrava = weightCandidate;
-            state.data.profile = p;
-            await this._saveState(userId, state);
-          }
-        } catch {
-          // מתעלמים משגיאה
-        }
+      if (volume && volume.weeklyHoursAvg != null) {
+        const wh = volume.weeklyHoursAvg.toFixed(1);
+        line += `\nהיקף האימונים השבועי הממוצע שלך הוא בערך ${wh} שעות.`;
       }
 
-      if (weightCandidate != null) {
-        return {
-          reply:
-            `רשמתי: גיל ${p.age}.\n` +
-            `לפי הנתונים מסטרבה, המשקל שלך הוא בערך ${weightCandidate} ק״ג.\n` +
-            `אם זה עדיין נכון, תכתוב לי את המשקל שלך כדי לאשר (למשל "${weightCandidate}"). ואם יש עדכון – תכתוב את המשקל המעודכן שלך בק״ג.`,
-          onboarding: true,
-        };
-      }
-
-      return {
-        reply: `רשמתי: גיל ${p.age}.\nמה המשקל הנוכחי שלך בק״ג?`,
-        onboarding: true,
-      };
+      msgs.push(line);
+    } else {
+      msgs.push(
+        "לא מצאתי מספיק רכיבות מהתקופה האחרונה כדי להציג סיכום נפח משמעותי.\n" +
+          "זה לא נורא, נבנה את הפרופיל שלך יחד מהיום והלאה."
+      );
     }
 
-    // ---- משקל ----
-    if (!p.weight) {
-      if (!num) {
-        return {
-          reply:
-            "כדי שנמשיך, תכתוב לי את המשקל שלך בק״ג (למשל 67).",
-          onboarding: true,
-        };
-      }
-      const w =
-        typeof num === "number" && num.toFixed
-          ? Number(num.toFixed(1))
-          : Number(num);
-      p.weight = w;
-      state.data.profile = p;
-      await this._saveState(userId, state);
-      return {
-        reply: `רשמתי: משקל ${p.weight} ק״ג.\nמה הגובה שלך בס״מ?`,
-        onboarding: true,
-      };
-    }
+    // מעבר לנתונים אישיים – באותה הודעה
+    msgs.push(
+      "בוא נשלים עכשיו כמה נתונים אישיים בסיסיים: גיל, משקל, גובה וכו'."
+    );
 
-    // ---- גובה ----
-    if (!p.height) {
-      if (!num) {
-        return {
-          reply:
-            "מעולה. עכשיו תכתוב לי את הגובה שלך בס״מ (למשל 180).",
-          onboarding: true,
-        };
-      }
-      p.height = Math.round(num);
-      state.data.profile = p;
-      await this._saveState(userId, state);
-
-      // אחרי שסיימנו נתונים אישיים עוברים ל-FTP
+    state.stage = "personal_details_collect";
+    // נתחיל מהשדה הראשון שחסר
+    const firstQuestion = this._nextPersonalQuestion(state);
+    if (firstQuestion) {
+      msgs.push(firstQuestion.message);
+      state.data.personal.pendingField = firstQuestion.field;
+    } else {
+      // במקרה שכל הנתונים כבר קיימים – מדלגים ל-FTP
       state.stage = "ftp_intro";
-      await this._saveState(userId, state);
-
-      return {
-        reply:
-          `רשמתי: גובה ${p.height} ס״מ.\n\n` +
-          "עכשיו נעבור ל-FTP – הסף האנאירובי שלך באופניים. אני אציג לך כמה חישובים מהנתונים בסטרבה, ואתה תאשר או תתקן.",
-        onboarding: true,
-      };
     }
 
-    // אם כבר יש הכל – ממשיכים ל-FTP
-    state.stage = "ftp_intro";
-    await this._saveState(userId, state);
     return {
-      reply:
-        "כבר יש לי את הנתונים הבסיסיים שלך (גיל, משקל, גובה).\nנעבור לחישוב ואישור FTP.",
-      onboarding: true,
+      newMessages: msgs,
+      waitForUser: state.stage === "personal_details_collect",
+      consumeInput: true,
     };
   }
 
-  // שלב FTP – הצגת שלושת החישובים + אישור
-  async _stepFTP(userId, text, state) {
-    const p = state.data.profile;
-    const fm = state.data.ftpModels || {};
-    const num = this._extractNumber(text);
+  // 4) איסוף נתונים אישיים
+  _stagePersonalDetails(state, userInput) {
+    const msgs = [];
+    const personal = state.data.personal || (state.data.personal = {});
+
+    const txt = (userInput || "").trim();
+
+    // אם יש לנו שדה ממתין – ננסה לפרש את התשובה אליו
+    if (personal.pendingField) {
+      const field = personal.pendingField;
+
+      if (!txt) {
+        msgs.push("אני צריך תשובה קצרה כדי שאוכל לעדכן את הנתון.");
+        return {
+          newMessages: msgs,
+          waitForUser: true,
+          consumeInput: false,
+        };
+      }
+
+      const num = parseFloat(txt.replace(",", "."));
+
+      if (field === "age") {
+        if (isNaN(num) || num < 10 || num > 90) {
+          msgs.push("לא בטוח שהבנתי את הגיל. תכתוב מספר סביר (למשל 46).");
+          return {
+            newMessages: msgs,
+            waitForUser: true,
+            consumeInput: true,
+          };
+        }
+        personal.age = Math.round(num);
+        msgs.push(`עדכנתי גיל: ${personal.age}.`);
+      } else if (field === "weightKg") {
+        if (isNaN(num) || num < 30 || num > 150) {
+          msgs.push("לא בטוח שהבנתי את המשקל. תכתוב מספר בקילוגרמים (למשל 67).");
+          return {
+            newMessages: msgs,
+            waitForUser: true,
+            consumeInput: true,
+          };
+        }
+        personal.weightKg = Math.round(num);
+        msgs.push(`עדכנתי משקל: ${personal.weightKg} ק\"ג.`);
+      } else if (field === "heightCm") {
+        if (isNaN(num) || num < 120 || num > 220) {
+          msgs.push("לא בטוח שהבנתי את הגובה. תכתוב מספר בס\"מ (למשל 178).");
+          return {
+            newMessages: msgs,
+            waitForUser: true,
+            consumeInput: true,
+          };
+        }
+        personal.heightCm = Math.round(num);
+        msgs.push(`עדכנתי גובה: ${personal.heightCm} ס\"מ.`);
+      }
+
+      delete personal.pendingField;
+    }
+
+    // בדיקה אם חסרים עוד נתונים
+    const nextQ = this._nextPersonalQuestion(state);
+    if (nextQ) {
+      personal.pendingField = nextQ.field;
+      msgs.push(
+        "יש עוד נתון אחד שחשוב לי להשלים כדי לדייק את הפרופיל שלך."
+      );
+      msgs.push(nextQ.message);
+      state.stage = "personal_details_collect";
+      return {
+        newMessages: msgs,
+        waitForUser: true,
+        consumeInput: true,
+      };
+    }
+
+    // כל הנתונים האישיים קיימים – מסכמים ועוברים ל-FTP
+    msgs.push(
+      "מעולה, עדכנתי את הנתונים האישיים שלך.\n" +
+        "תמיד תוכל לבקש ממני בהמשך לעדכן גיל, משקל או גובה אם משהו משתנה."
+    );
+
+    state.stage = "ftp_intro";
+    return {
+      newMessages: msgs,
+      waitForUser: false,
+      consumeInput: true,
+    };
+  }
+
+  _nextPersonalQuestion(state) {
+    const p = state.data.personal || {};
+    if (p.age == null) {
+      return {
+        field: "age",
+        message: "נתחיל בגיל — בן כמה אתה?",
+      };
+    }
+    if (p.weightKg == null) {
+      return {
+        field: "weightKg",
+        message: "מה המשקל שלך בקילוגרמים (למשל 67)?",
+      };
+    }
+    if (p.heightCm == null) {
+      return {
+        field: "heightCm",
+        message: "ומה הגובה שלך בס\"מ (למשל 178)?",
+      };
+    }
+    return null;
+  }
+
+  // 5) FTP – מציג מודלים + בחירה / עדכון
+  _stageFtp(state, userInput) {
+    const msgs = [];
+    const data = state.data;
 
     if (state.stage === "ftp_intro") {
-      // מוודא שיש לנו מודלים
-      const metrics = await this.db.getStravaOnboardingSnapshot(userId);
-      if (metrics && metrics.ftpModels) {
-        state.data.ftpModels = {
-          ...state.data.ftpModels,
-          ...metrics.ftpModels,
-        };
-        await this._saveState(userId, state);
-      }
+      const ftp = data.ftp || {};
+      const lines = [];
 
-      const f20 = state.data.ftpModels?.ftpFrom20min || null;
-      const f3 = state.data.ftpModels?.ftpFrom3minModel || null;
-      const fcp = state.data.ftpModels?.ftpFromCP || null;
-      const frec = state.data.ftpModels?.ftpRecommended || null;
+      lines.push("עכשיו נעבור ל-FTP — מדד היכולת האירובית שלך על האופניים.");
 
-      if (!f20 && !f3 && !fcp && !frec) {
-        state.stage = "ftp_manual";
-        await this._saveState(userId, state);
-        return {
-          reply:
-            "לא מצאתי מספיק רכיבות עם וואטים בסטרבה כדי להעריך FTP בצורה אוטומטית.\nתכתוב לי מה אתה חושב שה-FTP שלך (למשל 240).",
-          onboarding: true,
-        };
-      }
-
-      let msg =
-        "עבור FTP חישבתי כמה מודלים שונים מהנתונים שלך (אם היו מספיק רכיבות עם וואטים):\n\n";
-      if (f20) msg += `• מודל 20 דקות: ${f20}W\n`;
-      if (f3) msg += `• מודל 3 דקות (Power Curve): ${f3}W\n`;
-      if (fcp) msg += `• מודל קריטי (CP): ${fcp}W\n`;
-
-      if (frec) {
-        msg +=
-          `\nלפי כל אלו, ההמלצה שלי ל-FTP התחלתי היא: ${frec}W.\n\n` +
-          'אם הערך הזה נשמע לך הגיוני, תכתוב לי אותו (למשל "FTP 240"). אם אתה יודע ערך אחר שמתאים יותר למציאות – תכתוב אותו ואני אעדכן.';
+      if (
+        ftp.ftp20 == null &&
+        ftp.ftpFrom3min == null &&
+        ftp.ftpFromCP == null &&
+        ftp.ftpFromStrava == null
+      ) {
+        lines.push(
+          "כרגע אין לי מספיק נתונים מסטרבה כדי לחשב FTP בצורה חכמה.\n" +
+            "בוא נגדיר ערך התחלתי, ותמיד נוכל לעדכן כשיצטברו עוד נתונים."
+        );
       } else {
-        msg +=
-          "\nאם אחד הערכים האלו נראה לך נכון, תכתוב לי אותו (למשל \"FTP 240\"). אם אתה יודע ערך אחר שמתאים יותר למציאות – תכתוב אותו ואני אעדכן.";
-      }
-
-      state.stage = "ftp_value";
-      await this._saveState(userId, state);
-
-      return {
-        reply: msg,
-        onboarding: true,
-      };
-    }
-
-    // ftp_value / ftp_manual – מצפה למספר
-    if (!num) {
-      return {
-        reply:
-          "כדי שאדע לעבוד, תכתוב לי מספר ל-FTP שלך בוואט (למשל 240).",
-        onboarding: true,
-      };
-    }
-
-    p.ftp = Math.round(num);
-    state.data.profile = p;
-    state.stage = "hr_max";
-    await this._saveState(userId, state);
-
-    return {
-      reply:
-        `רשמתי: FTP ${p.ftp}W.\n\n` +
-        "עכשיו נגדיר את הדופק המקסימלי שלך.\nתכתוב לי מה אתה חושב שהדופק המקסימלי שלך (למשל 180). אם אתה לא בטוח, אפשר לאמץ את הערך המשוער מהנתונים.",
-      onboarding: true,
-    };
-  }
-
-  // שלב דופק מקסימלי + דופק סף
-  async _stepHeartRate(userId, text, state) {
-    const p = state.data.profile;
-    const num = this._extractNumber(text);
-
-    if (state.stage === "hr_max") {
-      if (!num) {
-        return {
-          reply:
-            "תכתוב לי מה אתה חושב שהדופק המקסימלי שלך (למשל 180).",
-          onboarding: true,
-        };
-      }
-      p.hrMax = Math.round(num);
-      state.data.profile = p;
-      state.stage = "hr_threshold";
-      await this._saveState(userId, state);
-
-      const suggested = Math.round(p.hrMax * 0.9);
-      return {
-        reply:
-          `רשמתי: דופק מקסימלי ${p.hrMax}.\n` +
-          `לפי זה, דופק הסף (threshold) המשוער הוא בערך ${suggested}.\n` +
-          'אם זה נשמע לך נכון, תכתוב לי אותו (למשל "165"). אם לא – תכתוב את הערך שאתה חושב שמתאים.',
-        onboarding: true,
-      };
-    }
-
-    // hr_threshold
-    if (!num) {
-      return {
-        reply:
-          "תכתוב לי את הדופק בסף (threshold) שלך – למשל 165.",
-        onboarding: true,
-      };
-    }
-
-    p.hrThreshold = Math.round(num);
-    state.data.profile = p;
-    state.stage = "duration_intro";
-    await this._saveState(userId, state);
-
-    // עוברים למשך אימון טיפוסי
-    return await this._stepTrainingDuration(userId, null, state, true);
-  }
-
-  // משך אימון טיפוסי – משתמש ב-volume (min/avg/max שונים)
-  async _stepTrainingDuration(userId, text, state, firstTime = false) {
-    const p = state.data.profile;
-    const volume = state.data.volume;
-    const num = text != null ? this._extractNumber(text) : null;
-
-    if (p.typicalDuration && !firstTime && num == null) {
-      // כבר הגדרנו – לא צריך שוב
-      state.stage = "goal";
-      await this._saveState(userId, state);
-      return {
-        reply:
-          "כבר יש לי משך אימון טיפוסי עבורך. נעבור עכשיו להגדרת המטרה שלך.",
-        onboarding: true,
-      };
-    }
-
-    if (num == null) {
-      let suggestionStr = "";
-      if (volume) {
-        const minStr = volume.minDurationSec
-          ? this._formatMinutes(volume.minDurationSec)
-          : null;
-        const avgStr = volume.avgDurationSec
-          ? this._formatMinutes(volume.avgDurationSec)
-          : null;
-        const maxStr = volume.maxDurationSec
-          ? this._formatMinutes(volume.maxDurationSec)
-          : null;
-
-        if (minStr || avgStr || maxStr) {
-          suggestionStr = "\n\nלפי הנתונים שלך, בערך:\n";
-          if (minStr) suggestionStr += `• קצר טיפוסי: ${minStr}\n`;
-          if (avgStr) suggestionStr += `• ממוצע: ${avgStr}\n`;
-          if (maxStr) suggestionStr += `• ארוך טיפוסי: ${maxStr}\n`;
+        lines.push(
+          "חישבתי עבורך כמה מודלים שונים של FTP על בסיס הרכיבות שלך:"
+        );
+        if (ftp.ftp20 != null) {
+          lines.push(`• FTP20 (20 דק'): ~${ftp.ftp20}W (ממוצע 20 דק' * 0.95).`);
+        }
+        if (ftp.ftpFrom3min != null) {
+          lines.push(
+            `• FTP מ-3 דקות: ~${ftp.ftpFrom3min}W (הסקה מיכולת ספרינט ארוכה).`
+          );
+        }
+        if (ftp.ftpFromCP != null) {
+          lines.push(
+            `• FTP לפי מודל CP: ~${ftp.ftpFromCP}W (עקומת כוח 3–20 דק').`
+          );
+        }
+        if (ftp.ftpFromStrava != null) {
+          lines.push(
+            `• FTP כפי שמופיע אצלך בסטרבה: ~${ftp.ftpFromStrava}W.`
+          );
+        }
+        if (ftp.ftpRecommended != null) {
+          lines.push(
+            `על בסיס כל המודלים, ההמלצה שלי כרגע היא FTP של ~${ftp.ftpRecommended}W (חציון הערכים הסבירים).`
+          );
         }
       }
 
+      lines.push(
+        "\nאם תרצה, תוכל גם לשאול אותי: \"איך חישבת את ה-FTP?\" ואסביר בפירוט."
+      );
+
+      let question =
+        "איזה FTP נשתמש בו כנקודת פתיחה?\n" +
+        "אם אתה מסכים להמלצה שלי, תכתוב \"תשתמש בהמלצה\".\n" +
+        "אם אתה רוצה ערך אחר, תכתוב מספר בוואטים (למשל 250).";
+
+      msgs.push(lines.join("\n"));
+      msgs.push(question);
+
+      state.stage = "ftp_confirm";
       return {
-        reply:
-          "בוא נגדיר את משך האימון ה'רגיל' שלך.\n" +
-          "תכתוב לי כמה דקות אתה רוצה שיהיה משך אימון מינימלי 'רגיל' (למשל 90 או 120)." +
-          suggestionStr,
-        onboarding: true,
+        newMessages: msgs,
+        waitForUser: true,
+        consumeInput: true,
       };
     }
 
-    // כאן num != null – זה משך האימון המינימלי הרגיל בדקות
-    const minMinutes = Math.round(num);
-    p.minDuration = minMinutes * 60;
+    // ftp_confirm – מחכים לתשובת המשתמש
+    const txt = (userInput || "").trim();
 
-    // אם יש נתוני volume – נשתמש בהם לשאר; אחרת נשמור הכל כ-min
-    if (volume) {
-      p.typicalDuration =
-        volume.avgDurationSec != null
-          ? Math.round(volume.avgDurationSec)
-          : p.minDuration;
-      p.maxDuration =
-        volume.maxDurationSec != null
-          ? Math.round(volume.maxDurationSec)
-          : p.typicalDuration;
+    if (!txt) {
+      msgs.push("תרשום או \"תשתמש בהמלצה\" או מספר בוואטים (למשל 250).");
+      return {
+        newMessages: msgs,
+        waitForUser: true,
+        consumeInput: false,
+      };
+    }
+
+    const lower = txt.toLowerCase();
+
+    if (
+      lower.includes("איך חישבת") ||
+      lower.includes("פירוט") ||
+      lower.includes("הסבר")
+    ) {
+      msgs.push(this._explainFtpModels(state));
+      msgs.push(
+        "עכשיו תרשום אם אתה רוצה שנשתמש בהמלצה שלי או תכתוב מספר אחר בוואטים."
+      );
+      return {
+        newMessages: msgs,
+        waitForUser: true,
+        consumeInput: true,
+      };
+    }
+
+    const ftp = state.data.ftp || {};
+    let chosen = null;
+
+    if (lower.includes("המלצ")) {
+      if (ftp.ftpRecommended != null) {
+        chosen = ftp.ftpRecommended;
+      } else if (ftp.ftpFromStrava != null) {
+        chosen = ftp.ftpFromStrava;
+      }
     } else {
-      p.typicalDuration = p.minDuration;
-      p.maxDuration = p.minDuration;
+      const num = parseFloat(txt.replace(",", "."));
+      if (!isNaN(num) && num > 100 && num < 500) {
+        chosen = Math.round(num);
+      }
     }
 
-    state.data.profile = p;
-    state.stage = "goal";
-    await this._saveState(userId, state);
-
-    return {
-      reply:
-        `רשמתי: משך אימון מינימלי רגיל כ-${minMinutes} דקות.\n` +
-        "עכשיו נגדיר את המטרה שלך – תכתוב לי מה המטרה העיקרית שלך בתקופה הקרובה (אירוע, עליית FTP, ירידה במשקל, וכו').",
-      onboarding: true,
-    };
-  }
-
-  // מטרה
-  async _stepGoal(userId, text, state) {
-    const p = state.data.profile;
-    const t = (text || "").trim();
-
-    if (!t) {
+    if (chosen == null) {
+      msgs.push(
+        "לא בטוח שהבנתי. תכתוב \"תשתמש בהמלצה\" או מספר בוואטים (למשל 250)."
+      );
       return {
-        reply:
-          "תכתוב לי במילים שלך מה המטרה העיקרית שלך בתקופה הקרובה.\n" +
-          "למשל: \"להתכונן לגרן פונדו אילת\", \"להעלות FTP ל-270W\", \"להיכנס לכושר אחרי פציעה\".",
-        onboarding: true,
+        newMessages: msgs,
+        waitForUser: true,
+        consumeInput: true,
       };
     }
 
-    p.goal = t;
-    state.data.profile = p;
-    state.data.onboardingComplete = true;
-    state.stage = "summary";
-    await this._saveState(userId, state);
+    state.data.ftpFinal = chosen;
+    msgs.push(`מעולה, נגדיר כרגע FTP של ${chosen}W.`);
 
-    const minutes = (sec) =>
-      sec != null ? Math.round(sec / 60) + " דק'" : "-";
-
-    const summary =
-      "מעולה, יש לי את כל מה שאני צריך כדי להתחיל לעבוד בשבילך.\n\n" +
-      "הנה סיכום הפרופיל שלך:\n\n" +
-      `• גיל: ${p.age ?? "-"}\n` +
-      `• משקל: ${p.weight ?? "-"} ק״ג\n` +
-      `• גובה: ${p.height ?? "-"} ס״מ\n` +
-      `• FTP: ${p.ftp ?? "-"}W\n` +
-      `• דופק מקסימלי: ${p.hrMax ?? "-"}\n` +
-      `• דופק סף: ${p.hrThreshold ?? "-"}\n` +
-      `• משך אימון מינימלי: ${minutes(p.minDuration)}\n` +
-      `• משך אימון טיפוסי: ${minutes(p.typicalDuration)}\n` +
-      `• משך אימון ארוך: ${minutes(p.maxDuration)}\n` +
-      `• מטרה: ${p.goal || "-"}\n\n` +
-      "מכאן נוכל להתחיל לבנות אימונים חכמים שמתאימים בדיוק אליך. בכל רגע תוכל לשאול אותי על אימונים, עומסים, התאוששות וכל מה שמעניין אותך.";
-
+    state.stage = "hr_intro";
     return {
-      reply: summary,
-      onboarding: true,
+      newMessages: msgs,
+      waitForUser: false,
+      consumeInput: true,
     };
   }
 
-  // ===== MAIN HANDLE =====
+  _explainFtpModels(state) {
+    const ftp = state.data.ftp || {};
+    const lines = [];
 
-  async handleMessage(userId, text) {
-    let state = await this._loadState(userId);
+    lines.push("פירוט חישובי ה-FTP שביצעתי עבורך:");
 
-    // אם סיימנו אונבורדינג – מתנהגים כצ'אט רגיל
-    if (state.data.onboardingComplete) {
-      // פה בעתיד אפשר להעביר ל"מאמן" הרגיל
+    if (ftp.ftp20 != null) {
+      lines.push(
+        `• FTP20: לקחתי את שלושת מאמצי ה-20 דק' הכי חזקים שלך, עשיתי ממוצע, וכפלתי ב-0.95. יצא ~${ftp.ftp20}W.`
+      );
+    }
+    if (ftp.ftpFrom3min != null) {
+      lines.push(
+        `• FTP מ-3 דקות: ניתחתי את שלושת מאמצי ה-3 דק' הכי חזקים, והסקתי מהם FTP משוער ~${ftp.ftpFrom3min}W.`
+      );
+    }
+    if (ftp.ftpFromCP != null) {
+      lines.push(
+        `• מודל CP: בניתי עקומת כוח על בסיס מאמצים של כמה חלונות זמן (3–20 דק') וקיבלתי ~${ftp.ftpFromCP}W.`
+      );
+    }
+    if (ftp.ftpFromStrava != null) {
+      lines.push(
+        `• FTP מסטרבה: זה הערך שמופיע אצלך בסטרבה — ~${ftp.ftpFromStrava}W.`
+      );
+    }
+    if (ftp.ftpRecommended != null) {
+      lines.push(
+        `בסוף בחרתי ftpRecommended כחציון של כל הערכים הסבירים — ~${ftp.ftpRecommended}W.`
+      );
+    }
+
+    if (!lines.length) {
+      return (
+        "כרגע אין לי מודלים מחושבים ל-FTP כי חסרים נתונים חזקים מספיק מסטרבה.\n" +
+        "ככל שתעשה יותר מאמצים ארוכים, אוכל לחשב את זה בצורה חכמה יותר."
+      );
+    }
+
+    return lines.join("\n");
+  }
+
+  // 6) דופק – HRmax + HR Threshold
+  _stageHr(state, userInput) {
+    const msgs = [];
+    const hr = state.data.hr || {};
+
+    if (state.stage === "hr_intro") {
+      const lines = [];
+
+      lines.push(
+        "עכשיו נעבור לדופק — כדי שאוכל לתכנן עבורך אזורי דופק ואימונים מדויקים."
+      );
+
+      if (hr.hrMaxTop3 != null) {
+        lines.push(
+          `מהניתוח של הרכיבות שלך, דופק המקסימום המוערך (על בסיס Top3 מהחצי שנה האחרונה) הוא בערך ${hr.hrMaxTop3} פעימות לדקה.`
+        );
+      }
+
+      if (hr.hrThresholdRecommended != null) {
+        lines.push(
+          `דופק הסף (Threshold) המומלץ כרגע הוא בערך ${hr.hrThresholdRecommended} פעימות לדקה.`
+        );
+      }
+
+      lines.push(
+        "\nאם תרצה, תוכל לשאול: \"איך חישבת את הדופק?\" ואסביר בפירוט."
+      );
+
+      lines.push(
+        "\nקודם כל, בוא נוודא את דופק המקסימום שלך.\n" +
+          "אם אתה מסכים לערך שמצאתי, תכתוב \"תשתמש בהמלצה\".\n" +
+          "אם יש לך ערך אחר שאתה יודע עליו, תכתוב מספר (למשל 180)."
+      );
+
+      msgs.push(lines.join("\n"));
+      state.stage = "hr_confirm";
+      state.data.hrPending = "max"; // קודם מאשרים HRmax, אחר כך threshold
       return {
-        reply:
-          "האונבורדינג שלך כבר הושלם. כרגע החלק של המאמן הרגיל עדיין בפיתוח, אבל אתה יכול לשאול אותי כל שאלה על אימונים ואני אנסה לעזור 🙂",
-        onboarding: false,
+        newMessages: msgs,
+        waitForUser: true,
+        consumeInput: true,
       };
     }
 
-    // שלב ראשון – stage ריק
-    if (!state.stage) {
-      state.stage = "intro";
-      await this._saveState(userId, state);
+    // hr_confirm
+    const txt = (userInput || "").trim();
+    if (!txt) {
+      msgs.push(
+        "תרשום \"תשתמש בהמלצה\" או מספר בדופק (למשל 180)."
+      );
+      return {
+        newMessages: msgs,
+        waitForUser: true,
+        consumeInput: false,
+      };
+    }
 
-      // ננסה להביא נתוני סטרבה לתוך state (trainingSummary + volume)
-      state = await this._ensureStravaMetrics(userId, state);
-      const summary = this._buildStravaSummary(state);
+    const lower = txt.toLowerCase();
+    if (
+      lower.includes("איך חישבת") ||
+      lower.includes("פירוט") ||
+      lower.includes("הסבר")
+    ) {
+      msgs.push(this._explainHrModels(state));
+      msgs.push(
+        "עכשיו תרשום אם אתה מסכים להמלצה או רוצה לעדכן מספר אחר."
+      );
+      return {
+        newMessages: msgs,
+        waitForUser: true,
+        consumeInput: true,
+      };
+    }
 
-      if (!summary) {
-        // אין מספיק רכיבות – נשארים עם הודעת פתיחה ומיד עוברים לנתונים אישיים
-        state.stage = "personal_details";
-        await this._saveState(userId, state);
+    if (state.data.hrPending === "max") {
+      let chosen = null;
+
+      if (lower.includes("המלצ")) {
+        if (hr.hrMaxTop3 != null) {
+          chosen = hr.hrMaxTop3;
+        }
+      } else {
+        const num = parseFloat(txt.replace(",", "."));
+        if (!isNaN(num) && num > 120 && num < 220) {
+          chosen = Math.round(num);
+        }
+      }
+
+      if (chosen == null) {
+        msgs.push(
+          "לא בטוח שהבנתי. תכתוב \"תשתמש בהמלצה\" או מספר (למשל 180)."
+        );
         return {
-          reply:
-            OPENING_MESSAGE +
-            "\n\nלא מצאתי מספיק רכיבות מ־90 הימים האחרונים כדי להציג סיכום נפח.\nבוא נעבור לנתונים האישיים שלך.",
-          onboarding: true,
+          newMessages: msgs,
+          waitForUser: true,
+          consumeInput: true,
         };
       }
 
-      state.stage = "personal_details";
-      await this._saveState(userId, state);
+      state.data.hrFinal = state.data.hrFinal || {};
+      state.data.hrFinal.max = chosen;
+      msgs.push(`עדכנתי דופק מקסימלי: ${chosen} פעימות לדקה.`);
+
+      // עכשיו נשאל על Threshold
+      const recTh = hr.hrThresholdRecommended;
+      let line = "עכשיו נוודא את דופק הסף (Threshold).";
+      if (recTh != null) {
+        line += ` ההמלצה שלי כרגע היא בערך ${recTh} פעימות לדקה.`;
+      }
+      line +=
+        "\nאם אתה מסכים, תכתוב \"תשתמש בהמלצה\".\n" +
+        "אם יש לך ערך אחר, תכתוב מספר (למשל 170).";
+
+      msgs.push(line);
+      state.data.hrPending = "threshold";
 
       return {
-        reply: OPENING_MESSAGE + "\n\n" + summary,
-        onboarding: true,
+        newMessages: msgs,
+        waitForUser: true,
+        consumeInput: true,
       };
     }
 
-    // ממשיכים לפי stage
-    if (state.stage === "personal_details") {
-      return await this._stepPersonalDetails(userId, text, state);
+    // hrPending === "threshold"
+    let chosenTh = null;
+
+    if (lower.includes("המלצ")) {
+      if (hr.hrThresholdRecommended != null) {
+        chosenTh = hr.hrThresholdRecommended;
+      } else if (state.data.hrFinal && state.data.hrFinal.max != null) {
+        chosenTh = Math.round(state.data.hrFinal.max * 0.9);
+      }
+    } else {
+      const num = parseFloat(txt.replace(",", "."));
+      if (!isNaN(num) && num > 100 && num < 220) {
+        chosenTh = Math.round(num);
+      }
     }
 
-    if (state.stage === "ftp_intro" || state.stage === "ftp_value" || state.stage === "ftp_manual") {
-      return await this._stepFTP(userId, text, state);
-    }
-
-    if (state.stage === "hr_max" || state.stage === "hr_threshold") {
-      return await this._stepHeartRate(userId, text, state);
-    }
-
-    if (state.stage === "duration_intro") {
-      return await this._stepTrainingDuration(userId, text, state, false);
-    }
-
-    if (state.stage === "goal") {
-      return await this._stepGoal(userId, text, state);
-    }
-
-    if (state.stage === "summary") {
+    if (chosenTh == null) {
+      msgs.push(
+        "לא בטוח שהבנתי. תכתוב \"תשתמש בהמלצה\" או מספר (למשל 170)."
+      );
       return {
-        reply:
-          "האונבורדינג שלך הושלם. אם תרצה לשנות נתון (FTP, דופק, משך אימון, מטרה) פשוט תכתוב לי מה לעדכן.",
-        onboarding: true,
+        newMessages: msgs,
+        waitForUser: true,
+        consumeInput: true,
       };
     }
 
-    // fallback
+    state.data.hrFinal = state.data.hrFinal || {};
+    state.data.hrFinal.threshold = chosenTh;
+    delete state.data.hrPending;
+
+    msgs.push(`מעולה, נגדיר דופק סף של ${chosenTh} פעימות לדקה.`);
+
+    state.stage = "goal";
     return {
-      reply:
-        "אני באמצע תהליך אונבורדינג אבל איבדתי קצת כיוון 😅\n" +
-        "בוא נתחיל שוב מהתחלה – תכתוב לי כל דבר ואני אתחיל מחדש.",
-      onboarding: true,
+      newMessages: msgs,
+      waitForUser: false,
+      consumeInput: true,
     };
+  }
+
+  _explainHrModels(state) {
+    const hr = state.data.hr || {};
+    const lines = [];
+
+    if (hr.hrMaxTop3 != null) {
+      lines.push(
+        `• HRmax Top3: לקחתי את שלושת ערכי הדופק הכי גבוהים שלך מחצי השנה האחרונה ועשיתי מהם ממוצע ~${hr.hrMaxTop3} bpm.`
+      );
+    }
+
+    if (hr.hrThresholdRecommended != null) {
+      lines.push(
+        `• HR Threshold Recommended: חישבתי דופק סף משוער לפי היחס ל-HRmax, דפוסי מאמץ וקצב ירידת הדופק במאמצים ארוכים, וקיבלתי ~${hr.hrThresholdRecommended} bpm.`
+      );
+    }
+
+    if (hr.hrModelsDetails) {
+      lines.push(
+        "\nבנוסף, השתמשתי בעוד מודלים (drift, breakpoint וכו') — אפשר להרחיב על זה בהמשך אם תרצה."
+      );
+    }
+
+    if (!lines.length) {
+      return (
+        "כרגע אין לי מספיק נתונים איכותיים על הדופק כדי לבנות מודלים מתקדמים.\n" +
+        "ככל שתעשה יותר אימונים עם מד דופק, אוכל לדייק את זה."
+      );
+    }
+
+    return lines.join("\n");
+  }
+
+  // 7) מטרה (Goal)
+  _stageGoal(state, userInput) {
+    const msgs = [];
+    const txt = (userInput || "").trim();
+
+    if (!state.data.goal && !txt) {
+      msgs.push(
+        "מה המטרה העיקרית שלך בחודשים הקרובים?\n" +
+          "לדוגמה: \"Gran Fondo Eilat בדצמבר\", \"להעלות FTP ל-270W\", או שילוב של אירוע + יעד."
+      );
+      return {
+        newMessages: msgs,
+        waitForUser: true,
+        consumeInput: false,
+      };
+    }
+
+    if (!state.data.goal) {
+      state.data.goal = txt;
+      msgs.push(`סימנתי כמטרה: ${txt}.`);
+      msgs.push(
+        "תמיד נוכל לשנות או לעדכן את המטרה בהמשך אם משהו משתנה."
+      );
+      state.stage = "summary";
+      return {
+        newMessages: msgs,
+        waitForUser: false,
+        consumeInput: true,
+      };
+    }
+
+    // אם כבר יש goal (מקרה קצה) – פשוט ממשיכים לסיכום
+    state.stage = "summary";
+    return {
+      newMessages: [],
+      waitForUser: false,
+      consumeInput: false,
+    };
+  }
+
+  // 8) סיכום סופי
+  async _stageSummary(userId, state) {
+    const d = state.data;
+    const p = d.personal || {};
+    const ftp = d.ftpFinal;
+    const hr = d.hrFinal || {};
+    const goal = d.goal;
+
+    const lines = [];
+
+    lines.push("סיכום קצר של הפרופיל שבנינו לך:");
+
+    const pd = [];
+    if (p.age != null) pd.push(`גיל: ${p.age}`);
+    if (p.weightKg != null) pd.push(`משקל: ${p.weightKg} ק\"ג`);
+    if (p.heightCm != null) pd.push(`גובה: ${p.heightCm} ס\"מ`);
+    if (pd.length) {
+      lines.push("• נתונים אישיים: " + pd.join(", "));
+    }
+
+    if (ftp != null) {
+      lines.push(`• FTP התחלתי: ${ftp}W.`);
+    }
+
+    const hrParts = [];
+    if (hr.max != null) hrParts.push(`HRmax ≈ ${hr.max}`);
+    if (hr.threshold != null) hrParts.push(`HRthr ≈ ${hr.threshold}`);
+    if (hrParts.length) {
+      lines.push("• דופק: " + hrParts.join(", "));
+    }
+
+    if (goal) {
+      lines.push(`• מטרה: ${goal}`);
+    }
+
+    lines.push(
+      "\nמכאן נוכל להתחיל לבנות לך אימונים חכמים, לנתח עומס שבועי ולעקוב אחרי ההתקדמות שלך."
+    );
+
+    // נסמן שהאונבורדינג הושלם בבסיס הנתונים אם יש פונקציה מתאימה
+    const finalProfile = {
+      personal: p,
+      ftp: ftp,
+      hr: hr,
+      goal: goal,
+    };
+
+    if (this.db && typeof this.db.markOnboardingCompleted === "function") {
+      try {
+        await this.db.markOnboardingCompleted(userId, finalProfile);
+      } catch (e) {
+        // לא מפילים את התהליך אם יש תקלה – רק מדלגים בשקט
+        console.error("markOnboardingCompleted error:", e);
+      }
+    }
+
+    // אפשר להגדיר סטייג' "done" כדי שהודעות עתידיות יופנו למאמן / לוגיקה אחרת
+    state.stage = "done";
+
+    return {
+      newMessages: [lines.join("\n")],
+      waitForUser: true,
+      consumeInput: false,
+    };
+  }
+
+  // -------- עזרי DB / מטריקות מסטרבה --------
+
+  async _ensureStravaMetrics(userId, state) {
+    const d = state.data || (state.data = {});
+    if (d.trainingSummary && d.volume && d.ftp && d.hr) {
+      return state;
+    }
+
+    if (!this.db) return state;
+
+    // ניסיון להשתמש ב-getStravaSnapshot (או שתתאים לשם שיש לך)
+    if (typeof this.db.getStravaSnapshot === "function") {
+      try {
+        const snap = await this.db.getStravaSnapshot(userId);
+        if (snap) {
+          if (snap.trainingSummary) d.trainingSummary = snap.trainingSummary;
+          if (snap.volume) d.volume = snap.volume;
+          if (snap.ftp) d.ftp = snap.ftp;
+          if (snap.hr) d.hr = snap.hr;
+        }
+      } catch (e) {
+        console.error("getStravaSnapshot error:", e);
+      }
+    }
+
+    return state;
+  }
+
+  // -------- עזרי state --------
+
+  async _loadState(userId) {
+    if (!this.db || typeof this.db.getOnboardingState !== "function") {
+      return null;
+    }
+    try {
+      const s = await this.db.getOnboardingState(userId);
+      return s || null;
+    } catch (e) {
+      console.error("getOnboardingState error:", e);
+      return null;
+    }
+  }
+
+  async _saveState(userId, state) {
+    if (!this.db || typeof this.db.saveOnboardingState !== "function") {
+      return;
+    }
+    try {
+      await this.db.saveOnboardingState(userId, state);
+    } catch (e) {
+      console.error("saveOnboardingState error:", e);
+    }
   }
 }
