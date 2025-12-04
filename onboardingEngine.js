@@ -33,7 +33,6 @@ export class OnboardingEngine {
   async _loadState(userId) {
     const onboardingStateRaw = await this.db.getOnboardingState(userId);
 
-    // הגנה: אם אין עדיין שורה ב-DB למשתמש חדש
     const onboardingState =
       onboardingStateRaw || {
         stage: null,
@@ -69,6 +68,16 @@ export class OnboardingEngine {
       p.typicalDuration ??= trainingParams.typical_duration ?? null;
       p.maxDuration ??= trainingParams.max_duration ?? null;
       p.goal ??= trainingParams.goal ?? null;
+
+      // אם ה־DB כבר שמר מודלים של FTP בתוך training_params
+      const fm = data.ftpModels;
+      fm.ftpFrom20min ??= trainingParams.ftp_from_20min ?? null;
+      fm.ftpFrom3minModel ??= trainingParams.ftp_from_3min ?? null;
+      fm.ftpFromCP ??= trainingParams.ftp_from_cp ?? null;
+      fm.ftpRecommended ??= trainingParams.ftp_recommended ?? null;
+      fm.hrMaxCandidate ??= trainingParams.hr_max_candidate ?? null;
+      fm.hrThresholdCandidate ??= trainingParams.hr_threshold_candidate ?? null;
+      data.ftpModels = fm;
     }
 
     return {
@@ -115,6 +124,136 @@ export class OnboardingEngine {
     if (sec == null) return "-";
     const mins = Math.round(sec / 60);
     return `${mins} דק'`;
+  }
+
+  /**
+   * מוודא שיש לנו volume + trainingSummary + ftpModels מה-DB/Strava
+   * אם יש פונקציה ייעודית כמו getStravaOnboardingSnapshot – נשתמש בה.
+   * אחרת נ fallback ל-ingestAndComputeFromStrava (שכבר קיים אצלך ב-server.js).
+   */
+  async _ensureStravaMetrics(userId, state) {
+    const d = state.data || {};
+
+    const hasSummary =
+      d.trainingSummary && typeof d.trainingSummary === "object";
+    const hasVolume = d.volume && typeof d.volume === "object";
+
+    if (hasSummary && hasVolume) {
+      return state;
+    }
+
+    let metrics = null;
+    try {
+      if (this.db.getStravaOnboardingSnapshot &&
+          typeof this.db.getStravaOnboardingSnapshot === "function") {
+        metrics = await this.db.getStravaOnboardingSnapshot(userId);
+      } else if (
+        this.db.ingestAndComputeFromStrava &&
+        typeof this.db.ingestAndComputeFromStrava === "function"
+      ) {
+        metrics = await this.db.ingestAndComputeFromStrava(userId);
+      }
+    } catch (err) {
+      console.error("_ensureStravaMetrics error:", err);
+      return state;
+    }
+
+    if (!metrics || typeof metrics !== "object") {
+      return state;
+    }
+
+    if (metrics.trainingSummary && !d.trainingSummary) {
+      d.trainingSummary = metrics.trainingSummary;
+    }
+    if (metrics.volume && !d.volume) {
+      d.volume = metrics.volume;
+    }
+    if (metrics.ftpModels) {
+      d.ftpModels = {
+        ...(d.ftpModels || {}),
+        ...metrics.ftpModels,
+      };
+    }
+
+    state.data = d;
+    await this._saveState(userId, state);
+    return state;
+  }
+
+  /**
+   * בונה טקסט סיכום Strava לפי trainingSummary ו-volume
+   * בלי FTP/דופק – רק נפח.
+   */
+  _buildStravaSummary(state) {
+    const ts = state.data.trainingSummary;
+    const volume = state.data.volume;
+
+    if (!ts || typeof ts !== "object") {
+      return null;
+    }
+    if (!ts.rides_count || ts.rides_count <= 0) {
+      return null;
+    }
+
+    const rides = ts.rides_count;
+    const hours = ts.totalMovingTimeSec
+      ? (ts.totalMovingTimeSec / 3600).toFixed(1)
+      : null;
+    const km = ts.totalDistanceKm
+      ? ts.totalDistanceKm.toFixed(1)
+      : null;
+    const elevation = ts.totalElevationGainM
+      ? Math.round(ts.totalElevationGainM)
+      : null;
+    const avgDurStr = ts.avgDurationSec
+      ? this._formatMinutes(ts.avgDurationSec)
+      : null;
+    const offPct =
+      ts.offroadPct != null ? Math.round(ts.offroadPct) : null;
+
+    let msg = "לפני שנתחיל, הנה סיכום קצר של 90 הימים האחרונים לפי סטרבה:\n\n";
+    msg += `• מספר רכיבות: ${rides}\n`;
+    if (hours != null) {
+      msg += `• זמן רכיבה מצטבר: ${hours} שעות\n`;
+    }
+    if (km != null) {
+      msg += `• מרחק מצטבר: ${km} ק״מ\n`;
+    }
+    if (elevation != null) {
+      msg += `• טיפוס מצטבר: כ-${elevation} מטר\n`;
+    }
+    if (avgDurStr != null) {
+      msg += `• זמן רכיבה ממוצע: ${avgDurStr}\n`;
+    }
+    if (offPct != null) {
+      msg += `• אחוז שטח משוער: כ-${offPct}%\n`;
+    }
+
+    if (volume && typeof volume === "object") {
+      if (volume.minDurationSec || volume.avgDurationSec || volume.maxDurationSec) {
+        msg += "\nמשכי אימון אופייניים מהנתונים:\n";
+        if (volume.minDurationSec) {
+          msg += `• קצר טיפוסי: ${this._formatMinutes(
+            volume.minDurationSec
+          )}\n`;
+        }
+        if (volume.avgDurationSec) {
+          msg += `• ממוצע: ${this._formatMinutes(
+            volume.avgDurationSec
+          )}\n`;
+        }
+        if (volume.maxDurationSec) {
+          msg += `• ארוך טיפוסי: ${this._formatMinutes(
+            volume.maxDurationSec
+          )}\n`;
+        }
+      }
+    }
+
+    msg +=
+      "\nעכשיו בוא נשלים כמה נתונים אישיים שחסרים לי (גיל, משקל, גובה), כדי שאוכל להתאים אליך את האימונים בצורה מדויקת.";
+
+    return msg;
   }
 
   // שלב נתונים אישיים – גיל, משקל, גובה
@@ -511,11 +650,31 @@ export class OnboardingEngine {
     }
 
     switch (state.stage) {
-      case "opening":
-        // אחרי ההודעה הראשונה – עוברים לנתונים אישיים
+      case "opening": {
+        // כאן נכנס FLOW רשמי של שלב 2 – סיכום סטרבה + מעבר לנתונים אישיים
+        state = await this._ensureStravaMetrics(userId, state);
+        const summaryText = this._buildStravaSummary(state);
+
         state.stage = "personal_details";
         await this._saveState(userId, state);
-        return await this._stepPersonalDetails(userId, cleanText, state);
+
+        // יוצרים שאלה ראשונה של נתונים אישיים (גיל)
+        const personalStep = await this._stepPersonalDetails(
+          userId,
+          "",
+          state
+        );
+
+        if (summaryText) {
+          return {
+            reply: summaryText + "\n\n" + personalStep.reply,
+            onboarding: true,
+          };
+        }
+
+        // אם אין לנו מספיק נתונים לסיכום – נדלג עליו
+        return personalStep;
+      }
 
       case "personal_details":
         return await this._stepPersonalDetails(userId, cleanText, state);
@@ -539,7 +698,6 @@ export class OnboardingEngine {
         return await this._stepSummary(userId, cleanText, state);
 
       case "summary_done":
-        // מכאן והלאה המשתמש "אחרי אונבורדינג"
         return {
           reply:
             "האונבורדינג כבר הושלם. מעכשיו אתה יכול לשאול אותי על אימונים, עומסים, FTP, או פשוט: \"מה האימון שלי למחר?\"",
@@ -548,7 +706,8 @@ export class OnboardingEngine {
 
       default:
         return {
-          reply: "אירעה שגיאה: שלב לא מוכר באונבורדינג. אפשר לכתוב לי \"התחל אונבורדינג\" כדי להתחיל מחדש.",
+          reply:
+            'אירעה שגיאה: שלב לא מוכר באונבורדינג. אפשר לכתוב לי "התחל אונבורדינג" כדי להתחיל מחדש.',
           onboarding: true,
         };
     }
@@ -556,12 +715,15 @@ export class OnboardingEngine {
 
   /**
    * נקודת כניסה אחרי חיבור סטרבה (לא חובה, אבל שימושי):
-   * אפשר לקרוא לזה מ-/exchange_token אחרי computeHrAndFtpFromStrava.
+   * אפשר לקרוא לזה מ-/exchange_token אחרי ingestAndComputeFromStrava.
    */
   async handleStravaConnected(userId) {
     try {
-      if (this.db.computeHrAndFtpFromStrava) {
-        await this.db.computeHrAndFtpFromStrava(userId);
+      if (
+        this.db.ingestAndComputeFromStrava &&
+        typeof this.db.ingestAndComputeFromStrava === "function"
+      ) {
+        await this.db.ingestAndComputeFromStrava(userId);
       }
     } catch (err) {
       console.error("handleStravaConnected error:", err);
@@ -569,11 +731,8 @@ export class OnboardingEngine {
 
     let state = await this._loadState(userId);
 
-    // אם זה ממש משתמש חדש – נתחיל מהפתיחה
     if (!state.stage) {
       state.stage = "opening";
-    } else if (state.stage === "opening") {
-      // נשאיר opening – ההודעה תוצג בהודעה הראשונה
     }
 
     await this._saveState(userId, state);
