@@ -1,429 +1,181 @@
 <!DOCTYPE html>
 <html lang="he" dir="rtl">
-  <head>
-    <meta charset="UTF-8" />
-    <title>LOEW – המאמן האישי שלך</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <style>
-      body {
-        margin: 0;
-        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-          sans-serif;
-        background: #050816;
-        color: #f7f7ff;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        min-height: 100vh;
-      }
+<head>
+  <meta charset="UTF-8" />
+  <title>LOEW – המאמן האישי שלך</title>
 
-      .app {
-        width: 100%;
-        max-width: 800px;
-        height: 90vh;
-        max-height: 700px;
-        background: radial-gradient(circle at top left, #1f2937, #020617);
-        border-radius: 24px;
-        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.65);
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-        border: 1px solid rgba(148, 163, 184, 0.25);
-      }
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f5f5f5;
+      margin: 0;
+      padding: 0;
+      direction: rtl;
+      text-align: right;
+    }
 
-      .header {
-        padding: 16px 20px;
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        border-bottom: 1px solid rgba(148, 163, 184, 0.3);
-        background: linear-gradient(to left, #020617, #0b1120);
-      }
+    #chat-container {
+      width: 100%;
+      max-width: 700px;
+      margin: 0 auto;
+      padding: 20px;
+    }
 
-      .avatar {
-        width: 40px;
-        height: 40px;
-        border-radius: 999px;
-        background: radial-gradient(circle at 30% 20%, #22c55e, #22d3ee);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-weight: 800;
-        color: #020617;
-        box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.9);
-      }
+    .bubble {
+      padding: 14px 18px;
+      border-radius: 14px;
+      margin-bottom: 12px;
+      width: fit-content;
+      max-width: 80%;
+      font-size: 16px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
 
-      .header-text {
-        flex: 1;
-      }
+    .assistant {
+      background: white;
+      border: 1px solid #ccc;
+      color: #222;
+      margin-right: 0;
+    }
 
-      .header-title {
-        font-size: 16px;
-        font-weight: 600;
-      }
+    .user {
+      background: #daf1ff;
+      border: 1px solid #b5e2ff;
+      margin-left: auto;
+      text-align: left;
+    }
 
-      .header-subtitle {
-        font-size: 12px;
-        color: #cbd5f5;
-      }
+    #input-area {
+      display: flex;
+      gap: 10px;
+      margin-top: 20px;
+    }
 
-      .badge {
-        font-size: 11px;
-        padding: 4px 10px;
-        border-radius: 999px;
-        border: 1px solid rgba(56, 189, 248, 0.6);
-        color: #e0f2fe;
-        background: rgba(15, 23, 42, 0.85);
-        white-space: nowrap;
-      }
+    #user-input {
+      flex: 1;
+      padding: 10px;
+      font-size: 16px;
+      border-radius: 8px;
+      border: 1px solid #ccc;
+    }
 
-      .messages {
-        flex: 1;
-        padding: 16px 20px;
-        overflow-y: auto;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        scroll-behavior: smooth;
-      }
+    #send-btn {
+      padding: 10px 18px;
+      font-size: 16px;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+      background: #007aff;
+      color: white;
+    }
 
-      .bubble-row {
-        display: flex;
-        margin-bottom: 4px;
-      }
+    a {
+      color: #007aff;
+      text-decoration: underline;
+      cursor: pointer;
+      word-break: break-all;
+    }
+  </style>
+</head>
 
-      .bubble-row.me {
-        justify-content: flex-end;
-      }
+<body>
 
-      .bubble-row.bot {
-        justify-content: flex-start;
-      }
+  <div id="chat-container">
+    <div id="messages"></div>
 
-      .bubble {
-        max-width: 80%;
-        border-radius: 18px;
-        padding: 10px 12px;
-        font-size: 14px;
-        line-height: 1.4;
-        word-wrap: break-word;
-        white-space: pre-wrap;
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-      }
-
-      .bubble.me {
-        background: linear-gradient(to left, #0f172a, #1e293b);
-        border: 1px solid rgba(148, 163, 184, 0.6);
-        border-bottom-left-radius: 4px;
-      }
-
-      .bubble.bot {
-        background: linear-gradient(to left, #22c55e, #22d3ee);
-        color: #020617;
-        border-bottom-right-radius: 4px;
-      }
-
-      .bubble a {
-        color: inherit;
-        text-decoration: underline;
-      }
-
-      .bubble-label {
-        font-size: 11px;
-        font-weight: 600;
-        opacity: 0.9;
-      }
-
-      .bubble-label.onboarding {
-        opacity: 1;
-      }
-
-      .bubble-label.chat {
-        opacity: 0.75;
-      }
-
-      .bubble-text {
-        font-size: 14px;
-        line-height: 1.4;
-        text-align: right;
-        direction: rtl;
-      }
-
-      .system-note {
-        font-size: 11px;
-        color: #9ca3af;
-        margin: 4px 4px 12px;
-        text-align: center;
-      }
-
-      .footer {
-        padding: 10px 14px 14px;
-        border-top: 1px solid rgba(148, 163, 184, 0.3);
-        background: linear-gradient(to left, #020617, #020617);
-      }
-
-      .input-row {
-        display: flex;
-        gap: 8px;
-      }
-
-      .input-row input {
-        flex: 1;
-        border-radius: 999px;
-        border: 1px solid rgba(148, 163, 184, 0.6);
-        background: rgba(15, 23, 42, 0.9);
-        color: #e5e7eb;
-        padding: 10px 14px;
-        font-size: 14px;
-        outline: none;
-      }
-
-      .input-row input::placeholder {
-        color: #6b7280;
-      }
-
-      .input-row button {
-        border-radius: 999px;
-        border: none;
-        padding: 0 16px;
-        font-size: 14px;
-        font-weight: 600;
-        cursor: pointer;
-        background: linear-gradient(to left, #22c55e, #22d3ee);
-        color: #020617;
-        box-shadow: 0 8px 25px rgba(34, 197, 94, 0.4);
-      }
-
-      .input-row button:disabled {
-        opacity: 0.5;
-        cursor: default;
-        box-shadow: none;
-      }
-
-      .helper {
-        margin-top: 6px;
-        font-size: 11px;
-        color: #9ca3af;
-      }
-
-      .helper strong {
-        color: #e5e7eb;
-      }
-
-      @media (max-width: 640px) {
-        .app {
-          height: 100vh;
-          max-height: none;
-          border-radius: 0;
-        }
-      }
-    </style>
-  </head>
-  <body>
-    <div class="app">
-      <div class="header">
-        <div class="avatar">L</div>
-        <div class="header-text">
-          <div class="header-title">LOEW – המאמן האישי שלך</div>
-          <div class="header-subtitle">
-            צ'אט אימונים חכם שמכיר אותך ואת הנתונים מסטרבה
-          </div>
-        </div>
-        <div class="badge">Beta • Personal Coach</div>
-      </div>
-
-      <div id="messages" class="messages"></div>
-
-      <div class="footer">
-        <div class="input-row">
-          <input
-            id="input"
-            type="text"
-            placeholder="תכתוב ל-LOEW מה שאתה רוצה…"
-          />
-          <button id="sendBtn">שלח</button>
-        </div>
-        <div class="helper">
-          <strong>טיפ:</strong> תוכל לשאול על אימון למחר, עומס שבועי, FTP,
-          דופק ועוד.
-        </div>
-      </div>
+    <div id="input-area">
+      <input id="user-input" placeholder="כתוב הודעה…" />
+      <button id="send-btn">שלח</button>
     </div>
+  </div>
 
-    <script>
-      const params = new URLSearchParams(window.location.search);
-      const USER_ID = params.get("userId") || "roy";
-      const STRAVA_STATUS = params.get("strava") || "";
+  <script>
+    const messagesDiv = document.getElementById("messages");
+    const input = document.getElementById("user-input");
+    const sendBtn = document.getElementById("send-btn");
 
-      const messagesEl = document.getElementById("messages");
-      const inputEl = document.getElementById("input");
-      const sendBtn = document.getElementById("sendBtn");
+    // ---- UTILS ----
 
-      let hasStrava = false;
+    function scrollToBottom() {
+      messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    }
 
-      function addMessage(who, text, mode) {
-        const row = document.createElement("div");
-        row.className = "bubble-row " + (who === "me" ? "me" : "bot");
+    // הופך טקסט ללינק (Strava auth, URLs)
+    function linkify(text) {
+      return text
+        // קישורים מלאים
+        .replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank">$1</a>')
+        // קישורים של סטרבה שמתחילים ב־ /
+        .replace(/(\/auth\/strava\?userId=[^\s]+)/g, '<a href="$1">$1</a>');
+    }
 
-        const bubble = document.createElement("div");
-        bubble.className = "bubble " + (who === "me" ? "me" : "bot");
+    function addMessage(text, sender = "assistant") {
+      const bubble = document.createElement("div");
+      bubble.className = "bubble " + sender;
 
-        if (who === "bot") {
-          const label = document.createElement("div");
-          label.className =
-            "bubble-label " + (mode === "onboarding" ? "onboarding" : "chat");
-          label.textContent =
-            mode === "onboarding" ? "LOEW · אונבורדינג" : "LOEW · צ'אט";
-          bubble.appendChild(label);
-        }
+      const textDiv = document.createElement("div");
+      textDiv.className = "bubble-text";
 
-        textDiv.className = "bubble-text";
+      // *** התיקון הקריטי ***
+      textDiv.innerHTML = linkify(text);
 
-        // תמיכה בלינקים (Strava, HTTP, HTTPS)
-        textDiv.innerHTML = text
-          .replace(/(http[s]?:\/\/\S+)/g, '<a href="$1" target="_blank">$1</a>')
-          .replace(/(\/auth\/strava\?userId=\S+)/g, '<a href="$1">$1</a>');
+      bubble.appendChild(textDiv);
+      messagesDiv.appendChild(bubble);
+      scrollToBottom();
+    }
 
-        bubble.appendChild(textDiv);
+    // ---- SEND MESSAGE ----
 
-        row.appendChild(bubble);
-        messagesEl.appendChild(row);
+    async function sendMessage() {
+      const txt = input.value.trim();
+      if (!txt) return;
 
-        messagesEl.scrollTop = messagesEl.scrollHeight;
-      }
+      addMessage(txt, "user");
 
-      async function callChatAPI(message) {
-        const res = await fetch("/api/loew/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userId: USER_ID, message }),
-        });
-        return res.json();
-      }
+      input.value = "";
+      scrollToBottom();
 
-      async function fetchSnapshotOnce() {
-        try {
-          const res = await fetch("/api/loew/strava-snapshot", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ userId: USER_ID }),
-          });
-          const data = await res.json();
-          if (data.ok && data.snapshot) {
-            hasStrava = !!data.snapshot.hasStrava;
-          }
-        } catch (err) {
-          console.error("snapshot error", err);
-        }
-      }
+      const userId = new URLSearchParams(window.location.search).get("userId") || "default";
 
-      function handleChatReply(data) {
-        if (!data.ok && data.error) {
-          addMessage("bot", "שגיאה מהשרת: " + data.error, "chat");
-          return;
-        }
-
-        const mode = data.onboarding ? "onboarding" : "chat";
-
-        if (data.reply) {
-          addMessage("bot", data.reply, mode);
-        } else {
-          addMessage("bot", "לא קיבלתי תשובה מ-LOEW.", mode);
-        }
-      }
-
-      async function sendMessage() {
-        const text = inputEl.value.trim();
-        if (!text) return;
-
-        addMessage("me", text, "chat");
-        inputEl.value = "";
-        inputEl.focus();
-        sendBtn.disabled = true;
-
-        // טריגר לחיבור סטרבה כשכותבים "כן" ואין סטרבה
-        const normalized = text
-          .trim()
-          .toLowerCase()
-          .replace(/[.!?…]/g, "");
-        if (
-          !hasStrava &&
-          (normalized === "כן" || normalized === "yes" || normalized === "y")
-        ) {
-          const url = "/auth/strava?userId=" + encodeURIComponent(USER_ID);
-          window.location.href = url;
-          setTimeout(() => {
-            sendBtn.disabled = false;
-          }, 1500);
-          return;
-        }
-
-        try {
-          const data = await callChatAPI(text);
-          handleChatReply(data);
-        } catch (err) {
-          console.error(err);
-          addMessage(
-            "bot",
-            "שגיאה בתקשורת עם השרת: " + (err.message || ""),
-            "chat"
-          );
-        } finally {
-          sendBtn.disabled = false;
-        }
-      }
-
-      sendBtn.addEventListener("click", sendMessage);
-      inputEl.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" && !e.shiftKey) {
-          e.preventDefault();
-          sendMessage();
-        }
+      const res = await fetch("/api/loew/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId,
+          message: txt
+        })
       });
 
-      // ===== INIT =====
-      (async function init() {
-        await fetchSnapshotOnce();
+      const data = await res.json();
 
-        // חזרנו מ-Strava עם ?strava=connected
-        if (STRAVA_STATUS === "connected") {
-          try {
-            // קודם נותנים ל-LOEW לענות – פה תופיע הודעת הפתיחה + סיכום
-            const data = await callChatAPI("היי");
-            handleChatReply(data);
+      if (data.reply) addMessage(data.reply, "assistant");
+    }
 
-            // ואז בועה נפרדת שמבהירה שהאינג'סט מתבצע כרגע
-            addMessage(
-              "bot",
-              "אני מייבא את הנתונים שלך… זה לוקח בדרך כלל פחות מדקה.\nאכתוב לך כאן כשאני מסיים ונמשיך בתהליך אונבורדינג",
-              "onboarding"
-            );
-          } catch (err) {
-            console.error("init after strava error", err);
-            addMessage(
-              "bot",
-              "שגיאה בטעינת האונבורדינג אחרי החיבור לסטרבה.",
-              "chat"
-            );
-          }
-          return;
-        }
+    sendBtn.onclick = sendMessage;
+    input.onkeydown = e => {
+      if (e.key === "Enter") sendMessage();
+    };
 
-        // אין סטרבה עדיין – הודעת פתיחה בלבד
-        try {
-          const data = await callChatAPI("היי");
-          handleChatReply(data);
-        } catch (err) {
-          console.error("init error", err);
-          addMessage(
-            "bot",
-            "שגיאה בטעינת האונבורדינג. נסה לכתוב לי הודעה מחדש.",
-            "chat"
-          );
-        }
-      })();
-    </script>
-  </body>
+    // ---- AUTO-START ----
+    // שולח "היי" אוטומטית אם אין היסטוריה
+    window.onload = () => {
+      const params = new URLSearchParams(window.location.search);
+      const auto = params.get("auto");
+
+      // רק בצ'אט חדש, שולח היי אוטומטי
+      if (!auto) {
+        const userId = params.get("userId") || "default";
+        fetch("/api/loew/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId, message: "היי" })
+        })
+          .then(r => r.json())
+          .then(d => d.reply && addMessage(d.reply, "assistant"));
+      }
+    };
+  </script>
+
+</body>
 </html>
