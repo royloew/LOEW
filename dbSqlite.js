@@ -3,7 +3,6 @@ import sqlite3 from "sqlite3";
 sqlite3.verbose();
 
 // ברירת מחדל: /tmp/loew.db (מתאים ל-Render)
-// אפשר לשנות עם משתנה סביבה LOEW_DB_FILE אם תרצה
 const DB_FILE = process.env.LOEW_DB_FILE || "/tmp/loew.db";
 
 console.log("[DB] Trying to open SQLite file at:", DB_FILE);
@@ -19,7 +18,6 @@ const db = new sqlite3.Database(
     }
   }
 );
-
 
 // ---------- Helpers for sqlite ----------
 
@@ -53,7 +51,6 @@ function all(sql, params = []) {
 // ---------- Schema init ----------
 
 async function init() {
-  
   await run(`
     CREATE TABLE IF NOT EXISTS users (
       user_id   TEXT PRIMARY KEY,
@@ -88,22 +85,21 @@ async function init() {
     );
   `);
 
-    // לוודא שהעמודות החדשות של מודלי FTP קיימות גם ב-DB ישן
+  // לוודא שהעמודות החדשות של מודלי FTP קיימות גם ב-DB ישן
   try {
     await run(`ALTER TABLE training_params ADD COLUMN ftp_from_20min INTEGER;`);
-  } catch (e) {
-    // מתעלם משגיאה אם העמודה כבר קיימת
-  }
+  } catch (_) {}
   try {
     await run(`ALTER TABLE training_params ADD COLUMN ftp_from_3min INTEGER;`);
-  } catch (e) {}
+  } catch (_) {}
   try {
     await run(`ALTER TABLE training_params ADD COLUMN ftp_from_cp INTEGER;`);
-  } catch (e) {}
+  } catch (_) {}
   try {
-    await run(`ALTER TABLE training_params ADD COLUMN ftp_recommended INTEGER;`);
-  } catch (e) {}
-
+    await run(
+      `ALTER TABLE training_params ADD COLUMN ftp_recommended INTEGER;`
+    );
+  } catch (_) {}
 
   await run(`
     CREATE TABLE IF NOT EXISTS strava_tokens (
@@ -127,11 +123,11 @@ async function init() {
       max_power              REAL,
       avg_hr                 REAL,
       max_hr                 REAL,
-      has_power              INTEGER
+      has_power              INTEGER,
+      type                   TEXT
     );
   `);
 
-  // streams – נשמור JSON של המערכים הגולמיים (time/watts/heartrate)
   await run(`
     CREATE TABLE IF NOT EXISTS strava_streams (
       user_id     TEXT,
@@ -142,15 +138,6 @@ async function init() {
     );
   `);
 
-    // לוודא שיש עמודת type גם ב-DB ישן
-  try {
-    await run(`ALTER TABLE strava_activities ADD COLUMN type TEXT;`);
-  } catch (e) {
-    // אם כבר קיימת – מתעלמים מהשגיאה
-  }
-
-
-  // power curves – best watts לכל חלון זמן בפר פעילות
   await run(`
     CREATE TABLE IF NOT EXISTS power_curves (
       user_id     TEXT,
@@ -162,7 +149,7 @@ async function init() {
   `);
 }
 
-// ---------- Power curve helpers ----------
+// ---------- Helpers ----------
 
 function bestRollingAverage(values, windowSize) {
   if (!Array.isArray(values) || values.length < windowSize || windowSize <= 0) {
@@ -286,6 +273,10 @@ export async function createDbImpl() {
       params.typical_duration ?? null,
       params.max_duration ?? null,
       params.goal ?? null,
+      params.ftp_from_20min ?? null,
+      params.ftp_from_3min ?? null,
+      params.ftp_from_cp ?? null,
+      params.ftp_recommended ?? null,
       now,
       userId,
     ];
@@ -294,15 +285,19 @@ export async function createDbImpl() {
       await run(
         `INSERT INTO training_params
         (age, weight, height, ftp, hr_max, hr_threshold,
-         min_duration, typical_duration, max_duration, goal, updated_at, user_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         min_duration, typical_duration, max_duration, goal,
+         ftp_from_20min, ftp_from_3min, ftp_from_cp, ftp_recommended,
+         updated_at, user_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         values
       );
     } else {
       await run(
         `UPDATE training_params
          SET age = ?, weight = ?, height = ?, ftp = ?, hr_max = ?, hr_threshold = ?,
-             min_duration = ?, typical_duration = ?, max_duration = ?, goal = ?, updated_at = ?
+             min_duration = ?, typical_duration = ?, max_duration = ?, goal = ?,
+             ftp_from_20min = ?, ftp_from_3min = ?, ftp_from_cp = ?, ftp_recommended = ?,
+             updated_at = ?
          WHERE user_id = ?`,
         values
       );
@@ -363,11 +358,11 @@ export async function createDbImpl() {
 
   async function insertStravaActivities(userId, activities) {
     const sql = `
-  INSERT OR REPLACE INTO strava_activities
-  (id, user_id, start_date, moving_time, elapsed_time, distance,
-   total_elevation_gain, avg_power, max_power, avg_hr, max_hr, has_power, type)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`;
+      INSERT OR REPLACE INTO strava_activities
+      (id, user_id, start_date, moving_time, elapsed_time, distance,
+       total_elevation_gain, avg_power, max_power, avg_hr, max_hr, has_power, type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
     for (const a of activities) {
       await run(sql, [
         a.id,
@@ -430,438 +425,311 @@ export async function createDbImpl() {
       "EBikeRide",
     ]);
 
-    const filtered = raw.filter((a) => {
+    const activities = [];
+    for (const a of raw) {
+      if (!cyclingTypes.has(a.type)) continue;
       const startTs = Math.floor(new Date(a.start_date).getTime() / 1000);
-      return (
-        startTs >= afterTs &&
-        a.type &&
-        cyclingTypes.has(a.type) &&
-        (a.average_watts || a.max_watts || a.device_watts)
-      );
-    });
+      if (startTs < afterTs) continue;
 
-    return filtered.map((a) => ({
-  id: a.id,
-  start_date: Math.floor(new Date(a.start_date).getTime() / 1000),
-  moving_time: a.moving_time || 0,
-  elapsed_time: a.elapsed_time || a.moving_time || 0,
-  distance: a.distance || 0,
-  total_elevation_gain: a.total_elevation_gain || 0,
-  avg_power: a.average_watts || null,
-  max_power: a.max_watts || null,
-  avg_hr: a.average_heartrate || null,
-  max_hr: a.max_heartrate || null,
-  has_power: !!(a.average_watts || a.max_watts || a.device_watts),
-  type: a.type || null, // <--- חדש
-}));
-
-  }
-
-  async function fetchStravaAthleteProfile(tokens) {
-    const headers = {
-      Authorization: `Bearer ${tokens.accessToken}`,
-    };
-    const url = new URL("https://www.strava.com/api/v3/athlete");
-
-    try {
-      const res = await fetch(url.toString(), { headers });
-      if (!res.ok) {
-        const text = await res.text();
-        console.warn("Strava athlete fetch failed:", text);
-        return null;
-      }
-      const data = await res.json();
-      if (data && typeof data.weight === "number") {
-        return { weightKg: data.weight };
-      }
-      return null;
-    } catch (err) {
-      console.warn("Strava athlete fetch error:", err);
-      return null;
+      const hasPower = !!a.has_power;
+      activities.push({
+        id: a.id,
+        start_date: startTs,
+        moving_time: a.moving_time || 0,
+        elapsed_time: a.elapsed_time || 0,
+        distance: a.distance || 0,
+        total_elevation_gain: a.total_elevation_gain || 0,
+        avg_power: hasPower ? a.avg_power || null : null,
+        max_power: hasPower ? a.max_power || null : null,
+        avg_hr: a.average_heartrate || null,
+        max_hr: a.max_heartrate || null,
+        has_power: hasPower,
+        type: a.type || null,
+      });
     }
+
+    return activities;
   }
 
-
-  async function fetchStreamsForActivity(tokens, activityId) {
+  async function fetchStreamsForActivity(userId, tokens, activityId) {
     const headers = {
       Authorization: `Bearer ${tokens.accessToken}`,
     };
     const url = new URL(
       `https://www.strava.com/api/v3/activities/${activityId}/streams`
     );
-    url.searchParams.set("keys", "time,watts,heartrate");
+    url.searchParams.set("keys", "watts,heartrate");
     url.searchParams.set("key_by_type", "true");
 
     const res = await fetch(url.toString(), { headers });
     if (!res.ok) {
       const text = await res.text();
-      console.error("Strava streams fetch failed:", activityId, text);
-      return null;
+      throw new Error("Strava streams fetch failed: " + text);
     }
-    const json = await res.json();
-    return json;
+
+    const raw = await res.json();
+    const watts = raw.watts && Array.isArray(raw.watts.data)
+      ? raw.watts.data
+      : [];
+    const hr = raw.heartrate && Array.isArray(raw.heartrate.data)
+      ? raw.heartrate.data
+      : [];
+
+    await insertStravaStream(userId, activityId, "watts", watts);
+    await insertStravaStream(userId, activityId, "heartrate", hr);
+
+    return { watts, hr };
   }
 
-  async function buildPowerCurvesForActivity(userId, activityId, streamsJson) {
-    if (!streamsJson) return;
-
-    const wattsStream = streamsJson.watts && streamsJson.watts.data;
-    if (!Array.isArray(wattsStream) || wattsStream.length < 30) {
-      return;
-    }
-
-    // נניח דגימה של 1Hz – חלון ב"שניות" = חלון באורך זהה במערך
-    const windowsSec = [60, 180, 300, 480, 1200]; // 1,3,5,8,20 דקות
-
-    for (const win of windowsSec) {
-      const best = bestRollingAverage(wattsStream, win);
+  async function computePowerCurvesForActivity(userId, activityId, watts) {
+    if (!Array.isArray(watts) || watts.length === 0) return;
+    const windows = [60, 180, 300, 480, 1200]; // 1,3,5,8,20 דקות
+    for (const sec of windows) {
+      const best = bestRollingAverage(watts, sec);
       if (best && best > 0) {
-        await insertPowerCurve(userId, activityId, win, best);
+        await insertPowerCurve(userId, activityId, sec, best);
       }
     }
   }
 
-  async function fetchAndStoreStravaData(userId) {
-    const tokens = await getStravaTokens(userId);
-    if (!tokens) return null;
+  async function computeFtpAndHrModelsFromDb(userId) {
+    // POWER CURVES – אוספים טופ 3 לכל חלון
+    const windows = [180, 300, 480, 1200]; // 3,5,8,20 דקות
+    const curves = await all(
+      `SELECT seconds, best_watts
+       FROM power_curves
+       WHERE user_id = ?
+       ORDER BY best_watts DESC`,
+      [userId]
+    );
 
-    const activities = await fetchStravaActivitiesFromAPI(userId, tokens);
-
-        // מביא משקל מהפרופיל של סטרבה, אם קיים, ושומר כ-weight התחלתי
-    try {
-      const athlete = await fetchStravaAthleteProfile(tokens);
-      if (athlete && athlete.weightKg) {
-        await saveTrainingParams(userId, { weight: athlete.weightKg });
-      }
-    } catch (err) {
-      console.warn("saving Strava weight failed:", err);
+    const byWindow = new Map();
+    for (const row of curves) {
+      if (!windows.includes(row.seconds)) continue;
+      if (!byWindow.has(row.seconds)) byWindow.set(row.seconds, []);
+      byWindow.get(row.seconds).push(row.best_watts);
     }
 
-
-    await clearStravaData(userId);
-    await insertStravaActivities(userId, activities);
-
-    // עבור כל פעילות עם power – נביא streams ונבנה power curve
-    for (const act of activities) {
-      if (!act.has_power) continue;
-      try {
-        const streams = await fetchStreamsForActivity(tokens, act.id);
-        if (!streams) continue;
-
-        const timeArr = streams.time && streams.time.data;
-        const wattsArr = streams.watts && streams.watts.data;
-        const hrArr = streams.heartrate && streams.heartrate.data;
-
-        if (Array.isArray(timeArr)) {
-          await insertStravaStream(userId, act.id, "time", timeArr);
-        }
-        if (Array.isArray(wattsArr)) {
-          await insertStravaStream(userId, act.id, "watts", wattsArr);
-        }
-        if (Array.isArray(hrArr)) {
-          await insertStravaStream(userId, act.id, "heartrate", hrArr);
-        }
-
-        await buildPowerCurvesForActivity(userId, act.id, streams);
-      } catch (e) {
-        console.error("Error building streams/curves for activity", act.id, e);
-      }
+    function top3avg(sec) {
+      const arr = byWindow.get(sec) || [];
+      if (arr.length === 0) return null;
+      const top3 = arr.slice(0, 3);
+      const sum = top3.reduce((a, b) => a + b, 0);
+      return sum / top3.length;
     }
 
-    return activities;
-  }
+    const p3 = {
+      s3: top3avg(180),
+      s5: top3avg(300),
+      s8: top3avg(480),
+      s20: top3avg(1200),
+    };
 
-  // ===== Metrics from DB (FTP / HR / Volume) =====
-
-  async function computeMetricsFromDb(userId) {
-    // power curves לכל חלון
-    async function top3ForWindow(seconds) {
-      const rows = await all(
-        `SELECT best_watts FROM power_curves
-         WHERE user_id = ? AND seconds = ?
-         ORDER BY best_watts DESC
-         LIMIT 3`,
-        [userId, seconds]
-      );
-      if (!rows || rows.length === 0) return null;
-      const vals = rows.map((r) => r.best_watts).filter((x) => x > 0);
-      if (vals.length === 0) return null;
-      const mean =
-        vals.reduce((sum, v) => sum + v, 0) / Math.max(vals.length, 1);
-      return mean;
+    let ftpFrom20 = null;
+    if (p3.s20 != null) {
+      ftpFrom20 = Math.round(p3.s20 * 0.95);
     }
 
-    const mean20 = await top3ForWindow(1200); // 20 דק׳
-    const mean3 = await top3ForWindow(180);   // 3 דק׳
-    const mean8 = await top3ForWindow(480);   // 8 דק׳ (אם יהיה בעתיד)
+    let ftpFrom3minModel = null;
+    if (p3.s3 != null) {
+      ftpFrom3minModel = Math.round(p3.s3 * 0.8);
+    }
 
-    let ftpFrom20min = null;
-    let ftpFromPowerCurve = null;
     let ftpFromCP = null;
+    if (p3.s3 != null && p3.s20 != null) {
+      // CP מודל פשוט – לא מדויק מדעית אבל סביר כ-estimate
+      const p3min = p3.s3;
+      const p20min = p3.s20;
+      const t3 = 180;
+      const t20 = 1200;
 
-    if (mean20 != null) {
-      ftpFrom20min = Math.round(mean20 * 0.95);
-    }
-    if (mean3 != null) {
-      ftpFromPowerCurve = Math.round(mean3 * 0.8);
-    }
-    if (mean3 != null && mean20 != null) {
-      // מודל CP פשוט: משקל יתר ל-20min
-      const cp = 0.5 * (mean20 * 0.95) + 0.5 * (mean3 * 0.8);
-      ftpFromCP = Math.round(cp);
-    } else if (mean8 != null) {
-      const cp = mean8 * 0.9;
-      ftpFromCP = Math.round(cp);
-    }
-
-    const ftpCandidates = [
-      ftpFrom20min,
-      ftpFromPowerCurve,
-      ftpFromCP,
-    ].filter((x) => x && x > 0);
-
-    let ftpRecommended = null;
-    if (ftpCandidates.length > 0) {
-      const sorted = [...ftpCandidates].sort((a, b) => a - b);
-      ftpRecommended = sorted[Math.floor(sorted.length / 2)];
+      const denom = p20min - p3min;
+      if (Math.abs(denom) > 1e-6) {
+        const CP = (p20min * p3min * (t20 - t3)) / (denom * (t20 - t3));
+        if (CP > 0 && Number.isFinite(CP)) {
+          ftpFromCP = Math.round(CP);
+        }
+      }
     }
 
-    // HR metrics – לפי max_hr מה-180 ימים האחרונים
+    // HR – טופ 3 דפקים
     const nowSec = Math.floor(Date.now() / 1000);
     const days180 = 180 * 24 * 3600;
+    const sinceTs = nowSec - days180;
+
     const hrRows = await all(
       `SELECT max_hr
        FROM strava_activities
-       WHERE user_id = ? AND start_date >= ? AND max_hr IS NOT NULL`,
-      [userId, nowSec - days180]
+       WHERE user_id = ?
+         AND max_hr IS NOT NULL
+         AND start_date >= ?
+       ORDER BY max_hr DESC`,
+      [userId, sinceTs]
     );
 
     let hrMaxCandidate = null;
-    let hrThresholdCandidate = null;
-
     if (hrRows.length > 0) {
-      const maxHrs = hrRows
-        .map((r) => r.max_hr)
-        .filter((x) => x != null)
-        .sort((a, b) => b - a);
-      const top3 = maxHrs.slice(0, 3);
-      const meanMax =
-        top3.reduce((sum, v) => sum + v, 0) / Math.max(top3.length, 1);
-      hrMaxCandidate = Math.round(meanMax);
+      const vals = hrRows.slice(0, 3).map((r) => r.max_hr);
+      const sum = vals.reduce((a, b) => a + b, 0);
+      hrMaxCandidate = Math.round(sum / vals.length);
+    }
+
+    let hrThresholdCandidate = null;
+    if (hrMaxCandidate != null) {
       hrThresholdCandidate = Math.round(hrMaxCandidate * 0.9);
     }
 
-        // Volume summary – "טיפוסי": קצר/ממוצע/ארוך (שנה אחרונה)
-    const volRows = await all(
-      `SELECT moving_time
-       FROM strava_activities
-       WHERE user_id = ?`,
-      [userId]
-    );
+    // FTP recommended – מדיום של המודלים הסבירים
+    const candidates = [];
+    if (ftpFrom20 && ftpFrom20 > 100) candidates.push(ftpFrom20);
+    if (ftpFrom3minModel && ftpFrom3minModel > 100)
+      candidates.push(ftpFrom3minModel);
+    if (ftpFromCP && ftpFromCP > 100) candidates.push(ftpFromCP);
 
-    let volumeSummary = null;
-    if (volRows.length > 0) {
-      const baseDurations = volRows
-        .map((r) => r.moving_time || 0)
-        .filter((x) => x > 0)
-        .sort((a, b) => a - b);
-
-      if (baseDurations.length > 0) {
-        // מסנן "שטויות" מאוד קצרות אם יש מספיק רכיבות
-        const filtered =
-          baseDurations.length >= 10
-            ? baseDurations.filter((x) => x >= 600) // 10 דקות ומעלה
-            : baseDurations;
-
-        const durations =
-          filtered.length > 0 ? filtered : baseDurations;
-
-        const avgDuration =
-          durations.reduce((s, v) => s + v, 0) /
-          Math.max(durations.length, 1);
-
-        const percentile = (p) => {
-          if (durations.length === 1) return durations[0];
-          const idx = Math.floor((durations.length - 1) * p);
-          return durations[idx];
-        };
-
-        const shortSec = percentile(0.25); // "קצר טיפוסי"
-        const longSec = percentile(0.75); // "ארוך טיפוסי"
-
-        volumeSummary = {
-          ridesCount: baseDurations.length,
-          minDurationSec: shortSec,
-          avgDurationSec: avgDuration,
-          maxDurationSec: longSec,
-        };
-      }
+    let ftpRecommended = null;
+    if (candidates.length > 0) {
+      const sorted = [...candidates].sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+      ftpRecommended = sorted[mid];
     }
-
-
-    // training summary – 90 הימים האחרונים
-        // training summary – 90 הימים האחרונים
-    const days90 = 90 * 24 * 3600;
-    const tsRows = await all(
-      `SELECT moving_time, distance, total_elevation_gain, type
-       FROM strava_activities
-       WHERE user_id = ? AND start_date >= ?`,
-      [userId, nowSec - days90]
-    );
-
-    let trainingSummary = null;
-    if (tsRows.length > 0) {
-      let totalSec = 0;
-      let totalDist = 0;
-      let totalElev = 0;
-      let offroadCount = 0;
-
-      const offroadTypes = new Set(["GravelRide", "MountainBikeRide", "EBikeRide"]);
-
-      for (const r of tsRows) {
-        const sec = r.moving_time || 0;
-        totalSec += sec;
-        totalDist += r.distance || 0;
-        totalElev += r.total_elevation_gain || 0;
-        if (r.type && offroadTypes.has(r.type)) {
-          offroadCount += 1;
-        }
-      }
-
-      const ridesCount = tsRows.length;
-      const weeks = 90 / 7;
-      const totalHours = totalSec / 3600;
-      const avgHoursPerWeek = totalHours / weeks;
-      const avgDurationSec = ridesCount > 0 ? totalSec / ridesCount : 0;
-      const offroadPct = ridesCount > 0 ? (offroadCount / ridesCount) * 100 : 0;
-
-      trainingSummary = {
-        avgHoursPerWeek,            // נשאיר כדי לא לשבור לוגים קיימים
-        rides_count: ridesCount,
-        totalHours,                 // סך שעות ב-90 יום
-        totalKm: totalDist / 1000,  // ק״מ
-        totalElevationGainM: totalElev,
-        avgDurationSec,
-        offroadPct,
-      };
-    }
-
 
     return {
-      ftpFrom20min,
-      ftpFrom3minModel: ftpFromPowerCurve,
-      ftpFromCP,
-      ftpRecommended,
-      hrMaxCandidate,
-      hrThresholdCandidate,
-      volumeSummary,
-      trainingSummary,
-    };
-  }
-
-  // נקראת ע"י מנוע האונבורדינג – גם אינג'סט וגם חישוב
-    // נקראת ע"י מנוע האונבורדינג – גם אינג'סט וגם חישוב
-  async function ingestAndComputeFromStrava(userId) {
-    const tokens = await getStravaTokens(userId);
-    if (!tokens) return null;
-
-    // מביאים ומכניסים את כל הנתונים הגולמיים
-    await fetchAndStoreStravaData(userId);
-
-    // מחשבים מודלים של FTP + דופק + ווליום וכו'
-    const metrics = await computeMetricsFromDb(userId);
-
-    // שומרים את מודלי ה-FTP בטבלת training_params (בעמודות החדשות)
-    if (metrics) {
-      const now = Math.floor(Date.now() / 1000);
-      const {
-        ftpFrom20min,
+      ftpModels: {
+        ftpFrom20min: ftpFrom20,
         ftpFrom3minModel,
         ftpFromCP,
         ftpRecommended,
-      } = metrics;
-
-      const existing = await get(
-        `SELECT user_id FROM training_params WHERE user_id = ?`,
-        [userId]
-      );
-
-      const values = [
-        ftpFrom20min ?? null,
-        ftpFrom3minModel ?? null,
-        ftpFromCP ?? null,
-        ftpRecommended ?? null,
-        now,
-        userId,
-      ];
-
-      if (!existing) {
-        await run(
-          `INSERT INTO training_params
-           (ftp_from_20min, ftp_from_3min, ftp_from_cp, ftp_recommended, updated_at, user_id)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          values
-        );
-      } else {
-        await run(
-          `UPDATE training_params
-           SET ftp_from_20min = ?, ftp_from_3min = ?, ftp_from_cp = ?, ftp_recommended = ?, updated_at = ?
-           WHERE user_id = ?`,
-          values
-        );
-      }
-    }
-
-    return metrics;
+        hrMaxCandidate,
+        hrThresholdCandidate,
+      },
+    };
   }
 
+  async function computeVolumeAndSummaryFromDb(userId) {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const days90 = 90 * 24 * 3600;
+    const since90 = nowSec - days90;
 
-  // משמשת ב-_ensureStravaMetrics לפני/אחרי אינג'סט
-    async function getVolumeSummaryFromDb(userId) {
-    const rows = await all(
-      `SELECT moving_time FROM strava_activities WHERE user_id = ?`,
+    const rowsAll = await all(
+      `SELECT moving_time, distance, total_elevation_gain, start_date
+       FROM strava_activities
+       WHERE user_id = ?
+         AND moving_time > 0`,
       [userId]
     );
-    if (!rows || rows.length === 0) return null;
 
-    const baseDurations = rows
+    if (rowsAll.length === 0) {
+      return { trainingSummary: null, volume: null };
+    }
+
+    const durationsAll = rowsAll
       .map((r) => r.moving_time || 0)
       .filter((x) => x > 0)
       .sort((a, b) => a - b);
 
-    if (baseDurations.length === 0) return null;
+    let minDurationSec = null;
+    let avgDurationSecVolume = null;
+    let maxDurationSec = null;
 
-    const filtered =
-      baseDurations.length >= 10
-        ? baseDurations.filter((x) => x >= 600)
-        : baseDurations;
+    if (durationsAll.length > 0) {
+      minDurationSec = durationsAll[Math.floor(durationsAll.length * 0.25)];
+      avgDurationSecVolume =
+        durationsAll.reduce((a, b) => a + b, 0) / durationsAll.length;
+      maxDurationSec = durationsAll[Math.floor(durationsAll.length * 0.9)];
+    }
 
-    const durations =
-      filtered.length > 0 ? filtered : baseDurations;
+    const rows90 = rowsAll.filter((r) => r.start_date >= since90);
+    if (rows90.length === 0) {
+      return {
+        trainingSummary: null,
+        volume: {
+          ridesCount: durationsAll.length,
+          minDurationSec,
+          avgDurationSec: avgDurationSecVolume,
+          maxDurationSec,
+        },
+      };
+    }
 
-    const avgDuration =
-      durations.reduce((s, v) => s + v, 0) /
-      Math.max(durations.length, 1);
+    let totalTime90 = 0;
+    let totalDist90 = 0;
+    let totalElev90 = 0;
+    for (const r of rows90) {
+      totalTime90 += r.moving_time || 0;
+      totalDist90 += r.distance || 0;
+      totalElev90 += r.total_elevation_gain || 0;
+    }
 
-    const percentile = (p) => {
-      if (durations.length === 1) return durations[0];
-      const idx = Math.floor((durations.length - 1) * p);
-      return durations[idx];
+    const avgDurationSec90 = totalTime90 / rows90.length;
+
+    const trainingSummary = {
+      rides_count: rows90.length,
+      totalMovingTimeSec: totalTime90,
+      totalDistanceKm: totalDist90 / 1000,
+      totalElevationGainM: totalElev90,
+      avgDurationSec: avgDurationSec90,
+      offroadPct: null, // אפשר לחשב לפי type בעתיד
     };
 
-    const shortSec = percentile(0.25);
-    const longSec = percentile(0.75);
+    const volume = {
+      ridesCount: durationsAll.length,
+      minDurationSec,
+      avgDurationSec: avgDurationSecVolume,
+      maxDurationSec,
+    };
+
+    return { trainingSummary, volume };
+  }
+
+  async function ingestAndComputeFromStrava(userId) {
+    const tokens = await getStravaTokens(userId);
+    if (!tokens) {
+      return {
+        trainingSummary: null,
+        volume: null,
+        ftpModels: null,
+      };
+    }
+
+    const activities = await fetchStravaActivitiesFromAPI(userId, tokens);
+    await clearStravaData(userId);
+    await insertStravaActivities(userId, activities);
+
+    // streams + power curves
+    for (const a of activities) {
+      if (!a.has_power) continue;
+      try {
+        const { watts } = await fetchStreamsForActivity(userId, tokens, a.id);
+        if (watts && watts.length > 0) {
+          await computePowerCurvesForActivity(userId, a.id, watts);
+        }
+      } catch (err) {
+        console.error("[STRAVA] streams error for activity", a.id, err.message);
+      }
+    }
+
+    const volumeSummary = await computeVolumeAndSummaryFromDb(userId);
+    const ftpModels = await computeFtpAndHrModelsFromDb(userId);
 
     return {
-      ridesCount: baseDurations.length,
-      minDurationSec: shortSec,
-      avgDurationSec: avgDuration,
-      maxDurationSec: longSec,
+      trainingSummary: volumeSummary.trainingSummary,
+      volume: volumeSummary.volume,
+      ftpModels: ftpModels.ftpModels,
     };
   }
 
+  async function getStravaOnboardingSnapshot(userId) {
+    // לא מביא מה-API – רק מסכם מה-DB
+    const volumeSummary = await computeVolumeAndSummaryFromDb(userId);
+    const ftpModels = await computeFtpAndHrModelsFromDb(userId);
 
-  // האובייקט שהשרת וה-onboardingEngine משתמשים בו
+    return {
+      trainingSummary: volumeSummary.trainingSummary,
+      volume: volumeSummary.volume,
+      ftpModels: ftpModels.ftpModels,
+    };
+  }
+
   return {
     ensureUser,
     getOnboardingState,
@@ -870,8 +738,8 @@ export async function createDbImpl() {
     saveTrainingParams,
     getStravaTokens,
     saveStravaTokens,
+    clearStravaData,
     ingestAndComputeFromStrava,
-    getVolumeSummaryFromDb,
-    computeMetricsFromDb,
+    getStravaOnboardingSnapshot,
   };
 }

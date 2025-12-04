@@ -4,11 +4,10 @@ import cors from "cors";
 import bodyParser from "body-parser";
 
 import { fileURLToPath } from "url";
+import path from "path";
 
 import { createDbImpl } from "./dbSqlite.js";
 import { OnboardingEngine } from "./onboardingEngine.js";
-
-import path from "path";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -20,7 +19,7 @@ app.use(bodyParser.json());
 const PORT = process.env.PORT || 3000;
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 
-// יצירת DB ואובייקט אונבורדינג *פעם אחת בלבד*
+// יצירת DB + מנוע אונבורדינג
 const dbImpl = await createDbImpl();
 const onboarding = new OnboardingEngine(dbImpl);
 
@@ -177,6 +176,7 @@ app.get("/exchange_token", async (req, res) => {
       expiresAt,
     });
 
+    // אינג'סט + חישוב מטריקות בסיסיות מיד אחרי החיבור
     try {
       console.log("[STRAVA] Starting ingestAndComputeFromStrava for", userId);
       const metrics = await dbImpl.ingestAndComputeFromStrava(userId);

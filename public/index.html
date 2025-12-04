@@ -92,7 +92,6 @@
         margin-bottom: 4px;
       }
 
-      /* ב-RTL: המשתמש מימין, הבוט משמאל */
       .bubble-row.me {
         justify-content: flex-end;
       }
@@ -242,34 +241,21 @@
           <input
             id="input"
             type="text"
-            placeholder="שאל את LOEW מה האימון הבא שלך, איך היה האימון האחרון, או כל דבר על האימונים שלך…"
+            placeholder="תכתוב ל-LOEW מה שאתה רוצה…"
           />
           <button id="sendBtn">שלח</button>
         </div>
         <div class="helper">
-          שימוש: אפשר להעביר userId ב-URL
-          <strong>?userId=yoram</strong> – אחרת ישמר <strong>userId=roy</strong>
-          כברירת מחדל.
+          <strong>טיפ:</strong> תוכל לשאול על אימון למחר, עומס שבועי, FTP,
+          דופק ועוד.
         </div>
       </div>
     </div>
 
     <script>
-      // ===== USER ID, STRAVA STATUS & DOM =====
-      function getUserId() {
-        const urlParams = new URLSearchParams(window.location.search);
-        const fromUrl = urlParams.get("userId");
-        if (fromUrl) return fromUrl;
-        return "roy";
-      }
-
-      function getStravaStatus() {
-        const urlParams = new URLSearchParams(window.location.search);
-        return urlParams.get("strava") || null; // למשל: "connected"
-      }
-
-      const USER_ID = getUserId();
-      const STRAVA_STATUS = getStravaStatus();
+      const params = new URLSearchParams(window.location.search);
+      const USER_ID = params.get("userId") || "roy";
+      const STRAVA_STATUS = params.get("strava") || "";
 
       const messagesEl = document.getElementById("messages");
       const inputEl = document.getElementById("input");
@@ -277,25 +263,7 @@
 
       let hasStrava = false;
 
-      function scrollToBottom() {
-        messagesEl.scrollTop = messagesEl.scrollHeight;
-      }
-
-      function renderTextWithLinks(text) {
-        const urlRegex = /(https?:\/\/[^\s]+)/g;
-        return text.replace(
-          urlRegex,
-          (url) =>
-            `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`
-        );
-      }
-
-      /**
-       * mode:
-       *  - "onboarding" → LOEW מצב אונבורדינג
-       *  - "chat"       → צ'אט רגיל
-       */
-      function addMessage(who, text, mode = "chat") {
+      function addMessage(who, text, mode) {
         const row = document.createElement("div");
         row.className = "bubble-row " + (who === "me" ? "me" : "bot");
 
@@ -306,33 +274,30 @@
           const label = document.createElement("div");
           label.className =
             "bubble-label " + (mode === "onboarding" ? "onboarding" : "chat");
-          if (mode === "onboarding") {
-            label.textContent = "LOEW · אונבורדינג";
-          } else {
-            label.textContent = "LOEW · צ'אט";
-          }
+          label.textContent =
+            mode === "onboarding" ? "LOEW · אונבורדינג" : "LOEW · צ'אט";
           bubble.appendChild(label);
         }
 
         const textDiv = document.createElement("div");
         textDiv.className = "bubble-text";
-        textDiv.innerHTML = renderTextWithLinks(text);
+        textDiv.textContent = text;
         bubble.appendChild(textDiv);
 
         row.appendChild(bubble);
         messagesEl.appendChild(row);
-        scrollToBottom();
+
+        messagesEl.scrollTop = messagesEl.scrollHeight;
       }
 
-      function addSystemNote(text) {
-        const div = document.createElement("div");
-        div.className = "system-note";
-        div.textContent = text;
-        messagesEl.appendChild(div);
-        scrollToBottom();
+      async function callChatAPI(message) {
+        const res = await fetch("/api/loew/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: USER_ID, message }),
+        });
+        return res.json();
       }
-
-      // ===== STRAVA SNAPSHOT =====
 
       async function fetchSnapshotOnce() {
         try {
@@ -342,63 +307,12 @@
             body: JSON.stringify({ userId: USER_ID }),
           });
           const data = await res.json();
-
           if (data.ok && data.snapshot) {
-            const snap = data.snapshot;
-            if (typeof snap.hasStrava === "boolean") {
-              hasStrava = snap.hasStrava;
-            } else {
-              // אם חזר snapshot – נניח שיש סטרבה
-              hasStrava = true;
-            }
-            return snap;
-          } else {
-            hasStrava = false;
-            return null;
+            hasStrava = !!data.snapshot.hasStrava;
           }
         } catch (err) {
-          console.warn("snapshot init error", err);
-          hasStrava = false;
-          return null;
+          console.error("snapshot error", err);
         }
-      }
-
-      async function fetchSnapshot() {
-        try {
-          const res = await fetch("/api/loew/strava-snapshot", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ userId: USER_ID }),
-          });
-          const data = await res.json();
-
-          if (data.ok && data.snapshot) {
-            const snap = data.snapshot;
-            if (typeof snap.hasStrava === "boolean") {
-              hasStrava = snap.hasStrava;
-            } else {
-              hasStrava = true;
-            }
-            return snap;
-          }
-        } catch (err) {
-          console.warn("snapshot error", err);
-        }
-        return null;
-      }
-
-      // ===== CHAT API =====
-
-      async function callChatAPI(text) {
-        const res = await fetch("/api/loew/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            userId: USER_ID,
-            message: text,
-          }),
-        });
-        return res.json();
       }
 
       function handleChatReply(data) {
@@ -425,7 +339,7 @@
         inputEl.focus();
         sendBtn.disabled = true;
 
-        // טריגר לחיבור סטרבה כשכותבים "כן" והפרונט חושב שאין סטרבה
+        // טריגר לחיבור סטרבה כשכותבים "כן" ואין סטרבה
         const normalized = text
           .trim()
           .toLowerCase()
@@ -467,72 +381,44 @@
 
       // ===== INIT =====
       (async function init() {
-        const snapshot = await fetchSnapshotOnce();
+        await fetchSnapshotOnce();
 
-        // 1. חזרנו מ-Strava עם ?strava=connected
+        // חזרנו מ-Strava עם ?strava=connected
         if (STRAVA_STATUS === "connected") {
-  try {
-    // קודם נותנים ל-LOEW לענות – פה תופיע הודעת הפתיחה
-    const data = await callChatAPI("היי");
-    handleChatReply(data);
+          try {
+            // קודם נותנים ל-LOEW לענות – פה תופיע הודעת הפתיחה + סיכום
+            const data = await callChatAPI("היי");
+            handleChatReply(data);
 
-    // ואז בועה נפרדת על הייבוא, עם הטקסט החדש
-    addMessage(
-      "bot",
-      "אני מייבא את הנתונים שלך… זה לוקח בדרך כלל פחות מדקה\nאכתוב לך כאן שאני מסיים ונמשיך בתהליך אונבורדינג",
-      "onboarding"
-    );
-  } catch (err) {
-    console.error("auto onboarding after Strava error:", err);
-    addMessage(
-      "bot",
-      "משהו השתבש אחרי חיבור לסטרבה. נסה לכתוב לי הודעה בצ'אט כדי להמשיך.",
-      "chat"
-    );
-  }
-
-  return;
-}
-
-
-        // 2. אין סטרבה – מסך פתיחה שדוחף לחיבור לסטרבה
-        if (!hasStrava) {
-          const authUrl = "/auth/strava?userId=" + encodeURIComponent(USER_ID);
-
-          addMessage(
-            "bot",
-            "היי, אני LOEW.\n" +
-              'נראה שעבור המשתמש "' +
-              USER_ID +
-              '" עוד לא מחובר חשבון Strava.',
-            "onboarding"
-          );
-
-          addMessage(
-            "bot",
-            "אם יש לך סטרבה ותרצה שאנתח את האימונים שלך, אתה יכול להתחבר דרך הקישור הבא (לחיץ):\n" +
-              window.location.origin +
-              authUrl,
-            "onboarding"
-          );
-
-          addSystemNote(
-            'טיפ: אפשר גם לכתוב "כן" כדי לפתוח את מסך ההתחברות לסטרבה מהצ\'אט.'
-          );
+            // ואז בועה נפרדת שמבהירה שהאינג'סט מתבצע כרגע
+            addMessage(
+              "bot",
+              "אני מייבא את הנתונים שלך… זה לוקח בדרך כלל פחות מדקה.\nאכתוב לך כאן כשאני מסיים ונמשיך בתהליך אונבורדינג",
+              "onboarding"
+            );
+          } catch (err) {
+            console.error("init after strava error", err);
+            addMessage(
+              "bot",
+              "שגיאה בטעינת האונבורדינג אחרי החיבור לסטרבה.",
+              "chat"
+            );
+          }
           return;
         }
 
-        // 3. יש סטרבה – פתיחה "נקייה" (אם האונבורדינג כבר הושלם LOEW יזהה בצד שרת)
-        addMessage(
-          "bot",
-          "היי " +
-            USER_ID +
-            " 👋\nיש לי נתונים מסטרבה עבורך. אתה יכול לשאול:\n" +
-            "• מה האימון שלי למחר?\n" +
-            "• תנתח לי את האימון האחרון.\n" +
-            "• תראה לי את העומס השבועי או הניתוחים המתקדמים.",
-          "chat"
-        );
+        // אין סטרבה עדיין – הודעת פתיחה בלבד
+        try {
+          const data = await callChatAPI("היי");
+          handleChatReply(data);
+        } catch (err) {
+          console.error("init error", err);
+          addMessage(
+            "bot",
+            "שגיאה בטעינת האונבורדינג. נסה לכתוב לי הודעה מחדש.",
+            "chat"
+          );
+        }
       })();
     </script>
   </body>
