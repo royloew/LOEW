@@ -310,7 +310,7 @@ async _stageAwaitStrava(userId, state, userInput) {
           };
         }
         personal.age = Math.round(num);
-        msgs.push(`עדכנתי גיל: ${personal.age}.`);
+        // הורדנו: msgs.push(`עדכנתי גיל: ${personal.age}.`);
       } else if (field === "weightKg") {
         if (isNaN(num) || num < 30 || num > 150) {
           msgs.push("לא בטוח שהבנתי את המשקל. תכתוב מספר בקילו (למשל 67).");
@@ -321,18 +321,18 @@ async _stageAwaitStrava(userId, state, userInput) {
           };
         }
         personal.weightKg = Math.round(num);
-        msgs.push(`עדכנתי משקל: ${personal.weightKg} ק\"ג.`);
+        // הורדנו: msgs.push(`עדכנתי משקל: ${personal.weightKg} ק\"ג.`);
       } else if (field === "heightCm") {
         if (isNaN(num) || num < 120 || num > 220) {
           msgs.push("לא בטוח שהבנתי את הגובה. תכתוב מספר בס\"מ (למשל 178).");
           return {
             newMessages: msgs,
             waitForUser: true,
-            consumeInput: true,
+           consumeInput: true,
           };
         }
         personal.heightCm = Math.round(num);
-        msgs.push(`עדכנתי גובה: ${personal.heightCm} ס\"מ.`);
+        // הורדנו: msgs.push(`עדכנתי גובה: ${personal.heightCm} ס\"מ.`);
       }
 
       delete personal.pendingField;
@@ -493,7 +493,7 @@ async _stageAwaitStrava(userId, state, userInput) {
     }
 
     state.data.ftpFinal = chosen;
-    msgs.push(`מעולה, נגדיר כרגע FTP של ${chosen}W.`);
+    // הורדנו: msgs.push(`מעולה, נגדיר כרגע FTP של ${chosen}W.`);
     state.stage = "hr_intro";
     return {
       newMessages: msgs,
@@ -627,7 +627,7 @@ async _stageAwaitStrava(userId, state, userInput) {
 
       state.data.hrFinal = state.data.hrFinal || {};
       state.data.hrFinal.max = chosen;
-      msgs.push(`עדכנתי דופק מקסימלי: ${chosen} bpm.`);
+      // הורדנו: msgs.push(`עדכנתי דופק מקסימלי: ${chosen} bpm.`);
 
       const recTh = hr.hrThresholdRecommended;
       let line = "עכשיו נוודא את דופק הסף (Threshold).";
@@ -673,7 +673,7 @@ async _stageAwaitStrava(userId, state, userInput) {
     state.data.hrFinal.threshold = chosenTh;
     delete state.data.hrPending;
 
-    msgs.push(`מעולה, נגדיר דופק סף של ${chosenTh} bpm.`);
+    // הורדנו: msgs.push(`מעולה, נגדיר דופק סף של ${chosenTh} bpm.`);
 
     state.stage = "goal";
     return {
@@ -752,6 +752,13 @@ async _stageAwaitStrava(userId, state, userInput) {
     const goal = d.goal;
 
     const lines = [];
+
+    if (goal) {
+      lines.push(`סימנתי כמטרה: ${goal}.`);
+      lines.push("תמיד תוכל לשנות או לעדכן את המטרה בהמשך.");
+      lines.push("");
+    }
+
     lines.push("סיכום קצר של הפרופיל שבנינו לך:");
 
     const pd = [];
@@ -768,10 +775,8 @@ async _stageAwaitStrava(userId, state, userInput) {
       hrParts.push(`HRthr ≈ ${hrFinal.threshold}`);
     if (hrParts.length) lines.push("• דופק: " + hrParts.join(", "));
 
-    if (goal) lines.push(`• מטרה: ${goal}`);
-
     lines.push(
-      "\nמכאן נוכל להתחיל לבנות לך אימונים חכמים, לנתח עומס שבועי ולעקוב אחרי ההתקדמות שלך."
+      "\nמכאן נוכל להתחיל לבנות לך אימונים חכמים, לתכנן עומס שבועי ולעקוב אחרי ההתקדמות שלך."
     );
 
     // שמירה ל-training_params

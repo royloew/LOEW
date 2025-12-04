@@ -108,11 +108,15 @@
 
     // הופך טקסט ללינק (Strava auth, URLs)
     function linkify(text) {
-      return text
-        // קישורים מלאים
-        .replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank">$1</a>')
-        // קישורים של סטרבה שמתחילים ב־ /
-        .replace(/(\/auth\/strava\?userId=[^\s]+)/g, '<a href="$1">חבר אותי לסטרבה</a>');
+      return text.replace(
+        /(https?:\/\/[^\s]+|\/auth\/strava\?userId=[^\s]+)/g,
+        (match) => {
+          if (match.includes("/auth/strava?userId=")) {
+            return `<a href="${match}" target="_blank">חבר אותי לסטרבה</a>`;
+          }
+          return `<a href="${match}" target="_blank">${match}</a>`;
+        }
+      );
     }
 
     function addMessage(text, sender = "assistant") {
