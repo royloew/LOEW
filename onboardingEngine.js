@@ -517,31 +517,42 @@ export class OnboardingEngine {
     // אם עדיין לא הגדרנו משכי אימון
     if (!p.minDuration || !p.typicalDuration || !p.maxDuration) {
       // אם המשתמש ענה במספר – נשתמש בו כ"טיפוסי" ונשען על הווליום לקצר/ארוך
-      if (num) {
-        const minutes = Math.round(num);
-        const sec = minutes * 60;
+     // אם המשתמש ענה במספר – נשתמש בו כ"טיפוסי" ונישען על הווליום לקצר/ארוך
+if (num) {
+  const minutes = Math.round(num);
+  const typicalSec = minutes * 60;
 
-        if (!p.typicalDuration) {
-          p.typicalDuration = sec;
-        }
-        if (!p.minDuration) {
-          p.minDuration =
-            volume && volume.minDurationSec
-              ? volume.minDurationSec
-              : sec;
-        }
-        if (!p.maxDuration) {
-          p.maxDuration =
-            volume && volume.maxDurationSec
-              ? volume.maxDurationSec
-              : sec;
-        }
+  // משך "רגיל" = מה שהמשתמש כתב
+  if (!p.typicalDuration) {
+    p.typicalDuration = typicalSec;
+  }
 
-        state.data.profile = p;
-        state.stage = "goal";
-        await this._saveState(userId, state);
-        return await this._stepGoal(userId, "", state);
-      }
+  // משך מינימלי – אם יש volume נשתמש בו, אחרת ~70% מהטיפוסי
+  if (!p.minDuration) {
+    if (volume && volume.minDurationSec) {
+      p.minDuration = volume.minDurationSec;
+    } else {
+      const minMinutes = Math.max(30, Math.round(minutes * 0.7));
+      p.minDuration = minMinutes * 60;
+    }
+  }
+
+  // משך ארוך – אם יש volume נשתמש בו, אחרת ~130% מהטיפוסי
+  if (!p.maxDuration) {
+    if (volume && volume.maxDurationSec) {
+      p.maxDuration = volume.maxDurationSec;
+    } else {
+      const maxMinutes = Math.round(minutes * 1.3);
+      p.maxDuration = maxMinutes * 60;
+    }
+  }
+
+  state.data.profile = p;
+  state.stage = "goal";
+  await this._saveState(userId, state);
+  return await this._stepGoal(userId, "", state);
+}
+
 
       let base =
         "בוא נגדיר את משך האימון הרגיל שלך (או מה היית רוצה שיהיה).\n";

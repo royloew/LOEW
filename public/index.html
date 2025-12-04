@@ -471,29 +471,29 @@
 
         // 1. חזרנו מ-Strava עם ?strava=connected
         if (STRAVA_STATUS === "connected") {
-          addMessage(
-            "bot",
-            "החיבור לסטרבה הצליח ✅\nאני מייבא את הנתונים שלך… זה לוקח בדרך כלל פחות מדקה.",
-            "onboarding"
-          );
+  try {
+    // קודם נותנים ל-LOEW לענות – פה תופיע הודעת הפתיחה
+    const data = await callChatAPI("היי");
+    handleChatReply(data);
 
-          try {
-            // שולח הודעה אוטומטית ל-LOEW כדי שייתן:
-            // 1. סיכום נתונים + פרופיל רוכב קצר
-            // 2. המשך אונבורדינג (השלמת נתונים חסרים וכו')
-            const data = await callChatAPI("היי");
-            handleChatReply(data);
-          } catch (err) {
-            console.error("auto onboarding after Strava error:", err);
-            addMessage(
-              "bot",
-              "משהו השתבש אחרי חיבור לסטרבה. נסה לכתוב לי הודעה בצ'אט כדי להמשיך.",
-              "chat"
-            );
-          }
+    // ואז בועה נפרדת על הייבוא, עם הטקסט החדש
+    addMessage(
+      "bot",
+      "אני מייבא את הנתונים שלך… זה לוקח בדרך כלל פחות מדקה\nאכתוב לך כאן שאני מסיים ונמשיך בתהליך אונבורדינג",
+      "onboarding"
+    );
+  } catch (err) {
+    console.error("auto onboarding after Strava error:", err);
+    addMessage(
+      "bot",
+      "משהו השתבש אחרי חיבור לסטרבה. נסה לכתוב לי הודעה בצ'אט כדי להמשיך.",
+      "chat"
+    );
+  }
 
-          return;
-        }
+  return;
+}
+
 
         // 2. אין סטרבה – מסך פתיחה שדוחף לחיבור לסטרבה
         if (!hasStrava) {
