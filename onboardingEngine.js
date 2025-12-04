@@ -160,6 +160,55 @@ async _stageIntro(userId, state, userInput) {
   };
 }
 
+// 2) שלב סטרבה – אחרי ה-intro
+async _stageAwaitStrava(userId, state, userInput) {
+  if (!state.data) state.data = {};
+
+  // 1) קודם ננסה לראות אם כבר יש נתונים מסטרבה (המשתמש התחבר וחזר)
+  if (
+    this.db &&
+    typeof this.db.getStravaOnboardingSnapshot === "function"
+  ) {
+    try {
+      const snap = await this.db.getStravaOnboardingSnapshot(userId);
+      if (snap && (snap.trainingSummary || snap.volume || snap.ftpModels)) {
+        // יש סטרבה → מטמיעים ב-state ועוברים לסיכום נפח
+        state.data.stravaConnected = true;
+        this._applyStravaSnapshotToState(state, snap);
+        state.stage = "post_strava_import";
+        return {
+          newMessages: [],
+          waitForUser: false,
+          consumeInput: true,
+        };
+      }
+    } catch (err) {
+      console.error("getStravaOnboardingSnapshot error (await_strava):", err);
+    }
+  }
+
+  // 2) אין סטרבה גם אחרי שהמשתמש חזר לצ'אט → ממשיכים בלי סטרבה לנתונים אישיים
+  const msgs = [];
+  msgs.push(
+    "לא מצאתי חיבור פעיל לסטרבה.\n" +
+      "זה בסדר, נמשיך לבנות את הפרופיל שלך גם בלי ההיסטוריה, ותמיד נוכל להתחבר לסטרבה בהמשך."
+  );
+
+  state.stage = "personal_details_collect";
+  const personal = state.data.personal || (state.data.personal = {});
+  const firstQuestion = this._nextPersonalQuestion(state);
+  if (firstQuestion) {
+    personal.pendingField = firstQuestion.field;
+    msgs.push(firstQuestion.message);
+  }
+
+  return {
+    newMessages: msgs,
+    waitForUser: true,
+    consumeInput: true,
+  };
+}
+
 
   // 3) סיכום נפח מסטרבה + מעבר לנתונים אישיים
   async _stagePostStravaSummary(userId, state) {
