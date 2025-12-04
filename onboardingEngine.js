@@ -31,7 +31,15 @@ export class OnboardingEngine {
 
   // עוזר קטן – מושך ומאחד state
   async _loadState(userId) {
-    const onboardingState = await this.db.getOnboardingState(userId);
+    const onboardingStateRaw = await this.db.getOnboardingState(userId);
+
+    // הגנה: אם אין עדיין שורה ב-DB למשתמש חדש
+    const onboardingState =
+      onboardingStateRaw || {
+        stage: null,
+        data: {},
+      };
+
     const trainingParams = await this.db.getTrainingParams(userId);
 
     const data = onboardingState.data || {};
@@ -108,8 +116,6 @@ export class OnboardingEngine {
     const mins = Math.round(sec / 60);
     return `${mins} דק'`;
   }
-
- 
 
   // שלב נתונים אישיים – גיל, משקל, גובה
   async _stepPersonalDetails(userId, text, state) {
@@ -483,4 +489,107 @@ export class OnboardingEngine {
 
     return { reply: summary, onboarding: true };
   }
+
+  /**
+   * API ראשי לצ'אט – זה מה שהשרת קורא בכל /api/loew/chat
+   */
+  async handleMessage(userId, text) {
+    const cleanText = (text ?? "").toString().trim();
+
+    // טוען את ה-state
+    let state = await this._loadState(userId);
+
+    // אם אין stage — משתמש חדש → הודעת פתיחה
+    if (!state.stage) {
+      state.stage = "opening";
+      await this._saveState(userId, state);
+
+      return {
+        reply: OPENING_MESSAGE,
+        onboarding: true,
+      };
+    }
+
+    switch (state.stage) {
+      case "opening":
+        // אחרי ההודעה הראשונה – עוברים לנתונים אישיים
+        state.stage = "personal_details";
+        await this._saveState(userId, state);
+        return await this._stepPersonalDetails(userId, cleanText, state);
+
+      case "personal_details":
+        return await this._stepPersonalDetails(userId, cleanText, state);
+
+      case "ftp":
+        return await this._stepFtp(userId, cleanText, state);
+
+      case "hr_max":
+        return await this._stepHrMax(userId, cleanText, state);
+
+      case "hr_threshold":
+        return await this._stepHrThreshold(userId, cleanText, state);
+
+      case "training_duration":
+        return await this._stepTrainingDuration(userId, cleanText, state);
+
+      case "goal":
+        return await this._stepGoal(userId, cleanText, state);
+
+      case "summary":
+        return await this._stepSummary(userId, cleanText, state);
+
+      case "summary_done":
+        // מכאן והלאה המשתמש "אחרי אונבורדינג"
+        return {
+          reply:
+            "האונבורדינג כבר הושלם. מעכשיו אתה יכול לשאול אותי על אימונים, עומסים, FTP, או פשוט: \"מה האימון שלי למחר?\"",
+          onboarding: false,
+        };
+
+      default:
+        return {
+          reply: "אירעה שגיאה: שלב לא מוכר באונבורדינג. אפשר לכתוב לי \"התחל אונבורדינג\" כדי להתחיל מחדש.",
+          onboarding: true,
+        };
+    }
+  }
+
+  /**
+   * נקודת כניסה אחרי חיבור סטרבה (לא חובה, אבל שימושי):
+   * אפשר לקרוא לזה מ-/exchange_token אחרי computeHrAndFtpFromStrava.
+   */
+  async handleStravaConnected(userId) {
+    try {
+      if (this.db.computeHrAndFtpFromStrava) {
+        await this.db.computeHrAndFtpFromStrava(userId);
+      }
+    } catch (err) {
+      console.error("handleStravaConnected error:", err);
+    }
+
+    let state = await this._loadState(userId);
+
+    // אם זה ממש משתמש חדש – נתחיל מהפתיחה
+    if (!state.stage) {
+      state.stage = "opening";
+    } else if (state.stage === "opening") {
+      // נשאיר opening – ההודעה תוצג בהודעה הראשונה
+    }
+
+    await this._saveState(userId, state);
+
+    return {
+      reply:
+        "סיימתי לייבא את הנתונים מסטרבה ולהכין עבורך נתוני בסיס.\n" +
+        "בוא נמשיך ונשלים כמה נתונים אישיים בסיסיים (גיל, משקל, גובה).",
+      onboarding: true,
+    };
+  }
+}
+
+/**
+ * פונקציית מפעל נוחה לשרת
+ */
+export function createOnboardingEngine(dbImpl) {
+  return new OnboardingEngine(dbImpl);
 }
