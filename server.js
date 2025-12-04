@@ -9,6 +9,45 @@ import path from "path";
 import { createDbImpl } from "./dbSqlite.js";
 import { OnboardingEngine } from "./onboardingEngine.js";
 
+import path from "path";
+import fs from "fs";
+
+const DB_PATH = process.env.DB_PATH || "/tmp/loew.db";
+const DB_DOWNLOAD_SECRET = process.env.DB_DOWNLOAD_SECRET || "CHANGE_ME";
+
+app.get("/admin/download-db", (req, res) => {
+  const key = req.query.key;
+  if (!key || key !== DB_DOWNLOAD_SECRET) {
+    return res.status(403).send("Forbidden");
+  }
+
+  if (!fs.existsSync(DB_PATH)) {
+    return res.status(404).send("DB file not found at " + DB_PATH);
+  }
+
+  res.download(DB_PATH, "loew.db", (err) => {
+    if (err) {
+      console.error("Error sending DB:", err);
+      if (!res.headersSent) {
+        res.status(500).send("Error sending DB");
+      }
+    }
+  });
+});
+ואל תשכח ברנדר להגדיר env:
+
+DB_DOWNLOAD_SECRET=roy_super_secret_2025 (או מה שתבחר)
+
+DB_PATH=/tmp/loew.db אם צריך לעקוף ברירת מחדל.
+
+
+
+
+
+
+
+
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
