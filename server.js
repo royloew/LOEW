@@ -6,7 +6,9 @@ import bodyParser from "body-parser";
 import { fileURLToPath } from "url";
 
 import { createDbImpl } from "./dbSqlite.js";
-import { OnboardingEngine } from "./onboardingEngine.js";
+import { createOnboardingEngine } from "./onboardingEngine.js";
+const onboarding = createOnboardingEngine(dbImpl);
+
 
 import path from "path";
 
