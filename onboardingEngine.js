@@ -1,36 +1,24 @@
 // onboardingEngine.js
-// מנוע אונבורדינג לפי ה-FLOW שסיכמנו, עם לולאה פנימית ומבנה מסודר.
+// מנוע אונבורדינג לפי ה-FLOW שלנו, מותאם ל-dbSqlite.js ול-server.js שלך.
 
-// ציפיות מ-dbImpl (תתאם לפי מה שיש לך בפועל):
-// - getOnboardingState(userId) -> { stage, data } | null
-// - saveOnboardingState(userId, state)
-// - markOnboardingCompleted(userId, finalProfile)   (אופציונלי)
-// - getStravaSnapshot(userId) -> { volume, trainingSummary, ftp, hr }  (אופציונלי)
-//   * ftp: { ftp20, ftpFrom3min, ftpFromCP, ftpFromStrava, ftpRecommended }
-//   * hr:  { hrMaxTop3, hrThresholdRecommended, hrModelsDetails }
-//
-// הערה: אם יש לך שמות אחרים (למשל getStravaOnboardingMetrics במקום getStravaSnapshot)
-// פשוט תעדכן את הפונקציה _ensureStravaMetrics לממשק הקיים.
-
-export default class OnboardingEngine {
+export class OnboardingEngine {
   constructor(dbImpl) {
     this.db = dbImpl;
   }
 
-  // נקודת הכניסה העיקרית מהשרת /api/loew/chat
+  // נקודת כניסה עיקרית מהשרת (/api/loew/chat)
   async handleMessage(userId, textRaw) {
     const text = (textRaw || "").trim();
     let state = await this._loadState(userId);
 
-    // אם אין state — משתמש חדש
-    if (!state) {
+    if (!state || (!state.stage && !state.data)) {
       state = {
         stage: "intro",
         data: {
-          personal: {}, // age, weightKg, heightCm וכו'
-          ftp: null, // כל המודלים
+          personal: {},
+          ftp: null,
           ftpFinal: null,
-          hr: null, // מודלים וערכים
+          hr: null,
           hrFinal: null,
           goal: null,
           volume: null,
@@ -43,8 +31,6 @@ export default class OnboardingEngine {
     let pendingInput = text || null;
     const messages = [];
 
-    // לולאה פנימית: מתקדמים בין סטייג'ים כל עוד לא חייבים תשובת משתמש
-    // או פעולה חיצונית (כמו חיבור סטרבה)
     while (true) {
       const {
         newMessages,
@@ -62,20 +48,19 @@ export default class OnboardingEngine {
 
       await this._saveState(userId, state);
 
-      if (waitForUser) {
-        break;
-      }
+      if (waitForUser) break;
     }
 
-    const reply = messages.join("\n\n");
-    return { reply, onboarding: true };
+    return {
+      reply: messages.join("\n\n"),
+      onboarding: true,
+    };
   }
 
-  // נקודה שהשרת יקרא אחרי שסטרבה מחזירה קוד / טוקן
-  // לדוגמה ב-/exchange_token
+  // אופציונלי – אם בעתיד תרצה לקרוא לזה מהשרת אחרי /exchange_token
   async handleStravaConnected(userId) {
     let state = await this._loadState(userId);
-    if (!state) {
+    if (!state || (!state.stage && !state.data)) {
       state = {
         stage: "intro",
         data: {
@@ -93,11 +78,8 @@ export default class OnboardingEngine {
     }
 
     state.data.stravaConnected = true;
-    state.stage = "post_strava_import"; // בשיחה הבאה נציג סיכום ונעבור לנתונים אישיים
-
-    // מנסה לטעון כבר עכשיו את המטריקות מסטרבה – אם זמין
+    state.stage = "post_strava_import";
     state = await this._ensureStravaMetrics(userId, state);
-
     await this._saveState(userId, state);
 
     return {
@@ -108,7 +90,7 @@ export default class OnboardingEngine {
     };
   }
 
-  // -------- לוגיקת הסטייג'ים --------
+  // ---------- לוגיקת סטייג'ים ----------
 
   async _runStage(userId, state, userInput) {
     switch (state.stage) {
@@ -116,10 +98,10 @@ export default class OnboardingEngine {
         return this._stageIntro(state);
 
       case "await_strava_connect":
-        return this._stageAwaitStrava(state, userInput);
+        return await this._stageAwaitStrava(userId, state, userInput);
 
       case "post_strava_import":
-        return this._stagePostStravaSummary(userId, state);
+        return await this._stagePostStravaSummary(userId, state);
 
       case "personal_details_intro":
       case "personal_details_collect":
@@ -137,10 +119,9 @@ export default class OnboardingEngine {
         return this._stageGoal(state, userInput);
 
       case "summary":
-        return this._stageSummary(userId, state);
+        return await this._stageSummary(userId, state);
 
       default:
-        // fallback בטוח
         state.stage = "intro";
         return this._stageIntro(state);
     }
@@ -157,17 +138,39 @@ export default class OnboardingEngine {
     state.stage = "await_strava_connect";
     return {
       newMessages: [msg],
-      waitForUser: true, // עכשיו צריך פעולה חיצונית – חיבור סטרבה
+      waitForUser: true,
       consumeInput: true,
     };
   }
 
-  // 2) מחכים לחיבור סטרבה
-  _stageAwaitStrava(state, userInput) {
+  // 2) מחכים לחיבור סטרבה – אבל מזהים לבד אם כבר יש נתונים ב-DB
+  async _stageAwaitStrava(userId, state, userInput) {
+    if (!state.data) state.data = {};
     const txt = (userInput || "").trim();
 
-    // אם המשתמש כותב "התחברתי", "סיימתי" – אפשר להשיב טכנית,
-    // אבל בפועל השרת יקרא handleStravaConnected אחרי סטרבה.
+    // נסה לבדוק אם כבר יש סנאפשוט מסטרבה ב-DB (כלומר המשתמש כבר חזר מהאישור)
+    if (!state.data.stravaConnected && this.db &&
+        typeof this.db.getStravaOnboardingSnapshot === "function") {
+      try {
+        const snap = await this.db.getStravaOnboardingSnapshot(userId);
+        if (
+          snap &&
+          (snap.trainingSummary || snap.volume || snap.ftpModels)
+        ) {
+          state.data.stravaConnected = true;
+          this._applyStravaSnapshotToState(state, snap);
+          state.stage = "post_strava_import";
+          return {
+            newMessages: [],
+            waitForUser: false,
+            consumeInput: false,
+          };
+        }
+      } catch (e) {
+        console.error("getStravaOnboardingSnapshot error (await_strava):", e);
+      }
+    }
+
     if (!state.data.stravaConnected) {
       const msg =
         "לפני שנמשיך אני צריך שתתחבר לסטרבה.\n" +
@@ -179,7 +182,7 @@ export default class OnboardingEngine {
       };
     }
 
-    // אם כבר מסומן connected אבל עוד לא עברנו ל-post_strava_import (מקרה קצה)
+    // במקרה קצה – כבר מחובר
     state.stage = "post_strava_import";
     return {
       newMessages: [],
@@ -194,15 +197,17 @@ export default class OnboardingEngine {
     const ts = state.data.trainingSummary;
     const volume = state.data.volume;
 
-    let msgs = [];
+    const msgs = [];
 
     if (ts && ts.rides_count > 0) {
       const hoursTotal = (ts.totalMovingTimeSec / 3600).toFixed(1);
       const hoursAvg = (ts.avgDurationSec / 3600).toFixed(1);
-      const km = ts.totalDistanceKm != null ? ts.totalDistanceKm.toFixed(1) : null;
-      const elevation = ts.totalElevationGainM != null
-        ? Math.round(ts.totalElevationGainM)
-        : null;
+      const km =
+        ts.totalDistanceKm != null ? ts.totalDistanceKm.toFixed(1) : null;
+      const elevation =
+        ts.totalElevationGainM != null
+          ? Math.round(ts.totalElevationGainM)
+          : null;
       const offPct =
         ts.offroadPct != null ? Math.round(ts.offroadPct) : null;
 
@@ -211,19 +216,15 @@ export default class OnboardingEngine {
         `מצאתי ${ts.rides_count} רכיבות בתקופה שניתחתי.\n` +
         `סה\"כ זמן רכיבה: ~${hoursTotal} שעות, זמן ממוצע לרכיבה: ~${hoursAvg} שעות.`;
 
-      if (km != null) {
-        line += `\nסה\"כ מרחק: ~${km} ק\"מ.`;
-      }
-      if (elevation != null) {
-        line += `\nסה\"כ טיפוס: ~${elevation} מטר.`;
-      }
+      if (km != null) line += `\nסה\"כ מרחק: ~${km} ק\"מ.`;
+      if (elevation != null) line += `\nסה\"כ טיפוס: ~${elevation} מטר.`;
       if (offPct != null) {
         line += `\nבערך ${offPct}% מהרכיבות הן שטח / גרבל.`;
       }
 
-      if (volume && volume.weeklyHoursAvg != null) {
-        const wh = volume.weeklyHoursAvg.toFixed(1);
-        line += `\nהיקף האימונים השבועי הממוצע שלך הוא בערך ${wh} שעות.`;
+      if (volume && volume.avgDurationSec != null) {
+        const wh = (volume.avgDurationSec / 3600).toFixed(1);
+        line += `\nהיקף האימונים השבועי הממוצע (הערכה) הוא בערך ${wh} שעות.`;
       }
 
       msgs.push(line);
@@ -234,40 +235,39 @@ export default class OnboardingEngine {
       );
     }
 
-    // מעבר לנתונים אישיים – באותה הודעה
     msgs.push(
       "בוא נשלים עכשיו כמה נתונים אישיים בסיסיים: גיל, משקל, גובה וכו'."
     );
 
     state.stage = "personal_details_collect";
-    // נתחיל מהשדה הראשון שחסר
     const firstQuestion = this._nextPersonalQuestion(state);
     if (firstQuestion) {
-      msgs.push(firstQuestion.message);
       state.data.personal.pendingField = firstQuestion.field;
-    } else {
-      // במקרה שכל הנתונים כבר קיימים – מדלגים ל-FTP
-      state.stage = "ftp_intro";
+      msgs.push(firstQuestion.message);
+      return {
+        newMessages: msgs,
+        waitForUser: true,
+        consumeInput: true,
+      };
     }
 
+    // אם כבר יש הכל
+    state.stage = "ftp_intro";
     return {
       newMessages: msgs,
-      waitForUser: state.stage === "personal_details_collect",
+      waitForUser: false,
       consumeInput: true,
     };
   }
 
-  // 4) איסוף נתונים אישיים
+  // 4) נתונים אישיים
   _stagePersonalDetails(state, userInput) {
     const msgs = [];
     const personal = state.data.personal || (state.data.personal = {});
-
     const txt = (userInput || "").trim();
 
-    // אם יש לנו שדה ממתין – ננסה לפרש את התשובה אליו
     if (personal.pendingField) {
       const field = personal.pendingField;
-
       if (!txt) {
         msgs.push("אני צריך תשובה קצרה כדי שאוכל לעדכן את הנתון.");
         return {
@@ -278,7 +278,6 @@ export default class OnboardingEngine {
       }
 
       const num = parseFloat(txt.replace(",", "."));
-
       if (field === "age") {
         if (isNaN(num) || num < 10 || num > 90) {
           msgs.push("לא בטוח שהבנתי את הגיל. תכתוב מספר סביר (למשל 46).");
@@ -292,7 +291,7 @@ export default class OnboardingEngine {
         msgs.push(`עדכנתי גיל: ${personal.age}.`);
       } else if (field === "weightKg") {
         if (isNaN(num) || num < 30 || num > 150) {
-          msgs.push("לא בטוח שהבנתי את המשקל. תכתוב מספר בקילוגרמים (למשל 67).");
+          msgs.push("לא בטוח שהבנתי את המשקל. תכתוב מספר בקילו (למשל 67).");
           return {
             newMessages: msgs,
             waitForUser: true,
@@ -317,13 +316,10 @@ export default class OnboardingEngine {
       delete personal.pendingField;
     }
 
-    // בדיקה אם חסרים עוד נתונים
     const nextQ = this._nextPersonalQuestion(state);
     if (nextQ) {
       personal.pendingField = nextQ.field;
-      msgs.push(
-        "יש עוד נתון אחד שחשוב לי להשלים כדי לדייק את הפרופיל שלך."
-      );
+      msgs.push("יש עוד נתון אחד שחשוב לי להשלים כדי לדייק את הפרופיל שלך.");
       msgs.push(nextQ.message);
       state.stage = "personal_details_collect";
       return {
@@ -333,12 +329,10 @@ export default class OnboardingEngine {
       };
     }
 
-    // כל הנתונים האישיים קיימים – מסכמים ועוברים ל-FTP
     msgs.push(
       "מעולה, עדכנתי את הנתונים האישיים שלך.\n" +
-        "תמיד תוכל לבקש ממני בהמשך לעדכן גיל, משקל או גובה אם משהו משתנה."
+        "תמיד תוכל לעדכן גיל, משקל או גובה גם בהמשך."
     );
-
     state.stage = "ftp_intro";
     return {
       newMessages: msgs,
@@ -349,28 +343,22 @@ export default class OnboardingEngine {
 
   _nextPersonalQuestion(state) {
     const p = state.data.personal || {};
-    if (p.age == null) {
-      return {
-        field: "age",
-        message: "נתחיל בגיל — בן כמה אתה?",
-      };
-    }
-    if (p.weightKg == null) {
+    if (p.age == null)
+      return { field: "age", message: "נתחיל בגיל — בן כמה אתה?" };
+    if (p.weightKg == null)
       return {
         field: "weightKg",
         message: "מה המשקל שלך בקילוגרמים (למשל 67)?",
       };
-    }
-    if (p.heightCm == null) {
+    if (p.heightCm == null)
       return {
         field: "heightCm",
         message: "ומה הגובה שלך בס\"מ (למשל 178)?",
       };
-    }
     return null;
   }
 
-  // 5) FTP – מציג מודלים + בחירה / עדכון
+  // 5) FTP
   _stageFtp(state, userInput) {
     const msgs = [];
     const data = state.data;
@@ -389,49 +377,40 @@ export default class OnboardingEngine {
       ) {
         lines.push(
           "כרגע אין לי מספיק נתונים מסטרבה כדי לחשב FTP בצורה חכמה.\n" +
-            "בוא נגדיר ערך התחלתי, ותמיד נוכל לעדכן כשיצטברו עוד נתונים."
+            "בוא נגדיר ערך התחלתי, ותמיד נעדכן כשיצטברו עוד נתונים."
         );
       } else {
-        lines.push(
-          "חישבתי עבורך כמה מודלים שונים של FTP על בסיס הרכיבות שלך:"
-        );
-        if (ftp.ftp20 != null) {
-          lines.push(`• FTP20 (20 דק'): ~${ftp.ftp20}W (ממוצע 20 דק' * 0.95).`);
-        }
-        if (ftp.ftpFrom3min != null) {
+        lines.push("חישבתי עבורך כמה מודלים שונים של FTP על בסיס הרכיבות שלך:");
+        if (ftp.ftp20 != null)
+          lines.push(`• FTP20 (20 דק'): ~${ftp.ftp20}W.`);
+        if (ftp.ftpFrom3min != null)
           lines.push(
-            `• FTP מ-3 דקות: ~${ftp.ftpFrom3min}W (הסקה מיכולת ספרינט ארוכה).`
+            `• FTP מ-3 דקות: ~${ftp.ftpFrom3min}W (הסקה מיכולת 3 דק').`
           );
-        }
-        if (ftp.ftpFromCP != null) {
+        if (ftp.ftpFromCP != null)
           lines.push(
             `• FTP לפי מודל CP: ~${ftp.ftpFromCP}W (עקומת כוח 3–20 דק').`
           );
-        }
-        if (ftp.ftpFromStrava != null) {
+        if (ftp.ftpFromStrava != null)
           lines.push(
             `• FTP כפי שמופיע אצלך בסטרבה: ~${ftp.ftpFromStrava}W.`
           );
-        }
-        if (ftp.ftpRecommended != null) {
+        if (ftp.ftpRecommended != null)
           lines.push(
-            `על בסיס כל המודלים, ההמלצה שלי כרגע היא FTP של ~${ftp.ftpRecommended}W (חציון הערכים הסבירים).`
+            `על בסיס כל המודלים, ההמלצה שלי כרגע היא ~${ftp.ftpRecommended}W.`
           );
-        }
       }
 
       lines.push(
-        "\nאם תרצה, תוכל גם לשאול אותי: \"איך חישבת את ה-FTP?\" ואסביר בפירוט."
+        "\nאם תרצה, תוכל לשאול: \"איך חישבת את ה-FTP?\" ואסביר בפירוט."
+      );
+      lines.push(
+        "\nאיזה FTP נשתמש בו כנקודת פתיחה?\n" +
+          "אם אתה מסכים להמלצה שלי, תכתוב \"תשתמש בהמלצה\".\n" +
+          "אם אתה רוצה ערך אחר, תכתוב מספר בוואטים (למשל 250)."
       );
 
-      let question =
-        "איזה FTP נשתמש בו כנקודת פתיחה?\n" +
-        "אם אתה מסכים להמלצה שלי, תכתוב \"תשתמש בהמלצה\".\n" +
-        "אם אתה רוצה ערך אחר, תכתוב מספר בוואטים (למשל 250).";
-
       msgs.push(lines.join("\n"));
-      msgs.push(question);
-
       state.stage = "ftp_confirm";
       return {
         newMessages: msgs,
@@ -440,11 +419,11 @@ export default class OnboardingEngine {
       };
     }
 
-    // ftp_confirm – מחכים לתשובת המשתמש
     const txt = (userInput || "").trim();
-
     if (!txt) {
-      msgs.push("תרשום או \"תשתמש בהמלצה\" או מספר בוואטים (למשל 250).");
+      msgs.push(
+        "תרשום \"תשתמש בהמלצה\" או מספר בוואטים (למשל 250)."
+      );
       return {
         newMessages: msgs,
         waitForUser: true,
@@ -453,7 +432,6 @@ export default class OnboardingEngine {
     }
 
     const lower = txt.toLowerCase();
-
     if (
       lower.includes("איך חישבת") ||
       lower.includes("פירוט") ||
@@ -461,7 +439,7 @@ export default class OnboardingEngine {
     ) {
       msgs.push(this._explainFtpModels(state));
       msgs.push(
-        "עכשיו תרשום אם אתה רוצה שנשתמש בהמלצה שלי או תכתוב מספר אחר בוואטים."
+        "עכשיו תרשום אם אתה רוצה שנשתמש בהמלצה או ערך אחר בוואטים."
       );
       return {
         newMessages: msgs,
@@ -474,16 +452,11 @@ export default class OnboardingEngine {
     let chosen = null;
 
     if (lower.includes("המלצ")) {
-      if (ftp.ftpRecommended != null) {
-        chosen = ftp.ftpRecommended;
-      } else if (ftp.ftpFromStrava != null) {
-        chosen = ftp.ftpFromStrava;
-      }
+      if (ftp.ftpRecommended != null) chosen = ftp.ftpRecommended;
+      else if (ftp.ftpFromStrava != null) chosen = ftp.ftpFromStrava;
     } else {
       const num = parseFloat(txt.replace(",", "."));
-      if (!isNaN(num) && num > 100 && num < 500) {
-        chosen = Math.round(num);
-      }
+      if (!isNaN(num) && num > 100 && num < 500) chosen = Math.round(num);
     }
 
     if (chosen == null) {
@@ -499,7 +472,6 @@ export default class OnboardingEngine {
 
     state.data.ftpFinal = chosen;
     msgs.push(`מעולה, נגדיר כרגע FTP של ${chosen}W.`);
-
     state.stage = "hr_intro";
     return {
       newMessages: msgs,
@@ -513,34 +485,26 @@ export default class OnboardingEngine {
     const lines = [];
 
     lines.push("פירוט חישובי ה-FTP שביצעתי עבורך:");
+    if (ftp.ftp20 != null)
+      lines.push(
+        `• FTP20: ממוצע של מאמצי 20 דק' חזקים * 0.95 ≈ ${ftp.ftp20}W.`
+      );
+    if (ftp.ftpFrom3min != null)
+      lines.push(
+        `• מודל 3 דקות: נגזר מהיכולת שלך במאמץ של ~3 דק' ≈ ${ftp.ftpFrom3min}W.`
+      );
+    if (ftp.ftpFromCP != null)
+      lines.push(
+        `• מודל CP (Critical Power): שימוש בעקומת כוח ב-3–20 דק' ≈ ${ftp.ftpFromCP}W.`
+      );
+    if (ftp.ftpFromStrava != null)
+      lines.push(`• FTP מסטרבה: הערך שנשמר אצלך בסטרבה ≈ ${ftp.ftpFromStrava}W.`);
+    if (ftp.ftpRecommended != null)
+      lines.push(
+        `בסוף בחרתי ftpRecommended כחציון של כל הערכים הסבירים ≈ ${ftp.ftpRecommended}W.`
+      );
 
-    if (ftp.ftp20 != null) {
-      lines.push(
-        `• FTP20: לקחתי את שלושת מאמצי ה-20 דק' הכי חזקים שלך, עשיתי ממוצע, וכפלתי ב-0.95. יצא ~${ftp.ftp20}W.`
-      );
-    }
-    if (ftp.ftpFrom3min != null) {
-      lines.push(
-        `• FTP מ-3 דקות: ניתחתי את שלושת מאמצי ה-3 דק' הכי חזקים, והסקתי מהם FTP משוער ~${ftp.ftpFrom3min}W.`
-      );
-    }
-    if (ftp.ftpFromCP != null) {
-      lines.push(
-        `• מודל CP: בניתי עקומת כוח על בסיס מאמצים של כמה חלונות זמן (3–20 דק') וקיבלתי ~${ftp.ftpFromCP}W.`
-      );
-    }
-    if (ftp.ftpFromStrava != null) {
-      lines.push(
-        `• FTP מסטרבה: זה הערך שמופיע אצלך בסטרבה — ~${ftp.ftpFromStrava}W.`
-      );
-    }
-    if (ftp.ftpRecommended != null) {
-      lines.push(
-        `בסוף בחרתי ftpRecommended כחציון של כל הערכים הסבירים — ~${ftp.ftpRecommended}W.`
-      );
-    }
-
-    if (!lines.length) {
+    if (lines.length === 1) {
       return (
         "כרגע אין לי מודלים מחושבים ל-FTP כי חסרים נתונים חזקים מספיק מסטרבה.\n" +
         "ככל שתעשה יותר מאמצים ארוכים, אוכל לחשב את זה בצורה חכמה יותר."
@@ -550,7 +514,7 @@ export default class OnboardingEngine {
     return lines.join("\n");
   }
 
-  // 6) דופק – HRmax + HR Threshold
+  // 6) דופק
   _stageHr(state, userInput) {
     const msgs = [];
     const hr = state.data.hr || {};
@@ -562,31 +526,27 @@ export default class OnboardingEngine {
         "עכשיו נעבור לדופק — כדי שאוכל לתכנן עבורך אזורי דופק ואימונים מדויקים."
       );
 
-      if (hr.hrMaxTop3 != null) {
+      if (hr.hrMaxTop3 != null)
         lines.push(
-          `מהניתוח של הרכיבות שלך, דופק המקסימום המוערך (על בסיס Top3 מהחצי שנה האחרונה) הוא בערך ${hr.hrMaxTop3} פעימות לדקה.`
+          `מהניתוח של הרכיבות שלך, דופק המקסימום המוערך הוא בערך ${hr.hrMaxTop3} bpm.`
         );
-      }
-
-      if (hr.hrThresholdRecommended != null) {
+      if (hr.hrThresholdRecommended != null)
         lines.push(
-          `דופק הסף (Threshold) המומלץ כרגע הוא בערך ${hr.hrThresholdRecommended} פעימות לדקה.`
+          `דופק הסף המומלץ כרגע הוא בערך ${hr.hrThresholdRecommended} bpm.`
         );
-      }
 
       lines.push(
-        "\nאם תרצה, תוכל לשאול: \"איך חישבת את הדופק?\" ואסביר בפירוט."
+        "\nאם תרצה, תוכל לשאול: \"איך חישבת את הדופק?\" ואסביר יותר לעומק."
       );
-
       lines.push(
         "\nקודם כל, בוא נוודא את דופק המקסימום שלך.\n" +
           "אם אתה מסכים לערך שמצאתי, תכתוב \"תשתמש בהמלצה\".\n" +
-          "אם יש לך ערך אחר שאתה יודע עליו, תכתוב מספר (למשל 180)."
+          "אם יש לך ערך אחר, תכתוב מספר (למשל 180)."
       );
 
       msgs.push(lines.join("\n"));
       state.stage = "hr_confirm";
-      state.data.hrPending = "max"; // קודם מאשרים HRmax, אחר כך threshold
+      state.data.hrPending = "max";
       return {
         newMessages: msgs,
         waitForUser: true,
@@ -594,7 +554,6 @@ export default class OnboardingEngine {
       };
     }
 
-    // hr_confirm
     const txt = (userInput || "").trim();
     if (!txt) {
       msgs.push(
@@ -626,16 +585,11 @@ export default class OnboardingEngine {
 
     if (state.data.hrPending === "max") {
       let chosen = null;
-
       if (lower.includes("המלצ")) {
-        if (hr.hrMaxTop3 != null) {
-          chosen = hr.hrMaxTop3;
-        }
+        if (hr.hrMaxTop3 != null) chosen = hr.hrMaxTop3;
       } else {
         const num = parseFloat(txt.replace(",", "."));
-        if (!isNaN(num) && num > 120 && num < 220) {
-          chosen = Math.round(num);
-        }
+        if (!isNaN(num) && num > 120 && num < 220) chosen = Math.round(num);
       }
 
       if (chosen == null) {
@@ -651,21 +605,17 @@ export default class OnboardingEngine {
 
       state.data.hrFinal = state.data.hrFinal || {};
       state.data.hrFinal.max = chosen;
-      msgs.push(`עדכנתי דופק מקסימלי: ${chosen} פעימות לדקה.`);
+      msgs.push(`עדכנתי דופק מקסימלי: ${chosen} bpm.`);
 
-      // עכשיו נשאל על Threshold
       const recTh = hr.hrThresholdRecommended;
       let line = "עכשיו נוודא את דופק הסף (Threshold).";
-      if (recTh != null) {
-        line += ` ההמלצה שלי כרגע היא בערך ${recTh} פעימות לדקה.`;
-      }
+      if (recTh != null) line += ` ההמלצה שלי היא ~${recTh} bpm.`;
       line +=
         "\nאם אתה מסכים, תכתוב \"תשתמש בהמלצה\".\n" +
         "אם יש לך ערך אחר, תכתוב מספר (למשל 170).";
 
       msgs.push(line);
       state.data.hrPending = "threshold";
-
       return {
         newMessages: msgs,
         waitForUser: true,
@@ -673,9 +623,8 @@ export default class OnboardingEngine {
       };
     }
 
-    // hrPending === "threshold"
+    // threshold
     let chosenTh = null;
-
     if (lower.includes("המלצ")) {
       if (hr.hrThresholdRecommended != null) {
         chosenTh = hr.hrThresholdRecommended;
@@ -684,9 +633,7 @@ export default class OnboardingEngine {
       }
     } else {
       const num = parseFloat(txt.replace(",", "."));
-      if (!isNaN(num) && num > 100 && num < 220) {
-        chosenTh = Math.round(num);
-      }
+      if (!isNaN(num) && num > 100 && num < 220) chosenTh = Math.round(num);
     }
 
     if (chosenTh == null) {
@@ -704,7 +651,7 @@ export default class OnboardingEngine {
     state.data.hrFinal.threshold = chosenTh;
     delete state.data.hrPending;
 
-    msgs.push(`מעולה, נגדיר דופק סף של ${chosenTh} פעימות לדקה.`);
+    msgs.push(`מעולה, נגדיר דופק סף של ${chosenTh} bpm.`);
 
     state.stage = "goal";
     return {
@@ -718,27 +665,18 @@ export default class OnboardingEngine {
     const hr = state.data.hr || {};
     const lines = [];
 
-    if (hr.hrMaxTop3 != null) {
+    if (hr.hrMaxTop3 != null)
       lines.push(
-        `• HRmax Top3: לקחתי את שלושת ערכי הדופק הכי גבוהים שלך מחצי השנה האחרונה ועשיתי מהם ממוצע ~${hr.hrMaxTop3} bpm.`
+        `• HRmax Top3: ממוצע של 3 ערכי הדופק הגבוהים ביותר מחצי השנה האחרונה ≈ ${hr.hrMaxTop3} bpm.`
       );
-    }
-
-    if (hr.hrThresholdRecommended != null) {
+    if (hr.hrThresholdRecommended != null)
       lines.push(
-        `• HR Threshold Recommended: חישבתי דופק סף משוער לפי היחס ל-HRmax, דפוסי מאמץ וקצב ירידת הדופק במאמצים ארוכים, וקיבלתי ~${hr.hrThresholdRecommended} bpm.`
+        `• HR Threshold: נגזר משילוב של HRmax והדינמיקה של הדופק במאמצים ארוכים ≈ ${hr.hrThresholdRecommended} bpm.`
       );
-    }
-
-    if (hr.hrModelsDetails) {
-      lines.push(
-        "\nבנוסף, השתמשתי בעוד מודלים (drift, breakpoint וכו') — אפשר להרחיב על זה בהמשך אם תרצה."
-      );
-    }
 
     if (!lines.length) {
       return (
-        "כרגע אין לי מספיק נתונים איכותיים על הדופק כדי לבנות מודלים מתקדמים.\n" +
+        "כרגע אין מספיק נתוני דופק איכותיים כדי לבנות מודלים מתקדמים.\n" +
         "ככל שתעשה יותר אימונים עם מד דופק, אוכל לדייק את זה."
       );
     }
@@ -746,7 +684,7 @@ export default class OnboardingEngine {
     return lines.join("\n");
   }
 
-  // 7) מטרה (Goal)
+  // 7) מטרה
   _stageGoal(state, userInput) {
     const msgs = [];
     const txt = (userInput || "").trim();
@@ -754,7 +692,7 @@ export default class OnboardingEngine {
     if (!state.data.goal && !txt) {
       msgs.push(
         "מה המטרה העיקרית שלך בחודשים הקרובים?\n" +
-          "לדוגמה: \"Gran Fondo Eilat בדצמבר\", \"להעלות FTP ל-270W\", או שילוב של אירוע + יעד."
+          "לדוגמה: \"Gran Fondo Eilat בדצמבר\", \"להעלות FTP ל-270W\" וכו'."
       );
       return {
         newMessages: msgs,
@@ -766,9 +704,7 @@ export default class OnboardingEngine {
     if (!state.data.goal) {
       state.data.goal = txt;
       msgs.push(`סימנתי כמטרה: ${txt}.`);
-      msgs.push(
-        "תמיד נוכל לשנות או לעדכן את המטרה בהמשך אם משהו משתנה."
-      );
+      msgs.push("תמיד נוכל לשנות או לעדכן את המטרה בהמשך.");
       state.stage = "summary";
       return {
         newMessages: msgs,
@@ -777,7 +713,6 @@ export default class OnboardingEngine {
       };
     }
 
-    // אם כבר יש goal (מקרה קצה) – פשוט ממשיכים לסיכום
     state.stage = "summary";
     return {
       newMessages: [],
@@ -786,63 +721,61 @@ export default class OnboardingEngine {
     };
   }
 
-  // 8) סיכום סופי
+  // 8) סיכום + שמירה ל-training_params
   async _stageSummary(userId, state) {
     const d = state.data;
     const p = d.personal || {};
     const ftp = d.ftpFinal;
-    const hr = d.hrFinal || {};
+    const hrFinal = d.hrFinal || {};
     const goal = d.goal;
 
     const lines = [];
-
     lines.push("סיכום קצר של הפרופיל שבנינו לך:");
 
     const pd = [];
     if (p.age != null) pd.push(`גיל: ${p.age}`);
     if (p.weightKg != null) pd.push(`משקל: ${p.weightKg} ק\"ג`);
     if (p.heightCm != null) pd.push(`גובה: ${p.heightCm} ס\"מ`);
-    if (pd.length) {
-      lines.push("• נתונים אישיים: " + pd.join(", "));
-    }
+    if (pd.length) lines.push("• נתונים אישיים: " + pd.join(", "));
 
-    if (ftp != null) {
-      lines.push(`• FTP התחלתי: ${ftp}W.`);
-    }
+    if (ftp != null) lines.push(`• FTP התחלתי: ${ftp}W.`);
 
     const hrParts = [];
-    if (hr.max != null) hrParts.push(`HRmax ≈ ${hr.max}`);
-    if (hr.threshold != null) hrParts.push(`HRthr ≈ ${hr.threshold}`);
-    if (hrParts.length) {
-      lines.push("• דופק: " + hrParts.join(", "));
-    }
+    if (hrFinal.max != null) hrParts.push(`HRmax ≈ ${hrFinal.max}`);
+    if (hrFinal.threshold != null)
+      hrParts.push(`HRthr ≈ ${hrFinal.threshold}`);
+    if (hrParts.length) lines.push("• דופק: " + hrParts.join(", "));
 
-    if (goal) {
-      lines.push(`• מטרה: ${goal}`);
-    }
+    if (goal) lines.push(`• מטרה: ${goal}`);
 
     lines.push(
       "\nמכאן נוכל להתחיל לבנות לך אימונים חכמים, לנתח עומס שבועי ולעקוב אחרי ההתקדמות שלך."
     );
 
-    // נסמן שהאונבורדינג הושלם בבסיס הנתונים אם יש פונקציה מתאימה
-    const finalProfile = {
-      personal: p,
-      ftp: ftp,
-      hr: hr,
-      goal: goal,
-    };
-
-    if (this.db && typeof this.db.markOnboardingCompleted === "function") {
+    // שמירה ל-training_params בקיים
+    if (this.db && typeof this.db.saveTrainingParams === "function") {
       try {
-        await this.db.markOnboardingCompleted(userId, finalProfile);
+        await this.db.saveTrainingParams(userId, {
+          age: p.age ?? null,
+          weight: p.weightKg ?? null,
+          height: p.heightCm ?? null,
+          ftp: ftp ?? null,
+          hr_max: hrFinal.max ?? null,
+          hr_threshold: hrFinal.threshold ?? null,
+          min_duration: null,
+          typical_duration: null,
+          max_duration: null,
+          goal: goal ?? null,
+          ftp_from_20min: d.ftp?.ftp20 ?? null,
+          ftp_from_3min: d.ftp?.ftpFrom3min ?? null,
+          ftp_from_cp: d.ftp?.ftpFromCP ?? null,
+          ftp_recommended: d.ftp?.ftpRecommended ?? null,
+        });
       } catch (e) {
-        // לא מפילים את התהליך אם יש תקלה – רק מדלגים בשקט
-        console.error("markOnboardingCompleted error:", e);
+        console.error("saveTrainingParams error:", e);
       }
     }
 
-    // אפשר להגדיר סטייג' "done" כדי שהודעות עתידיות יופנו למאמן / לוגיקה אחרת
     state.stage = "done";
 
     return {
@@ -852,35 +785,51 @@ export default class OnboardingEngine {
     };
   }
 
-  // -------- עזרי DB / מטריקות מסטרבה --------
+  // ---------- סטרבה: סנאפשוט ל-state ----------
+
+  _applyStravaSnapshotToState(state, snap) {
+    const d = state.data || (state.data = {});
+    if (snap.trainingSummary) d.trainingSummary = snap.trainingSummary;
+    if (snap.volume) d.volume = snap.volume;
+
+    if (snap.ftpModels) {
+      const m = snap.ftpModels;
+      d.ftp = d.ftp || {};
+      d.ftp.ftp20 = m.ftpFrom20min ?? null;
+      d.ftp.ftpFrom3min = m.ftpFrom3minModel ?? null;
+      d.ftp.ftpFromCP = m.ftpFromCP ?? null;
+      d.ftp.ftpFromStrava = null;
+      d.ftp.ftpRecommended = m.ftpRecommended ?? null;
+
+      d.hr = d.hr || {};
+      d.hr.hrMaxTop3 = m.hrMaxCandidate ?? null;
+      d.hr.hrThresholdRecommended = m.hrThresholdCandidate ?? null;
+      d.hr.hrModelsDetails = null;
+    }
+  }
 
   async _ensureStravaMetrics(userId, state) {
     const d = state.data || (state.data = {});
-    if (d.trainingSummary && d.volume && d.ftp && d.hr) {
+    if (d.trainingSummary && d.volume && d.ftp && d.hr) return state;
+
+    if (
+      !this.db ||
+      typeof this.db.getStravaOnboardingSnapshot !== "function"
+    ) {
       return state;
     }
 
-    if (!this.db) return state;
-
-    // ניסיון להשתמש ב-getStravaSnapshot (או שתתאים לשם שיש לך)
-    if (typeof this.db.getStravaSnapshot === "function") {
-      try {
-        const snap = await this.db.getStravaSnapshot(userId);
-        if (snap) {
-          if (snap.trainingSummary) d.trainingSummary = snap.trainingSummary;
-          if (snap.volume) d.volume = snap.volume;
-          if (snap.ftp) d.ftp = snap.ftp;
-          if (snap.hr) d.hr = snap.hr;
-        }
-      } catch (e) {
-        console.error("getStravaSnapshot error:", e);
-      }
+    try {
+      const snap = await this.db.getStravaOnboardingSnapshot(userId);
+      if (snap) this._applyStravaSnapshotToState(state, snap);
+    } catch (e) {
+      console.error("getStravaOnboardingSnapshot error:", e);
     }
 
     return state;
   }
 
-  // -------- עזרי state --------
+  // ---------- STATE DB ----------
 
   async _loadState(userId) {
     if (!this.db || typeof this.db.getOnboardingState !== "function") {
@@ -896,9 +845,7 @@ export default class OnboardingEngine {
   }
 
   async _saveState(userId, state) {
-    if (!this.db || typeof this.db.saveOnboardingState !== "function") {
-      return;
-    }
+    if (!this.db || typeof this.db.saveOnboardingState !== "function") return;
     try {
       await this.db.saveOnboardingState(userId, state);
     } catch (e) {

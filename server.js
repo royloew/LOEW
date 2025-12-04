@@ -9,11 +9,15 @@ import path from "path";
 import { createDbImpl } from "./dbSqlite.js";
 import { OnboardingEngine } from "./onboardingEngine.js";
 
-import path from "path";
+
 import fs from "fs";
 
 const DB_PATH = process.env.DB_PATH || "/tmp/loew.db";
 const DB_DOWNLOAD_SECRET = process.env.DB_DOWNLOAD_SECRET || "CHANGE_ME";
+
+const app = express();
+app.use(cors());
+app.use(bodyParser.json());
 
 app.get("/admin/download-db", (req, res) => {
   const key = req.query.key;
@@ -43,17 +47,10 @@ DB_PATH=/tmp/loew.db אם צריך לעקוף ברירת מחדל.
 
 
 
-
-
-
-
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const app = express();
-app.use(cors());
-app.use(bodyParser.json());
+
 
 const PORT = process.env.PORT || 3000;
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
