@@ -38,7 +38,7 @@ app.get("/admin/download-db", (req, res) => {
     }
   });
 });
-ואל תשכח ברנדר להגדיר env:
+
 
 DB_DOWNLOAD_SECRET=roy_super_secret_2025 (או מה שתבחר)
 
