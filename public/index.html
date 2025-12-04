@@ -279,9 +279,13 @@
           bubble.appendChild(label);
         }
 
-        const textDiv = document.createElement("div");
         textDiv.className = "bubble-text";
-        textDiv.textContent = text;
+
+        // תמיכה בלינקים (Strava, HTTP, HTTPS)
+        textDiv.innerHTML = text
+          .replace(/(http[s]?:\/\/\S+)/g, '<a href="$1" target="_blank">$1</a>')
+          .replace(/(\/auth\/strava\?userId=\S+)/g, '<a href="$1">$1</a>');
+
         bubble.appendChild(textDiv);
 
         row.appendChild(bubble);
