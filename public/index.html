@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="he" dir="rtl">
 <head>
-  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
   <title>LOEW – המאמן האישי שלך</title>
 
   <style>
@@ -87,12 +87,12 @@
 </head>
 
 <body>
-
   <div id="chat-container">
+    <!-- מתחילים בלי בועות – הכל מגיע מהשרת -->
     <div id="messages"></div>
 
     <div id="input-area">
-      <input id="user-input" placeholder="כתוב הודעה…" />
+      <input id="user-input" placeholder="כתוב הודעה…">
       <button id="send-btn">שלח</button>
     </div>
   </div>
@@ -112,6 +112,7 @@
         /(https?:\/\/[^\s]+|\/auth\/strava\?userId=[^\s]+)/g,
         (match) => {
           if (match.includes("/auth/strava?userId=")) {
+            // כיתוב ברור לחיבור סטרבה
             return `<a href="${match}" target="_blank">חבר אותי לסטרבה</a>`;
           }
           return `<a href="${match}" target="_blank">${match}</a>`;
@@ -125,7 +126,6 @@
 
       const textDiv = document.createElement("div");
       textDiv.className = "bubble-text";
-
       textDiv.innerHTML = linkify(text);
 
       bubble.appendChild(textDiv);
@@ -142,15 +142,16 @@
       input.value = "";
       scrollToBottom();
 
-      const userId = new URLSearchParams(window.location.search).get("userId") || "default";
+      const userId =
+        new URLSearchParams(window.location.search).get("userId") || "default";
 
       const res = await fetch("/api/loew/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           userId,
-          message: txt
-        })
+          message: txt,
+        }),
       });
 
       const data = await res.json();
@@ -159,29 +160,27 @@
     }
 
     sendBtn.onclick = sendMessage;
-    input.onkeydown = e => {
+    input.onkeydown = (e) => {
       if (e.key === "Enter") sendMessage();
     };
 
     // ---- AUTO-START ----
-    // שולח "היי" אוטומטית אם אין היסטוריה
+    // שולח "היי" אוטומטית בצ'אט חדש, בלי הודעה קשיחה מראש
     window.onload = () => {
       const params = new URLSearchParams(window.location.search);
       const auto = params.get("auto");
 
-      // רק בצ'אט חדש, שולח היי אוטומטי
       if (!auto) {
         const userId = params.get("userId") || "default";
         fetch("/api/loew/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userId, message: "היי" })
+          body: JSON.stringify({ userId, message: "היי" }),
         })
-          .then(r => r.json())
-          .then(d => d.reply && addMessage(d.reply, "assistant"));
+          .then((r) => r.json())
+          .then((d) => d.reply && addMessage(d.reply, "assistant"));
       }
     };
   </script>
-
 </body>
 </html>
