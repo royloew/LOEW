@@ -114,6 +114,7 @@ app.post("/api/loew/chat", async (req, res) => {
 
     const result = await onboarding.handleMessage(userId, message);
 
+
     return res.json({
       ok: true,
       reply: result.reply,
@@ -216,8 +217,19 @@ app.get("/exchange_token", async (req, res) => {
         typeof dbImpl.getOnboardingState === "function" &&
         typeof dbImpl.saveOnboardingState === "function"
       ) {
-        try {
-          let state = await dbImpl.getOnboardingState(userId);
+            try {
+              let state = await dbImpl.getOnboardingState(userId);
+                  console.log(
+          "[ONBOARDING] handleMessage for",
+          userId,
+          "loaded state:",
+          state ? state.stage : null,
+          "hasTrainingSummary:",
+          state && state.data && state.data.trainingSummary
+            ? true
+            : false
+        );
+
           if (!state || !state.data) {
             state = {
               stage: "post_strava_import",
