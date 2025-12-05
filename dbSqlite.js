@@ -85,7 +85,7 @@ async function init() {
     );
   `);
 
-  // הרחבות אם חסר
+  // הרחבות אם חסר (למקרה של DB ישן יותר)
   try {
     await run(`ALTER TABLE training_params ADD COLUMN ftp20 INTEGER;`);
   } catch (_) {}
@@ -110,7 +110,7 @@ async function init() {
     );
   `);
 
-  // טבלה חדשה לפרופיל רוכב מסטרבה (כרגע משקל בלבד)
+  // טבלה לפרופיל רוכב מסטרבה (כרגע משקל בלבד)
   await run(`
     CREATE TABLE IF NOT EXISTS strava_athlete (
       user_id    TEXT PRIMARY KEY,
@@ -123,7 +123,7 @@ async function init() {
     CREATE TABLE IF NOT EXISTS strava_activities (
       id                     INTEGER PRIMARY KEY,
       user_id                TEXT,
-      start_date             INTEGER,
+      start_date             INTEGER, -- epoch seconds
       moving_time            INTEGER,
       elapsed_time           INTEGER,
       distance               REAL,
@@ -360,30 +360,222 @@ export async function createDbImpl() {
     await run(`DELETE FROM strava_athlete WHERE user_id = ?`, [userId]);
   }
 
-  // ===== STRAVA INGEST + MODELS (כמו שהיה אצלך – קיצרתי כאן) =====
-  // פה נשארת הלוגיקה הקיימת שלך:
-  // - ingestAndComputeFromStrava
-  // - fetch activities
-  // - compute power curves
-  // - compute FTP models + HR models
-  // - computeVolumeAndSummaryFromDb, computeFtpAndHrModelsFromDb
-  //
-  // *** השארתי את הלוגיקה הזאת כמו שהיא אצלך,
-  //     עם התאמה קטנה בסוף לשימוש ב-getStravaOnboardingSnapshot ***
+  // ===== חישוב נפח ו-SUMMARY מתוך ה-DB =====
 
-  async function ingestAndComputeFromStrava(userId, tokens) {
-    // פה נכנסת הלוגיקה הקיימת שלך לייבוא Strava
-    // בסוף, אחרי הייבוא והחישובים, לא צריך לשנות כלום מבחינת החזרת הנתונים לאונבורדינג.
-    return;
+  async function computeVolumeAndSummaryFromDb(userId) {
+    const DAYS_BACK = 90;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const sinceSec = nowSec - DAYS_BACK * 24 * 3600;
+
+    const RIDE_TYPES = [
+      "Ride",
+      "VirtualRide",
+      "GravelRide",
+      "MountainBikeRide",
+      "EBikeRide",
+    ];
+
+    const placeholders = RIDE_TYPES.map(() => "?").join(",");
+
+    const rows = await all(
+      `
+      SELECT
+        start_date,
+        moving_time,
+        distance,
+        total_elevation_gain,
+        type
+      FROM strava_activities
+      WHERE user_id = ?
+        AND start_date >= ?
+        AND type IN (${placeholders})
+      ORDER BY start_date ASC
+      `,
+      [userId, sinceSec, ...RIDE_TYPES]
+    );
+
+    if (!rows.length) {
+      return {
+        trainingSummary: null,
+        volume: null,
+      };
+    }
+
+    let totalMovingTimeSec = 0;
+    let totalDistanceM = 0;
+    let totalElevationGainM = 0;
+    let minDurationSec = Number.POSITIVE_INFINITY;
+    let maxDurationSec = 0;
+    let offroadCount = 0;
+
+    const weeks = new Map(); // key: YYYY-WW, value: { timeSec, rides }
+
+    for (const r of rows) {
+      const mt = Number(r.moving_time || 0);
+      const dist = Number(r.distance || 0);
+      const elev = Number(r.total_elevation_gain || 0);
+
+      totalMovingTimeSec += mt;
+      totalDistanceM += dist;
+      totalElevationGainM += elev;
+
+      if (mt > 0) {
+        if (mt < minDurationSec) minDurationSec = mt;
+        if (mt > maxDurationSec) maxDurationSec = mt;
+      }
+
+      const t = r.type || "";
+      if (
+        t.includes("Gravel") ||
+        t.includes("Mountain") ||
+        t.includes("EBike")
+      ) {
+        offroadCount += 1;
+      }
+
+      const startDateSec = Number(r.start_date || 0);
+      const d = new Date(startDateSec * 1000);
+      const year = d.getUTCFullYear();
+      const firstJan = new Date(Date.UTC(year, 0, 1));
+      const dayOfYear = Math.floor((d - firstJan) / (24 * 3600 * 1000)) + 1;
+      const week = Math.ceil(dayOfYear / 7);
+      const weekKey = `${year}-${week}`;
+
+      if (!weeks.has(weekKey)) {
+        weeks.set(weekKey, { timeSec: 0, rides: 0 });
+      }
+      const w = weeks.get(weekKey);
+      w.timeSec += mt;
+      w.rides += 1;
+    }
+
+    const ridesCount = rows.length;
+    const avgDurationSec =
+      ridesCount > 0 ? totalMovingTimeSec / ridesCount : 0;
+    const totalDistanceKm = totalDistanceM / 1000;
+    const totalElevationGainRounded = Math.round(totalElevationGainM);
+    const offroadPct =
+      ridesCount > 0 ? Math.round((offroadCount / ridesCount) * 100) : null;
+
+    const weeksArr = Array.from(weeks.values());
+    let weeklyHoursAvg = 0;
+    let weeklyRidesAvg = 0;
+
+    if (weeksArr.length > 0) {
+      const totalWeekTimeSec = weeksArr.reduce(
+        (s, w) => s + w.timeSec,
+        0
+      );
+      const totalWeekRides = weeksArr.reduce((s, w) => s + w.rides, 0);
+      weeklyHoursAvg = totalWeekTimeSec / 3600 / weeksArr.length;
+      weeklyRidesAvg = totalWeekRides / weeksArr.length;
+    }
+
+    const trainingSummary = {
+      rides_count: ridesCount,
+      totalMovingTimeSec: Math.round(totalMovingTimeSec),
+      totalDistanceKm: Number(totalDistanceKm.toFixed(1)),
+      totalElevationGainM: totalElevationGainRounded,
+      avgDurationSec: Math.round(avgDurationSec),
+      minDurationSec:
+        minDurationSec === Number.POSITIVE_INFINITY
+          ? 0
+          : Math.round(minDurationSec),
+      maxDurationSec: Math.round(maxDurationSec),
+      offroadPct,
+    };
+
+    const volume = {
+      weeksCount: weeksArr.length,
+      weeklyHoursAvg: Number(weeklyHoursAvg.toFixed(1)),
+      weeklyRidesAvg: Number(weeklyRidesAvg.toFixed(1)),
+    };
+
+    return { trainingSummary, volume };
   }
 
-  // ... כאן נכנסים computeVolumeAndSummaryFromDb / computeFtpAndHrModelsFromDb
-  //   (לא שיניתי את מה שיש לך, כדי לא לשבור שום דבר)
+  // ===== חישוב מודלי FTP ודופק מתוך training_params =====
+
+  async function computeFtpAndHrModelsFromDb(userId) {
+    const row = await get(
+      `SELECT ftp, ftp20, ftp_from_3min, ftp_from_cp, ftp_recommended,
+              hr_max, hr_threshold
+       FROM training_params
+       WHERE user_id = ?`,
+      [userId]
+    );
+
+    const ftpModels = {};
+
+    if (row) {
+      if (row.ftp20 != null) {
+        ftpModels.ftp20 = {
+          key: "ftp20",
+          value: row.ftp20,
+          label: "FTP 20min (95%)",
+        };
+      }
+      if (row.ftp_from_3min != null) {
+        ftpModels.ftpFrom3min = {
+          key: "ftpFrom3min",
+          value: row.ftp_from_3min,
+          label: "FTP from 3min model",
+        };
+      }
+      if (row.ftp_from_cp != null) {
+        ftpModels.ftpFromCP = {
+          key: "ftpFromCP",
+          value: row.ftp_from_cp,
+          label: "Critical Power model",
+        };
+      }
+      if (row.ftp != null) {
+        ftpModels.ftpFromStrava = {
+          key: "ftpFromStrava",
+          value: row.ftp,
+          label: "FTP from Strava / manual",
+        };
+      }
+      if (row.ftp_recommended != null) {
+        ftpModels.ftpRecommended = {
+          key: "ftpRecommended",
+          value: row.ftp_recommended,
+          label: "Recommended FTP (median)",
+        };
+      }
+    }
+
+    const hr = {
+      hrMax: row && row.hr_max != null ? row.hr_max : null,
+      hrThreshold:
+        row && row.hr_threshold != null ? row.hr_threshold : null,
+    };
+
+    return { ftpModels, hr };
+  }
+
+  // ===== STRAVA INGEST (כאן כרגע רק חישוב מטריקות מתוך ה-DB) =====
+
+  async function ingestAndComputeFromStrava(userId) {
+    console.log(
+      "[STRAVA] ingestAndComputeFromStrava (DB metrics only) for",
+      userId
+    );
+
+    const volumeSummary = await computeVolumeAndSummaryFromDb(userId);
+    const ftpModels = await computeFtpAndHrModelsFromDb(userId);
+
+    return {
+      trainingSummary: volumeSummary.trainingSummary,
+      volume: volumeSummary.volume,
+      ftpModels: ftpModels.ftpModels,
+      hr: ftpModels.hr,
+    };
+  }
 
   // ===== משקל רוכב מסטרבה =====
 
   async function saveAthleteProfile(userId, weightKg) {
-    // שומר משקל רוכב (אם הגיע מסטרבה)
     if (weightKg == null) return;
     const now = Math.floor(Date.now() / 1000);
 
@@ -400,11 +592,10 @@ export async function createDbImpl() {
   // ===== Snapshot לאונבורדינג =====
 
   async function getStravaOnboardingSnapshot(userId) {
-    // מסכם נתוני נפח ו-FTP/HR מה-DB בלבד
-    const volumeSummary = await computeVolumeAndSummaryFromDb(userId);
-    const ftpModels = await computeFtpAndHrModelsFromDb(userId);
+    const { trainingSummary, volume } =
+      await computeVolumeAndSummaryFromDb(userId);
+    const { ftpModels, hr } = await computeFtpAndHrModelsFromDb(userId);
 
-    // קורא פרופיל רוכב (משקל) אם קיים
     const athleteRow = await get(
       `SELECT weight_kg FROM strava_athlete WHERE user_id = ?`,
       [userId]
@@ -416,9 +607,10 @@ export async function createDbImpl() {
     }
 
     return {
-      trainingSummary: volumeSummary.trainingSummary,
-      volume: volumeSummary.volume,
-      ftpModels: ftpModels.ftpModels,
+      trainingSummary,
+      volume,
+      ftpModels,
+      hr,
       personal,
     };
   }
