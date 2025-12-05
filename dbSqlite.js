@@ -360,6 +360,258 @@ export async function createDbImpl() {
     await run(`DELETE FROM strava_athlete WHERE user_id = ?`, [userId]);
   }
 
+  // ===== עזרי STRAVA פנימיים (INGEST) =====
+
+  async function getFreshAccessToken(userId) {
+    const tokens = await getStravaTokens(userId);
+    if (!tokens) {
+      console.warn("[STRAVA] No tokens found for user", userId);
+      return null;
+    }
+
+    const nowSec = Math.floor(Date.now() / 1000);
+
+    // אם הטוקן עדיין בתוקף – משתמשים בו
+    if (tokens.expiresAt && tokens.expiresAt > nowSec + 60) {
+      return tokens.accessToken;
+    }
+
+    // מנסים לרענן טוקן
+    const clientId = process.env.STRAVA_CLIENT_ID;
+    const clientSecret = process.env.STRAVA_CLIENT_SECRET;
+    if (!clientId || !clientSecret || !tokens.refreshToken) {
+      console.warn(
+        "[STRAVA] Cannot refresh token – missing clientId/clientSecret/refreshToken"
+      );
+      return tokens.accessToken;
+    }
+
+    try {
+      const resp = await fetch("https://www.strava.com/oauth/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: clientId,
+          client_secret: clientSecret,
+          grant_type: "refresh_token",
+          refresh_token: tokens.refreshToken,
+        }),
+      });
+
+      if (!resp.ok) {
+        const txt = await resp.text();
+        console.error("[STRAVA] refresh token failed:", txt);
+        return tokens.accessToken;
+      }
+
+      const json = await resp.json();
+      const newTokens = {
+        accessToken: json.access_token,
+        refreshToken: json.refresh_token || tokens.refreshToken,
+        expiresAt: json.expires_at || tokens.expiresAt,
+      };
+      await saveStravaTokens(userId, newTokens);
+
+      return newTokens.accessToken;
+    } catch (e) {
+      console.error("[STRAVA] refresh token error:", e);
+      return tokens.accessToken;
+    }
+  }
+
+  async function fetchStravaActivitiesRaw(accessToken, afterEpochSec) {
+    const allActivities = [];
+    let page = 1;
+
+    while (true) {
+      const url = new URL(
+        "https://www.strava.com/api/v3/athlete/activities"
+      );
+      url.searchParams.set("after", String(afterEpochSec));
+      url.searchParams.set("per_page", "100");
+      url.searchParams.set("page", String(page));
+
+      const resp = await fetch(url.toString(), {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!resp.ok) {
+        const txt = await resp.text();
+        console.error(
+          "[STRAVA] activities fetch failed:",
+          resp.status,
+          txt
+        );
+        break;
+      }
+
+      const arr = await resp.json();
+      if (!Array.isArray(arr) || arr.length === 0) break;
+
+      allActivities.push(...arr);
+      if (arr.length < 100) break;
+      page += 1;
+    }
+
+    return allActivities;
+  }
+
+  async function storeStravaActivities(userId, activities) {
+    if (!activities || !activities.length) return;
+
+    const insertSql = `
+      INSERT OR REPLACE INTO strava_activities (
+        id, user_id, start_date, moving_time, elapsed_time,
+        distance, total_elevation_gain,
+        avg_power, max_power,
+        avg_hr, max_hr,
+        has_power, type
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+
+    for (const a of activities) {
+      const id = a.id;
+      const startSec = Math.floor(
+        new Date(a.start_date || a.start_date_local).getTime() / 1000
+      );
+      const mt = a.moving_time || 0;
+      const et = a.elapsed_time || 0;
+      const dist = a.distance || 0;
+      const elev = a.total_elevation_gain || 0;
+      const avgP = a.average_power ?? null;
+      const maxP = a.max_power ?? null;
+      const avgHr = a.average_heartrate ?? null;
+      const maxHr = a.max_heartrate ?? null;
+      const hasPower = avgP != null ? 1 : 0;
+      const type = a.type || null;
+
+      await run(insertSql, [
+        id,
+        userId,
+        startSec,
+        mt,
+        et,
+        dist,
+        elev,
+        avgP,
+        maxP,
+        avgHr,
+        maxHr,
+        hasPower,
+        type,
+      ]);
+    }
+  }
+
+  async function fetchAndStoreStreamsForActivities(
+    userId,
+    accessToken,
+    activities
+  ) {
+    if (!activities || !activities.length) return;
+
+    const withPower = activities.filter(
+      (a) => a.average_power != null || a.max_power != null
+    );
+
+    // לא נרצה לחטוף rate-limit, נגביל למשל ל-30 פעילויות אחרונות עם power
+    const limited = withPower.slice(0, 30);
+
+    for (const a of limited) {
+      const id = a.id;
+      const url = new URL(
+        `https://www.strava.com/api/v3/activities/${id}/streams`
+      );
+      url.searchParams.set("keys", "watts,heartrate,time");
+      url.searchParams.set("key_by_type", "true");
+
+      try {
+        const resp = await fetch(url.toString(), {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        });
+
+        if (!resp.ok) {
+          const txt = await resp.text();
+          console.error(
+            "[STRAVA] streams fetch failed for activity",
+            id,
+            resp.status,
+            txt
+          );
+          continue;
+        }
+
+        const json = await resp.json();
+        // בפורמט key_by_type=true אנחנו מצפים למבנה:
+        // { watts: { data: [...] }, heartrate: { data: [...] }, time: { data: [...] } }
+
+        const streamsToStore = [];
+        if (json.watts && Array.isArray(json.watts.data)) {
+          streamsToStore.push({
+            type: "watts",
+            data: JSON.stringify(json.watts.data),
+          });
+        }
+        if (json.heartrate && Array.isArray(json.heartrate.data)) {
+          streamsToStore.push({
+            type: "heartrate",
+            data: JSON.stringify(json.heartrate.data),
+          });
+        }
+        if (json.time && Array.isArray(json.time.data)) {
+          streamsToStore.push({
+            type: "time",
+            data: JSON.stringify(json.time.data),
+          });
+        }
+
+        for (const s of streamsToStore) {
+          await run(
+            `
+            INSERT OR REPLACE INTO strava_streams (user_id, activity_id, stream_type, data)
+            VALUES (?, ?, ?, ?)
+          `,
+            [userId, id, s.type, s.data]
+          );
+        }
+      } catch (e) {
+        console.error(
+          "[STRAVA] error fetching streams for activity",
+          id,
+          e
+        );
+      }
+    }
+  }
+
+  async function fetchAndSaveAthleteProfile(userId, accessToken) {
+    try {
+      const resp = await fetch("https://www.strava.com/api/v3/athlete", {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!resp.ok) {
+        const txt = await resp.text();
+        console.error("[STRAVA] athlete fetch failed:", resp.status, txt);
+        return;
+      }
+
+      const athlete = await resp.json();
+      const weightKg = athlete.weight || null;
+      if (weightKg != null) {
+        await saveAthleteProfile(userId, weightKg);
+      }
+    } catch (e) {
+      console.error("[STRAVA] athlete fetch error:", e);
+    }
+  }
+
   // ===== חישוב נפח ו-SUMMARY מתוך ה-DB =====
 
   async function computeVolumeAndSummaryFromDb(userId) {
@@ -554,22 +806,65 @@ export async function createDbImpl() {
     return { ftpModels, hr };
   }
 
-  // ===== STRAVA INGEST (כאן כרגע רק חישוב מטריקות מתוך ה-DB) =====
+  // ===== STRAVA INGEST (מלא) =====
 
   async function ingestAndComputeFromStrava(userId) {
+    console.log("[STRAVA] ingestAndComputeFromStrava (full) for", userId);
+
+    const accessToken = await getFreshAccessToken(userId);
+    if (!accessToken) {
+      console.warn(
+        "[STRAVA] No valid access token for user, falling back to snapshot only",
+        userId
+      );
+      const snap = await getStravaOnboardingSnapshot(userId);
+      return {
+        trainingSummary: snap.trainingSummary || null,
+        volume: snap.volume || null,
+        ftpModels: snap.ftpModels || {},
+        hr: snap.hr || { hrMax: null, hrThreshold: null },
+      };
+    }
+
+    // מנקה נתוני סטרבה קודמים למשתמש
+    await clearStravaData(userId);
+
+    const DAYS_BACK = 90;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const afterSec = nowSec - DAYS_BACK * 24 * 3600;
+
+    // 1) מביא ACTIVITIES ושומר
+    const activities = await fetchStravaActivitiesRaw(
+      accessToken,
+      afterSec
+    );
     console.log(
-      "[STRAVA] ingestAndComputeFromStrava (DB metrics only) for",
-      userId
+      "[STRAVA] fetched activities for",
+      userId,
+      "count:",
+      activities.length
+    );
+    await storeStravaActivities(userId, activities);
+
+    // 2) מביא STREAMS לפעילויות עם power
+    await fetchAndStoreStreamsForActivities(
+      userId,
+      accessToken,
+      activities
     );
 
+    // 3) מביא ATHLETE ושומר משקל
+    await fetchAndSaveAthleteProfile(userId, accessToken);
+
+    // 4) מחשב נפח ו-FTP/HR מתוך ה-DB (FTP/HR כרגע מתוך training_params אם קיימים)
     const volumeSummary = await computeVolumeAndSummaryFromDb(userId);
-    const ftpModels = await computeFtpAndHrModelsFromDb(userId);
+    const ftpHr = await computeFtpAndHrModelsFromDb(userId);
 
     return {
       trainingSummary: volumeSummary.trainingSummary,
       volume: volumeSummary.volume,
-      ftpModels: ftpModels.ftpModels,
-      hr: ftpModels.hr,
+      ftpModels: ftpHr.ftpModels,
+      hr: ftpHr.hr,
     };
   }
 
