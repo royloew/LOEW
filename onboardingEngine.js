@@ -263,7 +263,6 @@ export class OnboardingEngine {
       consumeInput: true,
     };
   }
-
   _applyStravaSnapshotToState(state, snap) {
     const d = state.data || (state.data = {});
 
@@ -271,16 +270,13 @@ export class OnboardingEngine {
     if (snap.trainingSummary) d.trainingSummary = snap.trainingSummary;
     if (snap.volume) d.volume = snap.volume;
 
-    if (snap.personal && snap.personal.weightFromStrava != null) {
-    d.personal = d.personal || {};
-    d.personal.weightFromStrava = Math.round(snap.personal.weightFromStrava);
-
     // FTP models – לפי הפורמט שמגיע מ-dbSqlite.js (value + label)
     if (snap.ftpModels) {
       const m = snap.ftpModels;
       const ftp = d.ftp || (d.ftp = {});
 
-      ftp.ftp20 = m.ftp20 && m.ftp20.value != null ? m.ftp20.value : null;
+      ftp.ftp20 =
+        m.ftp20 && m.ftp20.value != null ? m.ftp20.value : null;
 
       ftp.ftpFrom3min =
         m.ftpFrom3min && m.ftpFrom3min.value != null
@@ -288,7 +284,9 @@ export class OnboardingEngine {
           : null;
 
       ftp.ftpFromCP =
-        m.ftpFromCP && m.ftpFromCP.value != null ? m.ftpFromCP.value : null;
+        m.ftpFromCP && m.ftpFromCP.value != null
+          ? m.ftpFromCP.value
+          : null;
 
       ftp.ftpFromStrava =
         m.ftpFromStrava && m.ftpFromStrava.value != null
@@ -307,42 +305,38 @@ export class OnboardingEngine {
       if (snap.hr.hrMax != null) hr.hrMax = snap.hr.hrMax;
       if (snap.hr.hrThreshold != null) hr.hrThreshold = snap.hr.hrThreshold;
     }
+
+    // נתונים אישיים מסטרבה (משקל)
+    if (snap.personal && snap.personal.weightFromStrava != null) {
+      const personal = d.personal || (d.personal = {});
+      if (personal.weightKg == null) {
+        personal.weightFromStrava = Math.round(
+          snap.personal.weightFromStrava
+        );
+      }
+    }
   }
 
   async _ensureStravaMetrics(userId, state) {
-    const snap = await this.db.getStravaOnboardingSnapshot(userId);
-    if (!snap) return state;
+    try {
+      if (
+        !this.db ||
+        typeof this.db.getStravaOnboardingSnapshot !== "function"
+      ) {
+        return state;
+      }
 
-    if (!state.data.trainingSummary || !state.data.volume) {
-      state.data.trainingSummary = snap.trainingSummary || null;
-      state.data.volume = snap.volume || null;
-    }
-    if (!state.data.ftp && snap.ftpModels) {
-      // נשמור רק ערכים מספריים, כמו ב-_applyStravaSnapshotToState
-      const m = snap.ftpModels;
-      const ftp = (state.data.ftp = {});
-      ftp.ftp20 = m.ftp20 && m.ftp20.value != null ? m.ftp20.value : null;
-      ftp.ftpFrom3min =
-        m.ftpFrom3min && m.ftpFrom3min.value != null
-          ? m.ftpFrom3min.value
-          : null;
-      ftp.ftpFromCP =
-        m.ftpFromCP && m.ftpFromCP.value != null ? m.ftpFromCP.value : null;
-      ftp.ftpFromStrava =
-        m.ftpFromStrava && m.ftpFromStrava.value != null
-          ? m.ftpFromStrava.value
-          : null;
-      ftp.ftpRecommended =
-        m.ftpRecommended && m.ftpRecommended.value != null
-          ? m.ftpRecommended.value
-          : null;
-    }
-    if (!state.data.hr && snap.hrModels) {
-      state.data.hr = snap.hrModels;
-    }
+      const snap = await this.db.getStravaOnboardingSnapshot(userId);
+      if (!snap) return state;
 
-    return state;
+      this._applyStravaSnapshotToState(state, snap);
+      return state;
+    } catch (err) {
+      console.error("_ensureStravaMetrics error:", err);
+      return state;
+    }
   }
+
 
   // 3) סיכום נפח מסטרבה + מעבר לנתונים אישיים
   async _stagePostStravaSummary(userId, state) {
