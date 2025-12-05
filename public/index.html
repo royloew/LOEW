@@ -1,186 +1,187 @@
 <!DOCTYPE html>
 <html lang="he" dir="rtl">
-<head>
-  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
-  <title>LOEW – המאמן האישי שלך</title>
+  <head>
+    <meta charset="UTF-8" />
+    <title>LOEW – המאמן האישי שלך</title>
 
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      background: #e9eef5;
-      margin: 0;
-      padding: 0;
-      direction: rtl;
-      text-align: right;
-    }
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        background: #e9eef5;
+        margin: 0;
+        padding: 0;
+        direction: rtl;
+        text-align: right;
+      }
 
-    #chat-container {
-      width: 100%;
-      max-width: 700px;
-      margin: 0 auto;
-      padding: 20px;
-    }
+      #chat-container {
+        width: 100%;
+        max-width: 700px;
+        margin: 0 auto;
+        padding: 20px;
+      }
 
-    .bubble {
-      padding: 14px 18px;
-      border-radius: 14px;
-      margin-bottom: 12px;
-      width: fit-content;
-      max-width: 80%;
-      font-size: 16px;
-      line-height: 1.45;
-      white-space: pre-wrap;
-    }
+      .bubble {
+        padding: 14px 18px;
+        border-radius: 14px;
+        margin-bottom: 12px;
+        width: fit-content;
+        max-width: 80%;
+        font-size: 16px;
+        line-height: 1.45;
+        white-space: pre-wrap;
+      }
 
-    .bubble-text {
-      text-align: right;
-      direction: rtl;
-      white-space: pre-wrap;
-      line-height: 1.5;
-    }
+      .bubble-text {
+        text-align: right;
+        direction: rtl;
+        white-space: pre-wrap;
+        line-height: 1.5;
+      }
 
-    .assistant {
-      background: white;
-      border: 1px solid #ccc;
-      color: #222;
-      margin-right: 0;
-    }
+      .assistant {
+        background: white;
+        border: 1px solid #ccc;
+        color: #222;
+        margin-right: 0;
+      }
 
-    .user {
-      background: #daf1ff;
-      border: 1px solid #b5e2ff;
-      margin-left: auto;
-      text-align: left;
-    }
+      .user {
+        background: #daf1ff;
+        border: 1px solid #b5e2ff;
+        margin-left: auto;
+        text-align: left;
+      }
 
-    #input-area {
-      display: flex;
-      gap: 10px;
-      margin-top: 20px;
-    }
+      #input-area {
+        display: flex;
+        gap: 10px;
+        margin-top: 20px;
+      }
 
-    #user-input {
-      flex: 1;
-      padding: 10px;
-      font-size: 16px;
-      border-radius: 8px;
-      border: 1px solid #ccc;
-    }
+      #user-input {
+        flex: 1;
+        padding: 10px;
+        font-size: 16px;
+        border-radius: 8px;
+        border: 1px solid #ccc;
+      }
 
-    #send-btn {
-      padding: 10px 18px;
-      font-size: 16px;
-      border-radius: 8px;
-      border: none;
-      cursor: pointer;
-      background: #007aff;
-      color: white;
-    }
+      #send-btn {
+        padding: 10px 18px;
+        font-size: 16px;
+        border-radius: 8px;
+        border: none;
+        cursor: pointer;
+        background: #007aff;
+        color: white;
+      }
 
-    a {
-      color: #007aff;
-      text-decoration: underline;
-      cursor: pointer;
-      word-break: break-all;
-    }
-  </style>
-</head>
+      a {
+        color: #007aff;
+        text-decoration: underline;
+        cursor: pointer;
+        word-break: break-all;
+      }
+    </style>
+  </head>
 
-<body>
-  <div id="chat-container">
-    <!-- מתחילים בלי בועות – הכל מגיע מהשרת -->
-    <div id="messages"></div>
+  <body>
+    <div id="chat-container">
+      <!-- מתחילים בלי בועות – הכל מגיע מהשרת -->
+      <div id="messages"></div>
 
-    <div id="input-area">
-      <input id="user-input" placeholder="כתוב הודעה…">
-      <button id="send-btn">שלח</button>
+      <div id="input-area">
+        <input id="user-input" placeholder="כתוב הודעה…" />
+        <button id="send-btn">שלח</button>
+      </div>
     </div>
-  </div>
 
-  <script>
-    const messagesDiv = document.getElementById("messages");
-    const input = document.getElementById("user-input");
-    const sendBtn = document.getElementById("send-btn");
+    <script>
+      const messagesDiv = document.getElementById("messages");
+      const input = document.getElementById("user-input");
+      const sendBtn = document.getElementById("send-btn");
 
-    function scrollToBottom() {
-      messagesDiv.scrollTop = messagesDiv.scrollHeight;
-    }
+      function scrollToBottom() {
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+      }
 
-    // הופך טקסט ללינק (Strava auth, URLs)
-    function linkify(text) {
-      return text.replace(
-        /(https?:\/\/[^\s]+|\/auth\/strava\?userId=[^\s]+)/g,
-        (match) => {
-          if (match.includes("/auth/strava?userId=")) {
-            // כיתוב ברור לחיבור סטרבה
-            return `<a href="${match}" target="_blank">חבר אותי לסטרבה</a>`;
+      // הופך טקסט ללינק (Strava auth, URLs)
+      function linkify(text) {
+        return text.replace(
+          /(https?:\/\/[^\s]+|\/auth\/strava\?userId=[^\s]+)/g,
+          (match) => {
+            if (match.includes("/auth/strava?userId=")) {
+              // כיתוב ברור לחיבור סטרבה
+              return `<a href="${match}" target="_blank">חבר אותי לסטרבה</a>`;
+            }
+            return `<a href="${match}" target="_blank">${match}</a>`;
           }
-          return `<a href="${match}" target="_blank">${match}</a>`;
-        }
-      );
-    }
+        );
+      }
 
-    function addMessage(text, sender = "assistant") {
-      const bubble = document.createElement("div");
-      bubble.className = "bubble " + sender;
+      function addMessage(text, sender = "assistant") {
+        const bubble = document.createElement("div");
+        bubble.className = "bubble " + sender;
 
-      const textDiv = document.createElement("div");
-      textDiv.className = "bubble-text";
-      textDiv.innerHTML = linkify(text);
+        const textDiv = document.createElement("div");
+        textDiv.className = "bubble-text";
+        textDiv.innerHTML = linkify(text);
 
-      bubble.appendChild(textDiv);
-      messagesDiv.appendChild(bubble);
-      scrollToBottom();
-    }
+        bubble.appendChild(textDiv);
+        messagesDiv.appendChild(bubble);
+        scrollToBottom();
+      }
 
-    async function sendMessage() {
-      const txt = input.value.trim();
-      if (!txt) return;
+      async function sendMessage() {
+        const txt = input.value.trim();
+        if (!txt) return;
 
-      addMessage(txt, "user");
+        addMessage(txt, "user");
 
-      input.value = "";
-      scrollToBottom();
+        input.value = "";
+        scrollToBottom();
 
-      const userId =
-        new URLSearchParams(window.location.search).get("userId") || "default";
+        const userId =
+          new URLSearchParams(window.location.search).get("userId") ||
+          "default";
 
-      const res = await fetch("/api/loew/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId,
-          message: txt,
-        }),
-      });
-
-      const data = await res.json();
-
-      if (data.reply) addMessage(data.reply, "assistant");
-    }
-
-    sendBtn.onclick = sendMessage;
-    input.onkeydown = (e) => {
-      if (e.key === "Enter") sendMessage();
-    };
-
-    // ---- AUTO-START ----
-    // שולח "היי" אוטומטית בצ'אט חדש, בלי הודעה קשיחה מראש
-    window.onload = () => {
-      const params = new URLSearchParams(window.location.search);
-      const auto = params.get("auto");
-
-      if (!auto) {
-        const userId = params.get("userId") || "default";
-        fetch("/api/loew/chat", {
+        const res = await fetch("/api/loew/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userId, message: "היי" }),
-        })
-          .then((r) => r.json())
-          .then((d) => d.reply && addMessage(d.reply, "assistant"));
+          body: JSON.stringify({
+            userId,
+            message: txt,
+          }),
+        });
+
+        const data = await res.json();
+
+        if (data.reply) addMessage(data.reply, "assistant");
       }
-    };
-  </script>
-</body>
+
+      sendBtn.onclick = sendMessage;
+      input.onkeydown = (e) => {
+        if (e.key === "Enter") sendMessage();
+      };
+
+      // ---- AUTO-START ----
+      // שולח "היי" אוטומטית בצ'אט חדש – הכל יגיע מהשרת
+      window.onload = () => {
+        const params = new URLSearchParams(window.location.search);
+        const auto = params.get("auto");
+
+        if (!auto) {
+          const userId = params.get("userId") || "default";
+          fetch("/api/loew/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ userId, message: "היי" }),
+          })
+            .then((r) => r.json())
+            .then((d) => d.reply && addMessage(d.reply, "assistant"));
+        }
+      };
+    </script>
+  </body>
 </html>
