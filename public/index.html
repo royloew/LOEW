@@ -155,9 +155,16 @@
           }),
         });
 
-        const data = await res.json();
+       const data = await res.json();
 
-        if (data.reply) addMessage(data.reply, "assistant");
+      if (data.reply) {
+        const parts = String(data.reply).split("\n\n");
+        for (const part of parts) {
+          const trimmed = part.trim();
+          if (trimmed) addMessage(trimmed, "assistant");
+        }
+      }
+
       }
 
       sendBtn.onclick = sendMessage;

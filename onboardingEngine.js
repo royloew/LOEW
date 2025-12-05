@@ -7,108 +7,135 @@ export class OnboardingEngine {
   }
 
   // נקודת כניסה עיקרית
-    // נקודת כניסה עיקרית
   async handleMessage(userId, textRaw) {
-  let text = (textRaw || "").trim();
-  let state = await this._loadState(userId);
+    let text = (textRaw || "").trim();
+    let state = await this._loadState(userId);
 
-  // אם האונבורדינג כבר הושלם – לא חוזרים לפתיחה
-  if (state && state.stage === "done") {
-    return await this._handleAfterOnboarding(userId, text);
-  }
+    // אם האונבורדינג כבר הושלם – לא חוזרים לפתיחה
+    if (state && state.stage === "done") {
+      return await this._handleAfterOnboarding(userId, text);
+    }
 
-  // משתמש חדש / state שבור -> אתחול חכם:
-  // 1) אם יש כבר חיבור + נתוני סטרבה → מתחילים ישר מסיכום סטרבה
-  // 2) אם יש חיבור בלי נתונים → await_strava_connect
-  // 3) אחרת → intro רגיל
-  if (!state || !state.stage || !state.data) {
-    const baseData = {
-      personal: {},
-      ftp: null,
-      ftpFinal: null,
-      hr: null,
-      hrFinal: null,
-      goal: null,
-      volume: null,
-      trainingSummary: null,
-      stravaConnected: false,
-    };
+    // משתמש חדש / state שבור -> אתחול חכם:
+    // 1) אם יש כבר חיבור + נתוני סטרבה → מתחילים ישר מסיכום סטרבה
+    // 2) אם יש חיבור בלי נתונים → await_strava_connect
+    // 3) אחרת → intro רגיל
+    if (!state || !state.stage || !state.data) {
+      const baseData = {
+        personal: {},
+        ftp: null,
+        ftpFinal: null,
+        hr: null,
+        hrFinal: null,
+        goal: null,
+        volume: null,
+        trainingSummary: null,
+        stravaConnected: false,
+      };
 
-    let hasStravaTokens = false;
-    let snap = null;
+      let hasStravaTokens = false;
+      let snap = null;
 
-    if (this.db) {
-      try {
-        if (typeof this.db.getStravaTokens === "function") {
-          const tokens = await this.db.getStravaTokens(userId);
-          hasStravaTokens = !!tokens;
+      if (this.db) {
+        try {
+          if (typeof this.db.getStravaTokens === "function") {
+            const tokens = await this.db.getStravaTokens(userId);
+            hasStravaTokens = !!tokens;
+          }
+          if (
+            hasStravaTokens &&
+            typeof this.db.getStravaOnboardingSnapshot === "function"
+          ) {
+            snap = await this.db.getStravaOnboardingSnapshot(userId);
+          }
+        } catch (err) {
+          console.error("handleMessage: error while probing Strava state:", err);
         }
-        if (
-          hasStravaTokens &&
-          typeof this.db.getStravaOnboardingSnapshot === "function"
-        ) {
-          snap = await this.db.getStravaOnboardingSnapshot(userId);
-        }
-      } catch (err) {
-        console.error("handleMessage: error while probing Strava state:", err);
+      }
+
+      if (snap && (snap.trainingSummary || snap.volume || snap.ftpModels)) {
+        // כבר יש לי נתוני סטרבה → ישר לסיכום נפח
+        state = {
+          stage: "post_strava_summary",
+          data: { ...baseData, stravaConnected: true },
+        };
+        this._applyStravaSnapshotToState(state, snap);
+      } else if (hasStravaTokens) {
+        // מחובר לסטרבה, אבל בלי snapshot מלא → נמתין/נבדוק ב-stage הבא
+        state = {
+          stage: "await_strava_connect",
+          data: { ...baseData, stravaConnected: true },
+        };
+      } else {
+        // אין סטרבה ואין state → פתיחה רגילה
+        state = {
+          stage: "intro",
+          data: baseData,
+        };
       }
     }
 
-    if (snap && (snap.trainingSummary || snap.volume || snap.ftpModels)) {
-      // כבר יש לי נתוני סטרבה → ישר לסיכום נפח
-      state = {
-        stage: "post_strava_summary",
-        data: { ...baseData, stravaConnected: true },
-      };
-      this._applyStravaSnapshotToState(state, snap);
-    } else if (hasStravaTokens) {
-      // מחובר לסטרבה, אבל בלי snapshot מלא → נמתין/נבדוק ב-stage הבא
-      state = {
-        stage: "await_strava_connect",
-        data: { ...baseData, stravaConnected: true },
-      };
-    } else {
-      // אין סטרבה ואין state → פתיחה רגילה
-      state = {
-        stage: "intro",
-        data: baseData,
-      };
+    let pendingInput = text || null;
+    const messages = [];
+
+    while (true) {
+      const { newMessages, waitForUser, consumeInput } =
+        await this._runStage(userId, state, pendingInput);
+
+      if (newMessages && newMessages.length) {
+        messages.push(...newMessages);
+      }
+
+      if (consumeInput) {
+        pendingInput = null;
+      }
+
+      await this._saveState(userId, state);
+
+      if (waitForUser) break;
     }
+
+    return {
+      reply: messages.join("\n\n"),
+      onboarding: true,
+    };
   }
 
-  let pendingInput = text || null;
-  const messages = [];
-
-  while (true) {
-    const { newMessages, waitForUser, consumeInput } =
-      await this._runStage(userId, state, pendingInput);
-
-    if (newMessages && newMessages.length) {
-      messages.push(...newMessages);
-    }
-
-    if (consumeInput) {
-      pendingInput = null;
-    }
-
-    await this._saveState(userId, state);
-
-    if (waitForUser) break;
-  }
-
-  return {
-    reply: messages.join("\n\n"),
-    onboarding: true,
-  };
-}
-
-
-
+  // קריאה ל-DB – נטענת בצורה גמישה כדי להתמודד עם פורמטים שונים
   async _loadState(userId) {
     try {
+      if (!this.db || typeof this.db.getOnboardingState !== "function") {
+        return null;
+      }
+
       const row = await this.db.getOnboardingState(userId);
-      if (!row || !row.json_state) return null;
-      return JSON.parse(row.json_state);
+      if (!row) return null;
+
+      // מקרה קלאסי: row.json_state הוא מחרוזת JSON
+      if (typeof row.json_state === "string" && row.json_state.trim() !== "") {
+        try {
+          return JSON.parse(row.json_state);
+        } catch (e) {
+          console.error("loadState: failed to parse json_state for", userId, e);
+          return null;
+        }
+      }
+
+      // אם json_state כבר אובייקט (למשל דסיריאליזציה פנימית של dbSqlite)
+      if (
+        row.json_state &&
+        typeof row.json_state === "object" &&
+        (row.json_state.stage || row.json_state.data)
+      ) {
+        return row.json_state;
+      }
+
+      // אם הפונקציה מחזירה ישר state (stage + data)
+      if (row.stage && row.data) {
+        return row;
+      }
+
+      return null;
     } catch (err) {
       console.error("loadState error:", err);
       return null;
@@ -117,6 +144,10 @@ export class OnboardingEngine {
 
   async _saveState(userId, state) {
     try {
+      if (!this.db || typeof this.db.saveOnboardingState !== "function") {
+        return;
+      }
+      // שומרים תמיד כמחרוזת JSON, כפי שסיכמנו במבנה ה-DB
       await this.db.saveOnboardingState(userId, JSON.stringify(state));
     } catch (err) {
       console.error("saveState error:", err);
@@ -234,7 +265,7 @@ export class OnboardingEngine {
 
     const msg =
       "אם כבר אישרת את החיבור לסטרבה, ייבוא הנתונים כנראה עדיין רץ ברקע.\n" +
-      "אם אין לך סטרבה, תכתוב \"אין לי סטרבה\" ונמשיך הלאה.";
+      'אם אין לך סטרבה, תכתוב "אין לי סטרבה" ונמשיך הלאה.';
     return {
       newMessages: [msg],
       waitForUser: true,
@@ -243,49 +274,45 @@ export class OnboardingEngine {
   }
 
   _applyStravaSnapshotToState(state, snap) {
-  const d = state.data || (state.data = {});
+    const d = state.data || (state.data = {});
 
-  // סיכום נפח
-  if (snap.trainingSummary) d.trainingSummary = snap.trainingSummary;
-  if (snap.volume) d.volume = snap.volume;
+    // סיכום נפח
+    if (snap.trainingSummary) d.trainingSummary = snap.trainingSummary;
+    if (snap.volume) d.volume = snap.volume;
 
-  // FTP models – לפי הפורמט שמגיע מ-dbSqlite.js (value + label)
-  if (snap.ftpModels) {
-    const m = snap.ftpModels;
-    const ftp = d.ftp || (d.ftp = {});
+    // FTP models – לפי הפורמט שמגיע מ-dbSqlite.js (value + label)
+    if (snap.ftpModels) {
+      const m = snap.ftpModels;
+      const ftp = d.ftp || (d.ftp = {});
 
-    ftp.ftp20 =
-      m.ftp20 && m.ftp20.value != null ? m.ftp20.value : null;
+      ftp.ftp20 = m.ftp20 && m.ftp20.value != null ? m.ftp20.value : null;
 
-    ftp.ftpFrom3min =
-      m.ftpFrom3min && m.ftpFrom3min.value != null
-        ? m.ftpFrom3min.value
-        : null;
+      ftp.ftpFrom3min =
+        m.ftpFrom3min && m.ftpFrom3min.value != null
+          ? m.ftpFrom3min.value
+          : null;
 
-    ftp.ftpFromCP =
-      m.ftpFromCP && m.ftpFromCP.value != null
-        ? m.ftpFromCP.value
-        : null;
+      ftp.ftpFromCP =
+        m.ftpFromCP && m.ftpFromCP.value != null ? m.ftpFromCP.value : null;
 
-    ftp.ftpFromStrava =
-      m.ftpFromStrava && m.ftpFromStrava.value != null
-        ? m.ftpFromStrava.value
-        : null;
+      ftp.ftpFromStrava =
+        m.ftpFromStrava && m.ftpFromStrava.value != null
+          ? m.ftpFromStrava.value
+          : null;
 
-    ftp.ftpRecommended =
-      m.ftpRecommended && m.ftpRecommended.value != null
-        ? m.ftpRecommended.value
-        : null;
+      ftp.ftpRecommended =
+        m.ftpRecommended && m.ftpRecommended.value != null
+          ? m.ftpRecommended.value
+          : null;
+    }
+
+    // דופק
+    if (snap.hr) {
+      const hr = d.hr || (d.hr = {});
+      if (snap.hr.hrMax != null) hr.hrMax = snap.hr.hrMax;
+      if (snap.hr.hrThreshold != null) hr.hrThreshold = snap.hr.hrThreshold;
+    }
   }
-
-  // דופק
-  if (snap.hr) {
-    const hr = d.hr || (d.hr = {});
-    if (snap.hr.hrMax != null) hr.hrMax = snap.hr.hrMax;
-    if (snap.hr.hrThreshold != null) hr.hrThreshold = snap.hr.hrThreshold;
-  }
-}
-
 
   async _ensureStravaMetrics(userId, state) {
     const snap = await this.db.getStravaOnboardingSnapshot(userId);
@@ -296,7 +323,24 @@ export class OnboardingEngine {
       state.data.volume = snap.volume || null;
     }
     if (!state.data.ftp && snap.ftpModels) {
-      state.data.ftp = snap.ftpModels;
+      // נשמור רק ערכים מספריים, כמו ב-_applyStravaSnapshotToState
+      const m = snap.ftpModels;
+      const ftp = (state.data.ftp = {});
+      ftp.ftp20 = m.ftp20 && m.ftp20.value != null ? m.ftp20.value : null;
+      ftp.ftpFrom3min =
+        m.ftpFrom3min && m.ftpFrom3min.value != null
+          ? m.ftpFrom3min.value
+          : null;
+      ftp.ftpFromCP =
+        m.ftpFromCP && m.ftpFromCP.value != null ? m.ftpFromCP.value : null;
+      ftp.ftpFromStrava =
+        m.ftpFromStrava && m.ftpFromStrava.value != null
+          ? m.ftpFromStrava.value
+          : null;
+      ftp.ftpRecommended =
+        m.ftpRecommended && m.ftpRecommended.value != null
+          ? m.ftpRecommended.value
+          : null;
     }
     if (!state.data.hr && snap.hrModels) {
       state.data.hr = snap.hrModels;
@@ -316,7 +360,8 @@ export class OnboardingEngine {
     if (ts && ts.rides_count > 0) {
       const hoursTotal = (ts.totalMovingTimeSec / 3600).toFixed(1);
       const hoursAvg = (ts.avgDurationSec / 3600).toFixed(1);
-      const km = ts.totalDistanceKm != null ? ts.totalDistanceKm.toFixed(1) : null;
+      const km =
+        ts.totalDistanceKm != null ? ts.totalDistanceKm.toFixed(1) : null;
       const elevation =
         ts.totalElevationGainM != null
           ? Math.round(ts.totalElevationGainM)
@@ -327,11 +372,11 @@ export class OnboardingEngine {
       let line =
         `בדקתי את הרכיבות שלך מהתקופה האחרונה.\n` +
         `מופיעות בסטרבה ${ts.rides_count} רכיבות בתקופה שניתחתי.\n` +
-        `סה\"כ זמן רכיבה: ~${hoursTotal} שעות, זמן ממוצע לרכיבה: ~${hoursAvg} שעות.`;
+        `סה"כ זמן רכיבה: ~${hoursTotal} שעות, זמן ממוצע לרכיבה: ~${hoursAvg} שעות.`;
 
-      if (km != null) line += `\nסה\"כ מרחק: ~${km} ק\"מ.`;
+      if (km != null) line += `\nסה"כ מרחק: ~${km} ק"מ.`;
       if (elevation != null)
-        line += `\nסה\"כ טיפוס מצטבר: ~${elevation} מטר.`;
+        line += `\nסה"כ טיפוס מצטבר: ~${elevation} מטר.`;
       if (offPct != null)
         line += `\nבערך ${offPct}% מהזמן שלך הוא ברכיבות שטח/גרבל.`;
 
@@ -366,6 +411,7 @@ export class OnboardingEngine {
     const personal = state.data.personal || (state.data.personal = {});
     const txt = (userInput || "").trim();
 
+    // אם יש שדה שממתין לתשובה – קודם מטפלים בו
     if (personal.pendingField) {
       const field = personal.pendingField;
       if (!txt) {
@@ -394,7 +440,9 @@ export class OnboardingEngine {
         } else {
           const num = parseFloat(txt.replace(",", "."));
           if (isNaN(num) || num < 30 || num > 150) {
-            msgs.push("לא בטוח שהבנתי את המשקל. תכתוב מספר בקילו (למשל 67).");
+            msgs.push(
+              "לא בטוח שהבנתי את המשקל. תכתוב מספר בקילו (למשל 67)."
+            );
             return {
               newMessages: msgs,
               waitForUser: true,
@@ -409,7 +457,9 @@ export class OnboardingEngine {
         const num = parseFloat(txt.replace(",", "."));
         if (field === "age") {
           if (isNaN(num) || num < 10 || num > 90) {
-            msgs.push("לא בטוח שהבנתי את הגיל. תכתוב מספר סביר (למשל 46).");
+            msgs.push(
+              "לא בטוח שהבנתי את הגיל. תכתוב מספר סביר (למשל 46)."
+            );
             return {
               newMessages: msgs,
               waitForUser: true,
@@ -419,7 +469,9 @@ export class OnboardingEngine {
           personal.age = Math.round(num);
         } else if (field === "weightKg") {
           if (isNaN(num) || num < 30 || num > 150) {
-            msgs.push("לא בטוח שהבנתי את המשקל. תכתוב מספר בקילו (למשל 67).");
+            msgs.push(
+              "לא בטוח שהבנתי את המשקל. תכתוב מספר בקילו (למשל 67)."
+            );
             return {
               newMessages: msgs,
               waitForUser: true,
@@ -429,7 +481,9 @@ export class OnboardingEngine {
           personal.weightKg = Math.round(num);
         } else if (field === "heightCm") {
           if (isNaN(num) || num < 120 || num > 220) {
-            msgs.push("לא בטוח שהבנתי את הגובה. תכתוב מספר בס\"מ (למשל 178).");
+            msgs.push(
+              'לא בטוח שהבנתי את הגובה. תכתוב מספר בס"מ (למשל 178).'
+            );
             return {
               newMessages: msgs,
               waitForUser: true,
@@ -443,19 +497,26 @@ export class OnboardingEngine {
       }
     }
 
+    // אחרי שעידכנו את השדה, בודקים אם נשאר עוד משהו לשאול
     const nextQ = this._nextPersonalQuestion(state);
-    if (nextQ) {
-      personal.pendingField = nextQ.field;
-      msgs.push("יש עוד נתון אחד שחשוב לי להשלים כדי לדייק את הפרופיל שלך.");
-      msgs.push(nextQ.message);
-      state.stage = "personal_details_collect";
-      return {
-        newMessages: msgs,
-        waitForUser: true,
-        consumeInput: true,
-      };
-    }
+if (nextQ) {
+  personal.pendingField = nextQ.field;
 
+  msgs.push(
+    "יש עוד נתון אחד שחשוב לי להשלים כדי לדייק את הפרופיל שלך.\n\n" +
+    nextQ.message
+  );
+
+  state.stage = "personal_details_collect";
+  return {
+    newMessages: msgs,
+    waitForUser: true,
+    consumeInput: true,
+  };
+}
+
+
+    // אין יותר נתונים אישיים – עוברים ל-FTP
     state.stage = "ftp_intro";
     return {
       newMessages: msgs,
@@ -483,13 +544,12 @@ export class OnboardingEngine {
     if (p.heightCm == null)
       return {
         field: "heightCm",
-        message: "ומה הגובה שלך בס\"מ (למשל 178)?",
+        message: 'ומה הגובה שלך בס"מ (למשל 178)?',
       };
     return null;
   }
 
   // 5) FTP
-   // 5) FTP
   _stageFtp(state, userInput) {
     const msgs = [];
     const data = state.data;
@@ -523,9 +583,7 @@ export class OnboardingEngine {
             `• FTP לפי מודל CP: ~${ftp.ftpFromCP}W (עקומת כוח 3–20 דק').`
           );
         if (ftp.ftpFromStrava != null)
-          lines.push(
-            `• FTP כפי שמופיע אצלך בסטרבה: ~${ftp.ftpFromStrava}W.`
-          );
+          lines.push(`• FTP כפי שמופיע אצלך בסטרבה: ~${ftp.ftpFromStrava}W.`);
         if (ftp.ftpRecommended != null)
           lines.push(
             `על בסיס כל המודלים, ההמלצה שלי כרגע היא ~${ftp.ftpRecommended}W.`
@@ -552,9 +610,7 @@ export class OnboardingEngine {
 
     const txt = (userInput || "").trim();
     if (!txt) {
-      msgs.push(
-        'תרשום "תשתמש בהמלצה" או מספר בוואטים (למשל 250).'
-      );
+      msgs.push('תרשום "תשתמש בהמלצה" או מספר בוואטים (למשל 250).');
       return {
         newMessages: msgs,
         waitForUser: true,
@@ -612,7 +668,6 @@ export class OnboardingEngine {
       consumeInput: true,
     };
   }
-
 
   _explainFtpModels(state) {
     const ftp = state.data.ftp || {};
@@ -695,9 +750,7 @@ export class OnboardingEngine {
 
     const txt = (userInput || "").trim();
     if (!txt) {
-      msgs.push(
-        'תרשום "תשתמש בהמלצה" או מספר בדופק (למשל 180).'
-      );
+      msgs.push('תרשום "תשתמש בהמלצה" או מספר בדופק (למשל 180).');
       return {
         newMessages: msgs,
         waitForUser: true,
@@ -864,7 +917,6 @@ export class OnboardingEngine {
     const ftpFinal = state.data.ftpFinal;
     const hrFinal = state.data.hrFinal || {};
     const goal = state.data.goal;
-    const volume = state.data.volume;
     const ts = state.data.trainingSummary;
 
     const lines = [];
