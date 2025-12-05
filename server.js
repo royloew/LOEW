@@ -246,7 +246,7 @@ app.get("/exchange_token", async (req, res) => {
               },
             };
           } else {
-            state.stage = "post_strava_import";
+            state.stage = "post_strava_summary";
             state.data = state.data || {};
             state.data.stravaConnected = true;
           }
