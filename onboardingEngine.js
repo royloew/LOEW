@@ -271,6 +271,10 @@ export class OnboardingEngine {
     if (snap.trainingSummary) d.trainingSummary = snap.trainingSummary;
     if (snap.volume) d.volume = snap.volume;
 
+    if (snap.personal && snap.personal.weightFromStrava != null) {
+    d.personal = d.personal || {};
+    d.personal.weightFromStrava = Math.round(snap.personal.weightFromStrava);
+
     // FTP models – לפי הפורמט שמגיע מ-dbSqlite.js (value + label)
     if (snap.ftpModels) {
       const m = snap.ftpModels;
@@ -649,17 +653,15 @@ export class OnboardingEngine {
     }
 
     data.ftpFinal = chosen;
-    state.stage = "hr_intro";
+state.stage = "hr_intro";
 
-    msgs.push(
-      `מעולה, נגדיר כרגע FTP של ${chosen}W כנקודת פתיחה. תמיד נוכל לעדכן את זה בהמשך.\n\nעכשיו נעבור לדופק — כדי שאוכל לתכנן עבורך אזורי דופק ואימונים מדויקים.`
-    );
 
-    return {
-      newMessages: msgs,
-      waitForUser: false,
-      consumeInput: true,
-    };
+return {
+  newMessages: [],
+  waitForUser: false,
+  consumeInput: true,
+};
+
   }
 
   _explainFtpModels(state) {
