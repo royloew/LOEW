@@ -395,126 +395,21 @@ export class OnboardingEngine {
   }
 
   // 4) נתונים אישיים
-  _stagePersonalDetails(state, userInput) {
-    const msgs = [];
-    const personal = state.data.personal || (state.data.personal = {});
-    const txt = (userInput || "").trim();
+  const nextQ = this._nextPersonalQuestion(state);
+if (nextQ) {
+  personal.pendingField = nextQ.field;
 
-    // אם יש שדה שממתין לתשובה – קודם מטפלים בו
-    if (personal.pendingField) {
-      const field = personal.pendingField;
-      if (!txt) {
-        msgs.push("אני צריך תשובה קצרה כדי שאוכל לעדכן את הנתון.");
-        return {
-          newMessages: msgs,
-          waitForUser: true,
-          consumeInput: false,
-        };
-      }
+  // רק השאלה – בלי הקדמה
+  msgs.push(nextQ.message);
 
-      if (field === "weightFromStrava") {
-        const lower = txt.toLowerCase();
-        // אם המשתמש מאשר במילים – נשאיר את המשקל כפי שמופיע בסטרבה
-        if (
-          lower.includes("אשר") ||
-          lower.includes("כן") ||
-          lower.includes("השאר") ||
-          lower.includes("תשאיר")
-        ) {
-          if (typeof personal.weightFromStrava === "number") {
-            personal.weightKg = Math.round(personal.weightFromStrava);
-          }
-          personal.weightConfirmed = true;
-          delete personal.pendingField;
-        } else {
-          const num = parseFloat(txt.replace(",", "."));
-          if (isNaN(num) || num < 30 || num > 150) {
-            msgs.push(
-              "לא בטוח שהבנתי את המשקל. תכתוב מספר בקילו (למשל 67)."
-            );
-            return {
-              newMessages: msgs,
-              waitForUser: true,
-              consumeInput: true,
-            };
-          }
-          personal.weightKg = Math.round(num);
-          personal.weightConfirmed = true;
-          delete personal.pendingField;
-        }
-      } else {
-        const num = parseFloat(txt.replace(",", "."));
-        if (field === "age") {
-          if (isNaN(num) || num < 10 || num > 90) {
-            msgs.push(
-              "לא בטוח שהבנתי את הגיל. תכתוב מספר סביר (למשל 46)."
-            );
-            return {
-              newMessages: msgs,
-              waitForUser: true,
-              consumeInput: true,
-            };
-          }
-          personal.age = Math.round(num);
-        } else if (field === "weightKg") {
-          if (isNaN(num) || num < 30 || num > 150) {
-            msgs.push(
-              "לא בטוח שהבנתי את המשקל. תכתוב מספר בקילו (למשל 67)."
-            );
-            return {
-              newMessages: msgs,
-              waitForUser: true,
-              consumeInput: true,
-            };
-          }
-          personal.weightKg = Math.round(num);
-        } else if (field === "heightCm") {
-          if (isNaN(num) || num < 120 || num > 220) {
-            msgs.push(
-              'לא בטוח שהבנתי את הגובה. תכתוב מספר בס"מ (למשל 178).'
-            );
-            return {
-              newMessages: msgs,
-              waitForUser: true,
-              consumeInput: true,
-            };
-          }
-          personal.heightCm = Math.round(num);
-        }
+  state.stage = "personal_details_collect";
+  return {
+    newMessages: msgs,
+    waitForUser: true,
+    consumeInput: true,
+  };
+}
 
-        delete personal.pendingField;
-      }
-    }
-
-    // אחרי שעידכנו את השדה, בודקים אם נשאר עוד משהו לשאול
-        const nextQ = this._nextPersonalQuestion(state);
-    if (nextQ) {
-      personal.pendingField = nextQ.field;
-
-      // בועה אחת שמכילה גם את ה-"יש עוד נתון אחד..." וגם את השאלה
-      msgs.push(
-        "יש עוד נתון אחד שחשוב לי להשלים כדי לדייק את הפרופיל שלך.\n" +
-          nextQ.message
-      );
-
-      state.stage = "personal_details_collect";
-      return {
-        newMessages: msgs,
-        waitForUser: true,
-        consumeInput: true,
-      };
-    }
-
-
-
-    // אין יותר נתונים אישיים – עוברים ל-FTP
-    state.stage = "ftp_intro";
-    return {
-      newMessages: msgs,
-      waitForUser: false,
-      consumeInput: true,
-    };
-  }
 
   _nextPersonalQuestion(state) {
     const p = state.data.personal || {};
@@ -564,15 +459,20 @@ export class OnboardingEngine {
       } else {
         lines.push("חישבתי עבורך כמה מודלים שונים של FTP על בסיס הרכיבות שלך:");
         if (ftp.ftp20 != null)
-          lines.push(`• FTP20 (20 דק'): ~${ftp.ftp20}W.`);
-        if (ftp.ftpFrom3min != null)
-          lines.push(
-            `• FTP מ-3 דקות: ~${ftp.ftpFrom3min}W (הסקה מיכולת 3 דק').`
-          );
-        if (ftp.ftpFromCP != null)
-          lines.push(
-            `• FTP לפי מודל CP: ~${ftp.ftpFromCP}W (עקומת כוח 3–20 דק').`
-          );
+        lines.push(
+          `FTP לפי מודל של 20 דקות (הסקה מיכולת 20 דק'): ${ftp.ftp20}W`
+        );
+
+      if (ftp.ftpFrom3min != null)
+        lines.push(
+          `FTP לפי מודל של 3 דקות (הסקה מיכולת 3 דק'): ${ftp.ftpFrom3min}W`
+        );
+
+      if (ftp.ftpFromCP != null)
+        lines.push(
+          `FTP לפי מודל משולב CP (עקומת כוח 3–20 דק'): ${ftp.ftpFromCP}W`
+        );
+
         if (ftp.ftpFromStrava != null)
           lines.push(`• FTP כפי שמופיע אצלך בסטרבה: ~${ftp.ftpFromStrava}W.`);
         if (ftp.ftpRecommended != null)
