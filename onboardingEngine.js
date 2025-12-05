@@ -7,6 +7,7 @@ export class OnboardingEngine {
   }
 
   // נקודת כניסה עיקרית
+    // נקודת כניסה עיקרית
   async handleMessage(userId, textRaw) {
     let text = (textRaw || "").trim();
     let state = await this._loadState(userId);
@@ -16,33 +17,79 @@ export class OnboardingEngine {
       return await this._handleAfterOnboarding(userId, text);
     }
 
-    // משתמש חדש / state שבור -> אתחול
+    // משתמש חדש / state שבור -> אתחול חכם:
+    // 1) אם יש כבר חיבור סטרבה ונתוני נפח → נתחיל ישר מהסיכום אחרי סטרבה
+    // 2) אם יש חיבור סטרבה אבל אין עדיין נתונים → stage = await_strava_connect
+    // 3) אחרת → stage = intro רגיל
     if (!state || !state.stage || !state.data) {
-      state = {
-        stage: "intro",
-        data: {
-          personal: {},
-          ftp: null,
-          ftpFinal: null,
-          hr: null,
-          hrFinal: null,
-          goal: null,
-          volume: null,
-          trainingSummary: null,
-          stravaConnected: false,
-        },
+      const initialData = {
+        personal: {},
+        ftp: null,
+        ftpFinal: null,
+        hr: null,
+        hrFinal: null,
+        goal: null,
+        volume: null,
+        trainingSummary: null,
+        stravaConnected: false,
       };
+
+      let hasStravaTokens = false;
+      let snap = null;
+
+      if (this.db) {
+        try {
+          if (typeof this.db.getStravaTokens === "function") {
+            const tokens = await this.db.getStravaTokens(userId);
+            hasStravaTokens = !!tokens;
+          }
+          if (
+            hasStravaTokens &&
+            typeof this.db.getStravaOnboardingSnapshot === "function"
+          ) {
+            snap = await this.db.getStravaOnboardingSnapshot(userId);
+          }
+        } catch (err) {
+          console.error(
+            "handleMessage: error while probing Strava state:",
+            err
+          );
+        }
+      }
+
+      if (
+        snap &&
+        (snap.trainingSummary || snap.volume || snap.ftpModels)
+      ) {
+        // יש כבר נתוני סטרבה מלאים → ישר לסיכום נפח
+        state = {
+          stage: "post_strava_import",
+          data: { ...initialData, stravaConnected: true },
+        };
+        this._applyStravaSnapshotToState(state, snap);
+      } else if (hasStravaTokens) {
+        // מחובר לסטרבה אבל בלי snapshot מלא → נחכה לייבוא/חישוב
+        state = {
+          stage: "await_strava_connect",
+          data: { ...initialData, stravaConnected: true },
+        };
+      } else {
+        // אין סטרבה ואין state → התחלה רגילה
+        state = {
+          stage: "intro",
+          data: initialData,
+        };
+      }
     }
 
     let pendingInput = text || null;
     const messages = [];
 
-    // לולאה פנימית – רצה על ה-Flow עד שצריך קלט מהמשתמש
     while (true) {
       const { newMessages, waitForUser, consumeInput } =
         await this._runStage(userId, state, pendingInput);
 
-      if (newMessages && newMessages.length > 0) {
+      if (newMessages && newMessages.length) {
         messages.push(...newMessages);
       }
 
@@ -50,19 +97,17 @@ export class OnboardingEngine {
         pendingInput = null;
       }
 
-      if (waitForUser) {
-        break;
-      }
+      await this._saveState(userId, state);
+
+      if (waitForUser) break;
     }
 
-    await this._saveState(userId, state);
-
-    const reply = messages.join("\n\n");
     return {
-      reply: reply || "משהו השתבש באונבורדינג, נסה שוב.",
+      reply: messages.join("\n\n"),
       onboarding: true,
     };
   }
+
 
   async _loadState(userId) {
     try {
