@@ -57,7 +57,7 @@ export class OnboardingEngine {
     if (snap && (snap.trainingSummary || snap.volume || snap.ftpModels)) {
       // כבר יש לי נתוני סטרבה → ישר לסיכום נפח
       state = {
-        stage: "post_strava_import",
+        stage: "post_strava_summary",
         data: { ...baseData, stravaConnected: true },
       };
       this._applyStravaSnapshotToState(state, snap);
