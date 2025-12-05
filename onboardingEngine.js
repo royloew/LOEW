@@ -102,36 +102,29 @@ export class OnboardingEngine {
   }
 
   // קריאה ל-DB – נטענת בצורה גמישה כדי להתמודד עם פורמטים שונים
-  async _loadState(userId) {
+    async _loadState(userId) {
     try {
-      if (!this.db || typeof this.db.getOnboardingState !== "function") {
-        return null;
-      }
-
       const row = await this.db.getOnboardingState(userId);
       if (!row) return null;
 
-      // מקרה קלאסי: row.json_state הוא מחרוזת JSON
-      if (typeof row.json_state === "string" && row.json_state.trim() !== "") {
-        try {
-          return JSON.parse(row.json_state);
-        } catch (e) {
-          console.error("loadState: failed to parse json_state for", userId, e);
-          return null;
+      // אם ה-DB מחזיר json_state (כמו אצלנו ב-sqlite)
+      if (row.json_state) {
+        if (typeof row.json_state === "string") {
+          try {
+            return JSON.parse(row.json_state);
+          } catch (e) {
+            console.error("loadState JSON parse error:", e);
+            return null;
+          }
+        }
+        // אם מסיבה כלשהי json_state כבר אובייקט
+        if (typeof row.json_state === "object") {
+          return row.json_state;
         }
       }
 
-      // אם json_state כבר אובייקט (למשל דסיריאליזציה פנימית של dbSqlite)
-      if (
-        row.json_state &&
-        typeof row.json_state === "object" &&
-        (row.json_state.stage || row.json_state.data)
-      ) {
-        return row.json_state;
-      }
-
-      // אם הפונקציה מחזירה ישר state (stage + data)
-      if (row.stage && row.data) {
+      // fallback: אם getOnboardingState כבר מחזיר אובייקט מלא (stage + data)
+      if (row.stage || row.data) {
         return row;
       }
 
@@ -144,15 +137,13 @@ export class OnboardingEngine {
 
   async _saveState(userId, state) {
     try {
-      if (!this.db || typeof this.db.saveOnboardingState !== "function") {
-        return;
-      }
-      // שומרים תמיד כמחרוזת JSON, כפי שסיכמנו במבנה ה-DB
-      await this.db.saveOnboardingState(userId, JSON.stringify(state));
+      // חשוב: שולחים אובייקט, לא JSON.stringify!
+      await this.db.saveOnboardingState(userId, state);
     } catch (err) {
       console.error("saveState error:", err);
     }
   }
+
 
   // אחרי שסיימנו אונבורדינג – כאן בעתיד נתחבר למאמן (LOEW)
   async _handleAfterOnboarding(userId, text) {
@@ -498,22 +489,24 @@ export class OnboardingEngine {
     }
 
     // אחרי שעידכנו את השדה, בודקים אם נשאר עוד משהו לשאול
-    const nextQ = this._nextPersonalQuestion(state);
-if (nextQ) {
-  personal.pendingField = nextQ.field;
+        const nextQ = this._nextPersonalQuestion(state);
+    if (nextQ) {
+      personal.pendingField = nextQ.field;
 
-  msgs.push(
-    "יש עוד נתון אחד שחשוב לי להשלים כדי לדייק את הפרופיל שלך.\n\n" +
-    nextQ.message
-  );
+      // בועה אחת שמכילה גם את ה-"יש עוד נתון אחד..." וגם את השאלה
+      msgs.push(
+        "יש עוד נתון אחד שחשוב לי להשלים כדי לדייק את הפרופיל שלך.\n" +
+          nextQ.message
+      );
 
-  state.stage = "personal_details_collect";
-  return {
-    newMessages: msgs,
-    waitForUser: true,
-    consumeInput: true,
-  };
-}
+      state.stage = "personal_details_collect";
+      return {
+        newMessages: msgs,
+        waitForUser: true,
+        consumeInput: true,
+      };
+    }
+
 
 
     // אין יותר נתונים אישיים – עוברים ל-FTP
