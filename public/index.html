@@ -186,7 +186,16 @@
             body: JSON.stringify({ userId, message: "היי" }),
           })
             .then((r) => r.json())
-            .then((d) => d.reply && addMessage(d.reply, "assistant"));
+            .then((d) => {
+          if (d.reply) {
+            const parts = String(d.reply).split("\n\n");
+            for (const part of parts) {
+              const trimmed = part.trim();
+              if (trimmed) addMessage(trimmed, "assistant");
+            }
+          }
+        });
+
         }
       };
     </script>
