@@ -228,10 +228,9 @@ export class OnboardingEngine {
       state.stage = "ftp_intro";
       await this._saveState(userId, state);
 
-      return (
-        "מעולה, יש לי את הנתונים הבסיסיים.\n\n" +
-        "עכשיו נעבור ל-FTP — הסמן המרכזי לעומס ולרמת הקושי באימונים."
-      );
+      // *** שינוי חשוב: במקום לעצור ולהחזיר הודעת מעבר,
+      // אנחנו ישר ממשיכים לשלב FTP ומחזירים את הטקסט של ה-FTP ***
+      return await this._stageFtpIntro(userId, state);
     }
 
     // fallback – אם משום מה הגענו לפה בלי צעד ברור
@@ -296,7 +295,7 @@ export class OnboardingEngine {
     );
   }
 
-    async _stageFtpChoice(userId, text, state) {
+  async _stageFtpChoice(userId, text, state) {
     const t = (text || "").trim();
     const cleaned = t.replace(/[^\d.,]/g, "").replace(",", ".");
     const num = parseFloat(cleaned);
@@ -334,10 +333,10 @@ export class OnboardingEngine {
       // בועה 2 — הצגת הערכים מסטרבה בפורמט מסודר
       const lines = [];
       if (hrMaxCandidate != null) {
-        lines.push(`• דופק מקסימלי משוער: ~${hrMaxCandidate} bpm`);
+        lines.push(`• דופק מקסימלי משוער: ${hrMaxCandidate} bpm`);
       }
       if (hrThresholdCandidate != null) {
-        lines.push(`• דופק סף משוער: ~${hrThresholdCandidate} bpm`);
+        lines.push(`• דופק סף משוער: ${hrThresholdCandidate} bpm`);
       }
 
       let secondBubble = "לפי הנתונים מסטרבה אני רואה:\n" + lines.join("\n");
@@ -361,7 +360,6 @@ export class OnboardingEngine {
     // כל בועה מופרדת ב-\n\n כדי שהפרונט יעשה 2–3 בועות נפרדות
     return bubbles.join("\n\n");
   }
-
 
   _extractHrCandidates(state) {
     const hr = (state.data && state.data.hr) || {};
