@@ -3,10 +3,25 @@ import sqlite3 from "sqlite3";
 sqlite3.verbose();
 
 // ברירת מחדל: /tmp/loew.db (מתאים ל-Render)
-const DB_FILE = process.env.LOEW_DB_FILE || "/tmp/loew.db";
-const DEFAULT_METRICS_WINDOW_DAYS = 60;
+// בחירת מיקום DB:
+// 1. אם יש LOEW_DB_FILE – משתמשים בו.
+// 2. אם רצים על Render עם דיסק קבוע (למשל mount ב-/var/data) – נשתמש שם.
+// 3. אחרת (לוקאלי) – loew.db בתיקייה הנוכחית.
+let DB_FILE;
+
+if (process.env.LOEW_DB_FILE) {
+  DB_FILE = process.env.LOEW_DB_FILE;
+} else if (process.env.RENDER === "true") {
+  // ברנדר: מומלץ לחבר Disk ולתת לו mount path כמו /var/data
+  DB_FILE = "/var/data/loew.db";
+} else {
+  // לוקאלי: קובץ קבוע בתיקייה
+  DB_FILE = "./loew.db";
+}
 
 console.log("[DB] Trying to open SQLite file at:", DB_FILE);
+
+const DEFAULT_METRICS_WINDOW_DAYS = 60;
 
 const db = new sqlite3.Database(
   DB_FILE,
