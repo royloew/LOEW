@@ -12,7 +12,8 @@ import { OnboardingEngine } from "./onboardingEngine.js";
 import fs from "fs";
 
 // קונפיגורציית DB דרך Environment Variables
-const DB_PATH = process.env.DB_PATH || "/tmp/loew.db";
+// חשוב: ב-Render להגדיר LOEW_DB_FILE=/opt/render/project/src/loew.db
+const DB_FILE = process.env.LOEW_DB_FILE || "/tmp/loew.db";
 const DB_DOWNLOAD_SECRET = process.env.DB_DOWNLOAD_SECRET || "CHANGE_ME";
 
 const app = express();
@@ -26,11 +27,11 @@ app.get("/admin/download-db", (req, res) => {
     return res.status(403).send("Forbidden");
   }
 
-  if (!fs.existsSync(DB_PATH)) {
-    return res.status(404).send("DB file not found at " + DB_PATH);
+  if (!fs.existsSync(DB_FILE)) {
+    return res.status(404).send("DB file not found at " + DB_FILE);
   }
 
-  res.download(DB_PATH, "loew.db", (err) => {
+  res.download(DB_FILE, "loew.db", (err) => {
     if (err) {
       console.error("Error sending DB:", err);
       if (!res.headersSent) {
@@ -113,7 +114,6 @@ app.post("/api/loew/chat", async (req, res) => {
     await dbImpl.ensureUser(userId);
 
     const result = await onboarding.handleMessage(userId, message);
-
 
     return res.json({
       ok: true,
@@ -205,124 +205,109 @@ app.get("/exchange_token", async (req, res) => {
     });
 
     // אינג'סט + חישוב מטריקות בסיסיות מיד אחרי החיבור
-       // אינג'סט + חישוב מטריקות בסיסיות מיד אחרי החיבור
-    // אינג'סט + חישוב מטריקות בסיסיות מיד אחרי החיבור
-try {
-  console.log("[STRAVA] Starting ingestAndComputeFromStrava for", userId);
-  const metrics = await dbImpl.ingestAndComputeFromStrava(userId);
-  console.log("[STRAVA] Ingest done for", userId, "metrics:", metrics);
-
-  // 🔥 עדכון מצב אונבורדינג ל-post_strava_summary עם הנתונים מה-DB
-  if (
-    metrics &&
-    typeof dbImpl.getOnboardingState === "function" &&
-    typeof dbImpl.saveOnboardingState === "function"
-  ) {
     try {
-      // שולפים את ה-row מהטבלה ומפרסרים JSON
-      const row = await dbImpl.getOnboardingState(userId);
-      let state = null;
-      if (row && row.json_state) {
+      console.log("[STRAVA] Starting ingestAndComputeFromStrava for", userId);
+      const metrics = await dbImpl.ingestAndComputeFromStrava(userId);
+      console.log("[STRAVA] Ingest done for", userId, "metrics:", metrics);
+
+      // 🔥 עדכון מצב אונבורדינג ל-post_strava_summary עם הנתונים מה-DB
+      if (
+        metrics &&
+        typeof dbImpl.getOnboardingState === "function" &&
+        typeof dbImpl.saveOnboardingState === "function"
+      ) {
         try {
-          state = JSON.parse(row.json_state);
-        } catch (parseErr) {
-          console.error(
-            "[STRAVA] Failed to parse onboarding state JSON for",
+          const row = await dbImpl.getOnboardingState(userId);
+          let state = null;
+
+          if (row && row.stage) {
+            state = {
+              stage: row.stage,
+              data: row.data || {},
+            };
+          }
+
+          console.log(
+            "[ONBOARDING] handleMessage for",
             userId,
-            parseErr
+            "loaded stage:",
+            state ? state.stage : null
           );
-          state = null;
+
+          if (!state || !state.data) {
+            state = {
+              stage: "post_strava_summary",
+              data: {
+                personal: {},
+                ftp: null,
+                ftpFinal: null,
+                hr: null,
+                hrFinal: null,
+                goal: null,
+                volume: null,
+                trainingSummary: null,
+                stravaConnected: true,
+              },
+            };
+          } else {
+            state.stage = "post_strava_summary";
+            state.data = state.data || {};
+            state.data.stravaConnected = true;
+          }
+
+          if (metrics.trainingSummary) {
+            state.data.trainingSummary = metrics.trainingSummary;
+          }
+          if (metrics.volume) {
+            state.data.volume = metrics.volume;
+          }
+
+          if (metrics.ftpModels) {
+            const fm = metrics.ftpModels;
+            state.data.ftp = state.data.ftp || {};
+            state.data.ftp.ftp20 =
+              fm.ftp20 && typeof fm.ftp20.value === "number"
+                ? fm.ftp20.value
+                : null;
+            state.data.ftp.ftpFrom3min =
+              fm.ftpFrom3min && typeof fm.ftpFrom3min.value === "number"
+                ? fm.ftpFrom3min.value
+                : null;
+            state.data.ftp.ftpFromCP =
+              fm.ftpFromCP && typeof fm.ftpFromCP.value === "number"
+                ? fm.ftpFromCP.value
+                : null;
+            state.data.ftp.ftpRecommended =
+              fm.ftpRecommended && typeof fm.ftpRecommended.value === "number"
+                ? fm.ftpRecommended.value
+                : null;
+          }
+
+          if (metrics.hr) {
+            state.data.hr = state.data.hr || {};
+            if (metrics.hr.hrMax != null) {
+              state.data.hr.hrMaxTop3 = metrics.hr.hrMax;
+            }
+            if (metrics.hr.hrThreshold != null) {
+              state.data.hr.hrThresholdRecommended = metrics.hr.hrThreshold;
+            }
+          }
+
+          await dbImpl.saveOnboardingState(userId, state);
+          console.log(
+            "[STRAVA] Onboarding state updated to post_strava_summary for",
+            userId
+          );
+        } catch (e) {
+          console.error(
+            "[STRAVA] Failed to update onboarding state after ingest:",
+            e
+          );
         }
       }
-
-      console.log(
-        "[ONBOARDING] handleMessage for",
-        userId,
-        "loaded state:",
-        state ? state.stage : null,
-        "hasTrainingSummary:",
-        state && state.data && state.data.trainingSummary ? true : false
-      );
-
-      // אם אין state תקין – בונים בסיס חדש
-      if (!state || !state.data) {
-        state = {
-          stage: "post_strava_summary",
-          data: {
-            personal: {},
-            ftp: null,
-            ftpFinal: null,
-            hr: null,
-            hrFinal: null,
-            goal: null,
-            volume: null,
-            trainingSummary: null,
-            stravaConnected: true,
-          },
-        };
-      } else {
-        state.stage = "post_strava_summary";
-        state.data = state.data || {};
-        state.data.stravaConnected = true;
-      }
-
-      // נפח + סיכום אימונים
-      if (metrics.trainingSummary) {
-        state.data.trainingSummary = metrics.trainingSummary;
-      }
-      if (metrics.volume) {
-        state.data.volume = metrics.volume;
-      }
-
-      // מודלי FTP
-      if (metrics.ftpModels) {
-        const fm = metrics.ftpModels;
-        state.data.ftp = state.data.ftp || {};
-        state.data.ftp.ftp20 =
-          fm.ftp20 && typeof fm.ftp20.value === "number" ? fm.ftp20.value : null;
-        state.data.ftp.ftpFrom3min =
-          fm.ftpFrom3min && typeof fm.ftpFrom3min.value === "number"
-            ? fm.ftpFrom3min.value
-            : null;
-        state.data.ftp.ftpFromCP =
-          fm.ftpFromCP && typeof fm.ftpFromCP.value === "number"
-            ? fm.ftpFromCP.value
-            : null;
-        state.data.ftp.ftpRecommended =
-          fm.ftpRecommended && typeof fm.ftpRecommended.value === "number"
-            ? fm.ftpRecommended.value
-            : null;
-      }
-
-      // HR (כשיהיה מחושב)
-      if (metrics.hr) {
-        state.data.hr = state.data.hr || {};
-        if (metrics.hr.hrMax != null) {
-          state.data.hr.hrMaxTop3 = metrics.hr.hrMax;
-        }
-        if (metrics.hr.hrThreshold != null) {
-          state.data.hr.hrThresholdRecommended = metrics.hr.hrThreshold;
-        }
-      }
-
-      // שומרים כ-JSON string, כמו שה-OnboardingEngine מצפה
-      await dbImpl.saveOnboardingState(userId, JSON.stringify(state));
-      console.log(
-        "[STRAVA] Onboarding state updated to post_strava_summary for",
-        userId
-      );
-    } catch (e) {
-      console.error(
-        "[STRAVA] Failed to update onboarding state after ingest:",
-        e
-      );
+    } catch (err) {
+      console.error("[STRAVA] ingestAndComputeFromStrava failed:", err);
     }
-  }
-} catch (err) {
-  console.error("[STRAVA] ingestAndComputeFromStrava failed:", err);
-}
-
-
 
     const redirectUrl = `/index.html?userId=${encodeURIComponent(
       userId
