@@ -1,11 +1,10 @@
-// dbSqlite.js
-
 import sqlite3 from "sqlite3";
 
 sqlite3.verbose();
 
 // ברירת מחדל: /tmp/loew.db (מתאים ל-Render)
 const DB_FILE = process.env.LOEW_DB_FILE || "/tmp/loew.db";
+const DEFAULT_METRICS_WINDOW_DAYS = 60;
 
 console.log("[DB] Trying to open SQLite file at:", DB_FILE);
 
@@ -64,16 +63,17 @@ async function init() {
   // טבלת פרמטרים לאימון
   await run(`
     CREATE TABLE IF NOT EXISTS training_params (
-      user_id          TEXT PRIMARY KEY,
-      ftp              INTEGER,
-      ftp20            INTEGER,
-      ftp_from_3min    INTEGER,
-      ftp_from_cp      INTEGER,
-      ftp_recommended  INTEGER,
-      hr_max           INTEGER,
-      hr_threshold     INTEGER,
-      created_at       INTEGER,
-      updated_at       INTEGER
+      user_id              TEXT PRIMARY KEY,
+      ftp                  INTEGER,
+      ftp20                INTEGER,
+      ftp_from_3min        INTEGER,
+      ftp_from_cp          INTEGER,
+      ftp_recommended      INTEGER,
+      hr_max               INTEGER,
+      hr_threshold         INTEGER,
+      metrics_window_days  INTEGER,
+      created_at           INTEGER,
+      updated_at           INTEGER
     );
   `);
 
@@ -99,6 +99,9 @@ async function init() {
   } catch (_) {}
   try {
     await run(`ALTER TABLE training_params ADD COLUMN ftp_recommended INTEGER;`);
+  } catch (_) {}
+  try {
+    await run(`ALTER TABLE training_params ADD COLUMN metrics_window_days INTEGER;`);
   } catch (_) {}
 
   await run(`
@@ -271,12 +274,12 @@ export async function createDbImpl() {
     }
   }
 
-  // ===== TRAINING PARAMS =====
+  // ===== TRAINING PARAMS & METRICS WINDOW =====
 
   async function getTrainingParams(userId) {
     const row = await get(
       `SELECT ftp, ftp20, ftp_from_3min, ftp_from_cp, ftp_recommended,
-              hr_max, hr_threshold
+              hr_max, hr_threshold, metrics_window_days
        FROM training_params
        WHERE user_id = ?`,
       [userId]
@@ -290,6 +293,7 @@ export async function createDbImpl() {
       ftpRecommended: row.ftp_recommended ?? null,
       hrMax: row.hr_max ?? null,
       hrThreshold: row.hr_threshold ?? null,
+      metricsWindowDays: row.metrics_window_days ?? null,
     };
   }
 
@@ -300,24 +304,40 @@ export async function createDbImpl() {
       [userId]
     );
 
-    const values = [
-      params.ftp ?? null,
-      params.ftp20 ?? null,
-      params.ftpFrom3min ?? null,
-      params.ftpFromCP ?? null,
-      params.ftpRecommended ?? null,
-      params.hrMax ?? null,
-      params.hrThreshold ?? null,
-      now,
-      userId,
-    ];
+    const metricsWindowDays =
+      params.metricsWindowDays != null
+        ? Number(params.metricsWindowDays)
+        : null;
 
     if (!existing) {
       await run(
         `INSERT INTO training_params
-         (ftp, ftp20, ftp_from_3min, ftp_from_cp, ftp_recommended,
-          hr_max, hr_threshold, created_at, updated_at, user_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (user_id,
+          ftp, ftp20, ftp_from_3min, ftp_from_cp, ftp_recommended,
+          hr_max, hr_threshold, metrics_window_days,
+          created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          userId,
+          params.ftp ?? null,
+          params.ftp20 ?? null,
+          params.ftpFrom3min ?? null,
+          params.ftpFromCP ?? null,
+          params.ftpRecommended ?? null,
+          params.hrMax ?? null,
+          params.hrThreshold ?? null,
+          metricsWindowDays,
+          now,
+          now,
+        ]
+      );
+    } else {
+      await run(
+        `UPDATE training_params
+         SET ftp = ?, ftp20 = ?, ftp_from_3min = ?, ftp_from_cp = ?,
+             ftp_recommended = ?, hr_max = ?, hr_threshold = ?,
+             metrics_window_days = ?, updated_at = ?
+         WHERE user_id = ?`,
         [
           params.ftp ?? null,
           params.ftp20 ?? null,
@@ -326,20 +346,38 @@ export async function createDbImpl() {
           params.ftpRecommended ?? null,
           params.hrMax ?? null,
           params.hrThreshold ?? null,
-          now,
+          metricsWindowDays,
           now,
           userId,
         ]
       );
-    } else {
-      await run(
-        `UPDATE training_params
-         SET ftp = ?, ftp20 = ?, ftp_from_3min = ?, ftp_from_cp = ?,
-             ftp_recommended = ?, hr_max = ?, hr_threshold = ?, updated_at = ?
-         WHERE user_id = ?`,
-        values
-      );
     }
+  }
+
+  async function getMetricsWindowDays(userId) {
+    const params = await getTrainingParams(userId);
+    if (!params || params.metricsWindowDays == null) {
+      return DEFAULT_METRICS_WINDOW_DAYS;
+    }
+    const n = Number(params.metricsWindowDays);
+    if (!Number.isFinite(n) || n <= 0) {
+      return DEFAULT_METRICS_WINDOW_DAYS;
+    }
+    return n;
+  }
+
+  async function setMetricsWindowDays(userId, days) {
+    const n = Number(days);
+    if (!Number.isFinite(n) || n <= 0) {
+      throw new Error("metrics_window_days must be a positive number");
+    }
+    const existing = (await getTrainingParams(userId)) || {};
+    const newParams = {
+      ...existing,
+      metricsWindowDays: n,
+    };
+    await saveTrainingParams(userId, newParams);
+    return n;
   }
 
   // ===== STRAVA TOKENS =====
@@ -396,7 +434,7 @@ export async function createDbImpl() {
   // ===== חישוב נפח ו-SUMMARY מתוך ה-DB =====
 
   async function computeVolumeAndSummaryFromDb(userId) {
-    const DAYS_BACK = 90;
+    const DAYS_BACK = await getMetricsWindowDays(userId);
     const nowSec = Math.floor(Date.now() / 1000);
     const sinceSec = nowSec - DAYS_BACK * 24 * 3600;
 
@@ -532,7 +570,7 @@ export async function createDbImpl() {
   async function computeFtpAndHrModelsFromDb(userId) {
     const row = await get(
       `SELECT ftp, ftp20, ftp_from_3min, ftp_from_cp, ftp_recommended,
-              hr_max, hr_threshold
+              hr_max, hr_threshold, metrics_window_days
        FROM training_params
        WHERE user_id = ?`,
       [userId]
@@ -584,7 +622,12 @@ export async function createDbImpl() {
         row && row.hr_threshold != null ? row.hr_threshold : null,
     };
 
-    return { ftpModels, hr };
+    const metricsWindowDays =
+      (row && row.metrics_window_days != null
+        ? row.metrics_window_days
+        : null) || DEFAULT_METRICS_WINDOW_DAYS;
+
+    return { ftpModels, hr, metricsWindowDays };
   }
 
   // ===== STRAVA HELPERS: FETCH + STREAMS + POWER CURVES + FTP =====
@@ -733,47 +776,114 @@ export async function createDbImpl() {
     console.log("[STRAVA] Power curves updated for", userId);
   }
 
-  async function recomputeFtpFromPowerCurves(userId) {
-    const rows = await all(
+  // FTP לפי חתך ימים דינמי מתוך streams + activities
+  async function computeFtpModelsFromStreamsWithWindow(userId) {
+    const DAYS_BACK = await getMetricsWindowDays(userId);
+    const nowSec = Math.floor(Date.now() / 1000);
+    const sinceSec = nowSec - DAYS_BACK * 24 * 3600;
+
+    const activities = await all(
       `
-      SELECT window_sec, best_power
-      FROM power_curves
+      SELECT id, start_date, has_power
+      FROM strava_activities
       WHERE user_id = ?
+        AND has_power = 1
+        AND start_date >= ?
+      ORDER BY start_date ASC
       `,
-      [userId]
+      [userId, sinceSec]
     );
 
-    if (!rows.length) {
-      console.log("[STRAVA] No power_curves rows for", userId);
+    if (!activities.length) {
+      console.log("[STRAVA][FTP] No power activities in window for", userId);
       return;
     }
 
-    let best3 = null;
-    let best20 = null;
+    const ids = activities.map((a) => a.id);
+    const placeholders = ids.map(() => "?").join(",");
+    const streamsRows = await all(
+      `
+      SELECT activity_id, data
+      FROM strava_streams
+      WHERE user_id = ?
+        AND stream_type = 'watts'
+        AND activity_id IN (${placeholders})
+      `,
+      [userId, ...ids]
+    );
 
-    for (const r of rows) {
-      if (r.window_sec === 180) best3 = Number(r.best_power) || null;
-      if (r.window_sec === 1200) best20 = Number(r.best_power) || null;
+    const wattsMap = new Map();
+    for (const r of streamsRows) {
+      const arr = parseJsonArray(r.data);
+      if (arr && arr.length) {
+        wattsMap.set(r.activity_id, arr.map((v) => Number(v) || 0));
+      }
     }
 
-    const candidates = [];
+    function bestWindowMeanPower(series, windowSec) {
+      const n = series.length;
+      if (n < windowSec || windowSec <= 0) return null;
+      let sum = 0;
+      for (let i = 0; i < windowSec; i++) {
+        sum += series[i];
+      }
+      let bestAvg = sum / windowSec;
+      for (let i = windowSec; i < n; i++) {
+        sum += series[i] - series[i - windowSec];
+        const avg = sum / windowSec;
+        if (avg > bestAvg) bestAvg = avg;
+      }
+      return bestAvg;
+    }
+
+    const records20 = [];
+    const records3 = [];
+
+    for (const a of activities) {
+      const arr = wattsMap.get(a.id);
+      if (!arr || !arr.length) continue;
+      const b20 = bestWindowMeanPower(arr, 1200);
+      const b3 = bestWindowMeanPower(arr, 180);
+      if (b20 != null) records20.push(b20);
+      if (b3 != null) records3.push(b3);
+    }
+
     let ftp20 = null;
-    if (best20 && best20 > 0) {
-      ftp20 = Math.round(best20 * 0.95);
+    let ftpFrom3min = null;
+    let ftpFromCP = null;
+
+    const candidates = [];
+
+    if (records20.length) {
+      const sorted = records20.slice().sort((a, b) => b - a);
+      const top3 = sorted.slice(0, 3);
+      const mean20 =
+        top3.reduce((s, v) => s + v, 0) / top3.length;
+      ftp20 = Math.round(mean20 * 0.95);
       candidates.push(ftp20);
     }
 
-    let ftpFrom3min = null;
-    if (best3 && best3 > 0) {
-      ftpFrom3min = Math.round(best3 * 0.8);
+    if (records3.length) {
+      const sorted = records3.slice().sort((a, b) => b - a);
+      const top3 = sorted.slice(0, 3);
+      const mean3 =
+        top3.reduce((s, v) => s + v, 0) / top3.length;
+      ftpFrom3min = Math.round(mean3 * 0.8);
       candidates.push(ftpFrom3min);
     }
 
-    let ftpFromCP = null;
-    if (best3 && best20 && best3 > 0 && best20 > 0) {
+    if (records20.length && records3.length) {
+      const sorted20 = records20.slice().sort((a, b) => b - a);
+      const sorted3 = records3.slice().sort((a, b) => b - a);
+      const top3_20 = sorted20.slice(0, 3);
+      const top3_3 = sorted3.slice(0, 3);
+      const mean20 =
+        top3_20.reduce((s, v) => s + v, 0) / top3_20.length;
+      const mean3 =
+        top3_3.reduce((s, v) => s + v, 0) / top3_3.length;
       const t3 = 180;
       const t20 = 1200;
-      const cp = (best20 * t20 - best3 * t3) / (t20 - t3);
+      const cp = (mean20 * t20 - mean3 * t3) / (t20 - t3);
       if (cp > 0) {
         ftpFromCP = Math.round(cp);
         candidates.push(ftpFromCP);
@@ -789,8 +899,8 @@ export async function createDbImpl() {
 
     let ftpRecommended = null;
     if (candidates.length) {
-      const sorted = candidates.slice().sort((a, b) => a - b);
-      ftpRecommended = sorted[Math.floor(sorted.length / 2)];
+      const sortedCand = candidates.slice().sort((a, b) => a - b);
+      ftpRecommended = sortedCand[Math.floor(sortedCand.length / 2)];
     }
 
     const newParams = {
@@ -805,31 +915,40 @@ export async function createDbImpl() {
         (existing ? existing.ftpRecommended ?? null : null),
       hrMax: existing ? existing.hrMax ?? null : null,
       hrThreshold: existing ? existing.hrThreshold ?? null : null,
+      metricsWindowDays: await getMetricsWindowDays(userId),
     };
 
     await saveTrainingParams(userId, newParams);
     console.log(
-      "[STRAVA] Training params (FTP) updated from power curves for",
-      userId
+      "[STRAVA][FTP] Training params (FTP) updated from streams for",
+      userId,
+      "windowDays=",
+      await getMetricsWindowDays(userId)
     );
   }
 
-  // ===== HR (עם ניקוי ספייקים) =====
+  // ===== HR (עם ניקוי ספייקים + חתך ימים) =====
 
   async function recomputeHrFromActivities(userId) {
+    const DAYS_BACK = await getMetricsWindowDays(userId);
+    const nowSec = Math.floor(Date.now() / 1000);
+    const sinceSec = nowSec - DAYS_BACK * 24 * 3600;
+
     const rows = await all(
       `
       SELECT max_hr
       FROM strava_activities
-      WHERE user_id = ? AND max_hr IS NOT NULL
+      WHERE user_id = ?
+        AND max_hr IS NOT NULL
+        AND start_date >= ?
       ORDER BY max_hr DESC
       LIMIT 50
       `,
-      [userId]
+      [userId, sinceSec]
     );
 
     if (!rows.length) {
-      console.log("[STRAVA] No HR data in strava_activities for", userId);
+      console.log("[STRAVA] No HR data in window for", userId);
       return;
     }
 
@@ -868,6 +987,7 @@ export async function createDbImpl() {
       ftpRecommended: existing ? existing.ftpRecommended ?? null : null,
       hrMax: hrMaxCandidate,
       hrThreshold: hrThresholdCandidate,
+      metricsWindowDays: await getMetricsWindowDays(userId),
     };
 
     await saveTrainingParams(userId, newParams);
@@ -878,7 +998,9 @@ export async function createDbImpl() {
       "hrMax=",
       newParams.hrMax,
       "hrThreshold=",
-      newParams.hrThreshold
+      newParams.hrThreshold,
+      "windowDays=",
+      await getMetricsWindowDays(userId)
     );
   }
 
@@ -916,7 +1038,7 @@ export async function createDbImpl() {
     const perPage = 100;
     const maxPages = 3;
     const nowSec = Math.floor(Date.now() / 1000);
-    const sinceSec = nowSec - 180 * 24 * 3600; // חצי שנה אחורה
+    const sinceSec = nowSec - 180 * 24 * 3600; // עדיין חצי שנה אחורה לאינג'סט; החתך יקרה בחישובים
 
     const activityIdsForPower = [];
 
@@ -1032,7 +1154,7 @@ export async function createDbImpl() {
         activityIdsForPower
       );
       await recomputePowerCurvesFromStreams(userId);
-      await recomputeFtpFromPowerCurves(userId);
+      await computeFtpModelsFromStreamsWithWindow(userId);
       await recomputeHrFromActivities(userId);
     } else {
       console.log(
@@ -1062,16 +1184,18 @@ export async function createDbImpl() {
       );
     }
 
-    // תמיד בסוף מחשבים summary + ftp/hr מה-DB (כמו קודם)
+    // תמיד בסוף מחשבים summary + ftp/hr מה-DB (כמו קודם, אבל עם windowDays)
     const { trainingSummary, volume } =
       await computeVolumeAndSummaryFromDb(userId);
-    const { ftpModels, hr } = await computeFtpAndHrModelsFromDb(userId);
+    const { ftpModels, hr, metricsWindowDays } =
+      await computeFtpAndHrModelsFromDb(userId);
 
     return {
       trainingSummary,
       volume,
       ftpModels,
       hr,
+      metricsWindowDays,
     };
   }
 
@@ -1096,7 +1220,8 @@ export async function createDbImpl() {
   async function getStravaOnboardingSnapshot(userId) {
     const { trainingSummary, volume } =
       await computeVolumeAndSummaryFromDb(userId);
-    const { ftpModels, hr } = await computeFtpAndHrModelsFromDb(userId);
+    const { ftpModels, hr, metricsWindowDays } =
+      await computeFtpAndHrModelsFromDb(userId);
 
     const athleteRow = await get(
       `SELECT weight_kg FROM strava_athlete WHERE user_id = ?`,
@@ -1114,6 +1239,7 @@ export async function createDbImpl() {
       ftpModels,
       hr,
       personal,
+      metricsWindowDays,
     };
   }
 
@@ -1123,6 +1249,8 @@ export async function createDbImpl() {
     saveOnboardingState,
     getTrainingParams,
     saveTrainingParams,
+    getMetricsWindowDays,
+    setMetricsWindowDays,
     getStravaTokens,
     saveStravaTokens,
     clearStravaData,

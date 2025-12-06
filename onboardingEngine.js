@@ -134,9 +134,15 @@ export class OnboardingEngine {
           ftpModels: null,
           hr: null,
           personal: {},
+          metricsWindowDays: 60,
         },
       };
     }
+
+    const metricsWindowDays =
+      snapshot && typeof snapshot.metricsWindowDays === "number"
+        ? snapshot.metricsWindowDays
+        : 60;
 
     const data = {
       stravaConnected: true,
@@ -145,6 +151,7 @@ export class OnboardingEngine {
       ftpModels: snapshot ? snapshot.ftpModels || null : null,
       hr: snapshot ? snapshot.hr || null : null,
       personal: snapshot && snapshot.personal ? snapshot.personal : {},
+      metricsWindowDays,
     };
 
     return {
@@ -161,7 +168,8 @@ export class OnboardingEngine {
     const hasFtp = state.data.ftpModels != null;
     const hasHr = state.data.hr != null;
 
-    if (hasTS && hasFtp && hasHr) return state;
+    if (hasTS && hasFtp && hasHr && state.data.metricsWindowDays != null)
+      return state;
 
     try {
       if (
@@ -183,6 +191,11 @@ export class OnboardingEngine {
           if (!state.data.personal) {
             state.data.personal = snapshot.personal || {};
           }
+          if (snapshot.metricsWindowDays != null) {
+            state.data.metricsWindowDays = snapshot.metricsWindowDays;
+          } else if (state.data.metricsWindowDays == null) {
+            state.data.metricsWindowDays = 60;
+          }
         }
       }
     } catch (e) {
@@ -190,6 +203,10 @@ export class OnboardingEngine {
         "OnboardingEngine._ensureStravaMetricsInState error:",
         e
       );
+    }
+
+    if (state.data.metricsWindowDays == null) {
+      state.data.metricsWindowDays = 60;
     }
 
     return state;
@@ -216,6 +233,8 @@ export class OnboardingEngine {
 
     if (!hasStravaTokens) {
       state.stage = "intro";
+      state.data = state.data || {};
+      state.data.metricsWindowDays = state.data.metricsWindowDays || 60;
       await this._saveState(userId, state);
       const connectUrl = `/auth/strava?userId=${encodeURIComponent(userId)}`;
       return (
@@ -412,6 +431,9 @@ export class OnboardingEngine {
     const ftpModels = state.data.ftpModels || null;
     const summary = this._formatFtpModels(ftpModels);
 
+    const metricsWindowDays =
+      (state.data && state.data.metricsWindowDays) || 60;
+
     state.stage = "ftp_choice";
     await this._saveState(userId, state);
 
@@ -422,10 +444,16 @@ export class OnboardingEngine {
       recommendedStr = "לא הצלחתי לגזור ערך FTP מומלץ חד-משמעי מהנתונים.";
     }
 
+    const windowLine =
+      `אגב, כרגע אני מחשב את FTP, הדופק ונפח הרכיבה לפי בערך ${metricsWindowDays} הימים האחרונים.\n` +
+      'אם תרצה, תוכל לבקש ממני לשנות את החתך, למשל: "תחשב לפי 30 יום" או "תעבור לחתך של 90 יום".';
+
     return (
       summary +
       "\n\n" +
       recommendedStr +
+      "\n\n" +
+      windowLine +
       "\n\n" +
       "אם ה-FTP שאתה משתמש בו היום דומה למה שאני מציע, תכתוב לי את הערך שאתה רוצה שנעבוד איתו (למשל 240)."
     );
