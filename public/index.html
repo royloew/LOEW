@@ -40,14 +40,12 @@
       }
 
       .assistant {
-      background: white;
-      border: 1px solid #ccc;
-      color: #222;
-      margin-left: auto;  /* להזיז את הבועה לימין */
-      margin-right: 0;
-    }
-
-
+        background: white;
+        border: 1px solid #ccc;
+        color: #222;
+        margin-left: auto;
+        margin-right: 0;
+      }
 
       .user {
         background: #daf1ff;
@@ -56,7 +54,6 @@
         text-align: right;
         direction: rtl;
       }
-
 
       #input-area {
         display: flex;
@@ -160,16 +157,15 @@
           }),
         });
 
-       const data = await res.json();
+        const data = await res.json();
 
-      if (data.reply) {
-        const parts = String(data.reply).split("\n\n");
-        for (const part of parts) {
-          const trimmed = part.trim();
-          if (trimmed) addMessage(trimmed, "assistant");
+        if (data.reply) {
+          const parts = String(data.reply).split("\n\n");
+          for (const part of parts) {
+            const trimmed = part.trim();
+            if (trimmed) addMessage(trimmed, "assistant");
+          }
         }
-      }
-
       }
 
       sendBtn.onclick = sendMessage;
@@ -192,15 +188,14 @@
           })
             .then((r) => r.json())
             .then((d) => {
-          if (d.reply) {
-            const parts = String(d.reply).split("\n\n");
-            for (const part of parts) {
-              const trimmed = part.trim();
-              if (trimmed) addMessage(trimmed, "assistant");
-            }
-          }
-        });
-
+              if (d.reply) {
+                const parts = String(d.reply).split("\n\n");
+                for (const part of parts) {
+                  const trimmed = part.trim();
+                  if (trimmed) addMessage(trimmed, "assistant");
+                }
+              }
+            });
         }
       };
     </script>
