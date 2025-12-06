@@ -147,7 +147,7 @@ export class OnboardingEngine {
     return (
       summaryText +
       "\n\n" +
-      "עכשיו אני רוצה להשלים כמה פרטים בסיסיים עליך (משקל, גיל ועוד), ואז נעבור ל-FTP ולדופק."
+      "עכשיו אני רוצה להשלים כמה פרטים בסיסיים עליך (משקל, גובה, גיל), ואז נעבור ל-FTP ולדופק."
     );
   }
 
@@ -210,6 +210,39 @@ export class OnboardingEngine {
       }
 
       state.data.personal = personal;
+      state.data.personalStep = "height";
+      await this._saveState(userId, state);
+
+      return "מה הגובה שלך בסנטימטרים?";
+    }
+
+    // --- גובה ---
+    if (step === "height") {
+      const personal = state.data.personal;
+      const heightFromStrava =
+        personal && personal.heightFromStrava != null
+          ? personal.heightFromStrava
+          : null;
+
+      let parsed = null;
+      if (t) {
+        const cleaned = t.replace(/[^\d.,]/g, "").replace(",", ".");
+        const num = parseFloat(cleaned);
+        // נניח טווח הגיוני לגובה בס"מ
+        if (Number.isFinite(num) && num > 120 && num < 230) {
+          parsed = Math.round(num);
+        }
+      }
+
+      if (!t && heightFromStrava != null) {
+        personal.heightCm = Math.round(heightFromStrava);
+      } else if (parsed != null) {
+        personal.heightCm = parsed;
+      } else {
+        return 'כדי שאוכל לדייק את החישובים, תכתוב גובה בס"מ (למשל 178).';
+      }
+
+      state.data.personal = personal;
       state.data.personalStep = "age";
       await this._saveState(userId, state);
 
@@ -228,8 +261,7 @@ export class OnboardingEngine {
       state.stage = "ftp_intro";
       await this._saveState(userId, state);
 
-      // *** שינוי חשוב: במקום לעצור ולהחזיר הודעת מעבר,
-      // אנחנו ישר ממשיכים לשלב FTP ומחזירים את הטקסט של ה-FTP ***
+      // ממשיכים ישר ל-FTP בלי עוד הודעת מעבר תקועה
       return await this._stageFtpIntro(userId, state);
     }
 
@@ -403,10 +435,10 @@ export class OnboardingEngine {
       state.stage = "goal_collect";
       await this._saveState(userId, state);
 
-      return (
-        "מצוין, נשתמש בערכים האלו כבסיס לאזורים שלך.\n\n" +
-        "לסיום האונבורדינג, תכתוב לי מה המטרה המרכזית שלך לתקופה הקרובה (למשל: גרן פונדו אילת, מרתון, שיפור FTP, חזרה לכושר אחרי פציעה וכדומה)."
-      );
+      return [
+        "מצוין, נשתמש בערכים האלו כבסיס לאזורים שלך.",
+        "מה המטרה המרכזית שלך לתקופה הקרובה (למשל: גרן פונדו אילת, מרתון, שיפור FTP, חזרה לכושר אחרי פציעה וכדומה)?"
+      ].join("\n\n");
     }
 
     // אחרת – מנסים לפרש דופק מקסימלי
@@ -425,12 +457,12 @@ export class OnboardingEngine {
     state.stage = "goal_collect";
     await this._saveState(userId, state);
 
-    return (
+    return [
       `מעולה, נשתמש בדופק מקסימלי ${num} bpm ובדופק סף משוער של כ-${Math.round(
         num * 0.9
-      )} bpm.\n\n` +
-      "לסיום האונבורדינג, תכתוב לי מה המטרה המרכזית שלך לתקופה הקרובה."
-    );
+      )} bpm.`,
+      "מה המטרה המרכזית שלך לתקופה הקרובה?"
+    ].join("\n\n");
   }
 
   // ===== שלב מטרה =====
