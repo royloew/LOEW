@@ -22,7 +22,7 @@ export class OnboardingEngine {
       };
     }
 
-    // אם אין state בכלל – מנסים לבנות אחד מצילום מצב מסטרבה
+    // אם אין state בכלל או שאין בו stage – מנסים לבנות אחד מצילום מצב מסטרבה
     if (!state || !state.stage) {
       state = await this._bootstrapStateFromStrava(userId);
       await this._saveState(userId, state);
@@ -60,7 +60,7 @@ export class OnboardingEngine {
         break;
 
       default:
-        // fallback בטוח – אם משהו לא ברור חוזרים לסיכום מסטרבה או לפתיחה
+        // fallback בטוח – אם משהו לא ברור חוזרים לפתיחה
         state = await this._bootstrapStateFromStrava(userId);
         await this._saveState(userId, state);
 
@@ -75,7 +75,7 @@ export class OnboardingEngine {
   // ===== שלב פתיחה =====
 
   async _stageIntro(userId, text, state) {
-    // בשלב ראשון – רק מציגים הסבר קצר מה זה LOEW
+    // הסבר קבוע על LOEW
     const introText =
       "נעים מאוד, אני LOEW — המאמן האישי שלך.\n" +
       "אני מבסס את כל ההמלצות על ידע מקצועי, מתודולוגיות אימון מהטופ העולמי וניתוח פרסונלי של הנתונים שלך — כולל שינה, תחושה, עומס, בריאות, תזונה וכל מה שמשפיע על הביצועים שלך.\n\n" +
@@ -98,7 +98,6 @@ export class OnboardingEngine {
       await this._saveState(userId, state);
 
       const connectUrl = `/auth/strava?userId=${encodeURIComponent(userId)}`;
-
       return (
         introText +
         "\n\n" +
@@ -106,7 +105,7 @@ export class OnboardingEngine {
       );
     }
 
-    // אם כבר יש טוקנים – מדלגים ישירות לשלב הבא (סיכום מסטרבה)
+    // אם כבר יש טוקנים – מדלגים ישירות לסיכום מסטרבה
     state = await this._bootstrapStateFromStrava(userId);
     await this._saveState(userId, state);
 
@@ -126,7 +125,9 @@ export class OnboardingEngine {
       minimumFractionDigits: 1,
       maximumFractionDigits: 1,
     });
-    const elevation = Math.round(ts.totalElevationGainM);
+    const elevation = Math.round(
+      ts.totalElevationGainM
+    ).toLocaleString("he-IL");
     const avgMin = Math.round(ts.avgDurationSec / 60);
 
     return [
@@ -134,7 +135,7 @@ export class OnboardingEngine {
       `• מספר רכיבות: ${rides}`,
       `• זמן רכיבה מצטבר: ${hours} שעות`,
       `• מרחק מצטבר: ${kmStr} ק״מ`,
-      `• טיפוס מצטבר: ${elevation.toLocaleString("he-IL")} מטר`,
+      `• טיפוס מצטבר: ${elevation} מטר`,
       `• משך רכיבה ממוצע: כ-${avgMin} דקות לרכיבה.`,
     ].join("\n");
   }
@@ -167,9 +168,9 @@ export class OnboardingEngine {
 
     let weightLine = "";
     if (weightFromStrava != null) {
-      weightLine = `מופיע בסטרבה משקל ${weightFromStrava} ק\"ג — לאשר או שאתה מעוניין לעדכן?`;
+      weightLine = `מופיע בסטרבה משקל ${weightFromStrava} ק"ג — לאשר או שאתה מעוניין לעדכן?`;
     } else {
-      weightLine = "נתחיל ממשקל — כמה אתה שוקל בק\"ג?";
+      weightLine = 'נתחיל ממשקל — כמה אתה שוקל בק"ג?';
     }
 
     return summaryText + "\n\n" + weightLine;
@@ -205,14 +206,13 @@ export class OnboardingEngine {
       } else if (parsed != null) {
         personal.weightKg = parsed;
       } else {
-        return "כדי שאוכל לעבוד עם אזורי מאמץ נכונים – תכתוב משקל בק\"ג (למשל 71).";
+        return 'כדי שאוכל לעבוד עם אזורי מאמץ נכונים – תכתוב משקל בק"ג (למשל 71).';
       }
 
       state.data.personal = personal;
       state.data.personalStep = "age";
       await this._saveState(userId, state);
 
-      // לפי בקשה – בלי משפטי "עדכנתי"
       return "בן כמה אתה?";
     }
 
@@ -237,7 +237,7 @@ export class OnboardingEngine {
     // fallback – אם משום מה הגענו לפה בלי צעד ברור
     state.data.personalStep = "weight";
     await this._saveState(userId, state);
-    return "נתחיל ממשקל — כמה אתה שוקל בק\"ג?";
+    return 'נתחיל ממשקל — כמה אתה שוקל בק"ג?';
   }
 
   // ===== שלב FTP =====
@@ -343,7 +343,7 @@ export class OnboardingEngine {
 
       // בועה שנייה – הוראות למשתמש
       lines.push(
-        "אם זה נראה לך סביר, תכתוב \"אישור\".\n" +
+        'אם זה נראה לך סביר, תכתוב "אישור".\n' +
           "אם אתה מעדיף לעדכן, תכתוב את הדופק המקסימלי שלך (למשל 175)."
       );
 
@@ -352,7 +352,7 @@ export class OnboardingEngine {
       lines.push(
         "עכשיו נעבור לדופק.\n" +
           "אם אתה יודע את הדופק המקסימלי שלך, תכתוב לי אותו (למשל 175).\n" +
-          "אם אתה לא בטוח, תכתוב לי שאתה לא יודע ונמשיך הלאה."
+          'אם אתה לא בטוח, תכתוב לי שאתה לא יודע ונמשיך הלאה.'
       );
 
       return lines.join("\n");
@@ -505,8 +505,24 @@ export class OnboardingEngine {
       console.error("OnboardingEngine._bootstrapStateFromStrava error:", err);
     }
 
+    // אם אין חיבור לסטרבה – מתחילים מ-intro רגיל
+    if (!hasStravaTokens) {
+      return {
+        stage: "intro",
+        data: {
+          stravaConnected: false,
+          trainingSummary: null,
+          volume: null,
+          ftpModels: null,
+          hr: null,
+          personal: {},
+        },
+      };
+    }
+
+    // אם יש חיבור לסטרבה – נבנה state עם הנתונים שקיימים
     const data = {
-      stravaConnected: !!hasStravaTokens,
+      stravaConnected: true,
       trainingSummary: snapshot ? snapshot.trainingSummary || null : null,
       volume: snapshot ? snapshot.volume || null : null,
       ftpModels: snapshot ? snapshot.ftpModels || null : null,
@@ -524,7 +540,8 @@ export class OnboardingEngine {
     state.data = state.data || {};
 
     const hasSummary =
-      state.data.trainingSummary && state.data.trainingSummary.rides_count != null;
+      state.data.trainingSummary &&
+      state.data.trainingSummary.rides_count != null;
     const hasFtp = state.data.ftpModels != null;
     const hasHr = state.data.hr != null;
 
@@ -539,10 +556,14 @@ export class OnboardingEngine {
           state.data.trainingSummary =
             snapshot.trainingSummary || state.data.trainingSummary || null;
           state.data.volume = snapshot.volume || state.data.volume || null;
-          state.data.ftpModels = snapshot.ftpModels || state.data.ftpModels || null;
+          state.data.ftpModels =
+            snapshot.ftpModels || state.data.ftpModels || null;
           state.data.hr = snapshot.hr || state.data.hr || null;
           state.data.personal =
-            snapshot.personal || state.data.personal || state.data.personal || {};
+            snapshot.personal ||
+            state.data.personal ||
+            state.data.personal ||
+            {};
         }
       }
     } catch (err) {
