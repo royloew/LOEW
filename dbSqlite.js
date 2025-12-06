@@ -774,6 +774,118 @@ export async function createDbImpl() {
     console.log("[STRAVA] Training params (FTP) updated from power curves for", userId);
   }
 
+  async function recomputeHrFromActivities(userId) {
+  const rows = await all(
+    `
+    SELECT max_hr
+    FROM strava_activities
+    WHERE user_id = ? AND max_hr IS NOT NULL
+    ORDER BY max_hr DESC
+    LIMIT 3
+    `,
+    [userId]
+  );
+
+  if (!rows.length) {
+    console.log("[STRAVA] No HR data in strava_activities for", userId);
+    return;
+  }
+
+  const vals = rows
+    .map((r) => (typeof r.max_hr === "number" ? r.max_hr : null))
+    .filter((v) => Number.isFinite(v));
+
+  if (!vals.length) {
+    console.log("[STRAVA] HR rows without numeric max_hr for", userId);
+    return;
+  }
+
+  const hrMaxCandidate = Math.round(
+    vals.reduce((s, v) => s + v, 0) / vals.length
+  );
+  const hrThresholdCandidate = Math.round(hrMaxCandidate * 0.9);
+
+  const existing = await getTrainingParams(userId);
+
+  const newParams = {
+    ftp: existing ? existing.ftp ?? null : null,
+    ftp20: existing ? existing.ftp20 ?? null : null,
+    ftpFrom3min: existing ? existing.ftpFrom3min ?? null : null,
+    ftpFromCP: existing ? existing.ftpFromCP ?? null : null,
+    ftpRecommended: existing ? existing.ftpRecommended ?? null : null,
+    hrMax: hrMaxCandidate,
+    hrThreshold: hrThresholdCandidate,
+  };
+
+  await saveTrainingParams(userId, newParams);
+
+  console.log(
+    "[STRAVA] Training params (HR) updated from activities for",
+    userId,
+    "hrMax=",
+    newParams.hrMax,
+    "hrThreshold=",
+    newParams.hrThreshold
+  );
+}
+
+
+  async function recomputeHrFromActivities(userId) {
+  const rows = await all(
+    `
+    SELECT max_hr
+    FROM strava_activities
+    WHERE user_id = ? AND max_hr IS NOT NULL
+    ORDER BY max_hr DESC
+    LIMIT 3
+    `,
+    [userId]
+  );
+
+  if (!rows.length) {
+    console.log("[STRAVA] No HR data in strava_activities for", userId);
+    return;
+  }
+
+  const vals = rows
+    .map((r) => (typeof r.max_hr === "number" ? r.max_hr : null))
+    .filter((v) => Number.isFinite(v));
+
+  if (!vals.length) {
+    console.log("[STRAVA] HR rows without numeric max_hr for", userId);
+    return;
+  }
+
+  const hrMaxCandidate = Math.round(
+    vals.reduce((s, v) => s + v, 0) / vals.length
+  );
+  const hrThresholdCandidate = Math.round(hrMaxCandidate * 0.9);
+
+  const existing = await getTrainingParams(userId);
+
+  const newParams = {
+    ftp: existing ? existing.ftp ?? null : null,
+    ftp20: existing ? existing.ftp20 ?? null : null,
+    ftpFrom3min: existing ? existing.ftpFrom3min ?? null : null,
+    ftpFromCP: existing ? existing.ftpFromCP ?? null : null,
+    ftpRecommended: existing ? existing.ftpRecommended ?? null : null,
+    hrMax: hrMaxCandidate,
+    hrThreshold: hrThresholdCandidate,
+  };
+
+  await saveTrainingParams(userId, newParams);
+
+  console.log(
+    "[STRAVA] Training params (HR) updated from activities for",
+    userId,
+    "hrMax=",
+    newParams.hrMax,
+    "hrThreshold=",
+    newParams.hrThreshold
+  );
+}
+
+
   async function pullAndStoreStravaData(userId, tokens) {
     const accessToken = tokens && tokens.accessToken;
     if (!accessToken) {
@@ -923,6 +1035,7 @@ export async function createDbImpl() {
       );
       await recomputePowerCurvesFromStreams(userId);
       await recomputeFtpFromPowerCurves(userId);
+      await recomputeHrFromActivities(userId); 
     } else {
       console.log(
         "[STRAVA] No power-capable activities found for user",
@@ -930,6 +1043,8 @@ export async function createDbImpl() {
       );
     }
   }
+
+
 
   // ===== STRAVA INGEST (מלא: API → DB → Metrics) =====
 
