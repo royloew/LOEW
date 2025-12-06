@@ -296,7 +296,7 @@ export class OnboardingEngine {
     );
   }
 
-  async _stageFtpChoice(userId, text, state) {
+    async _stageFtpChoice(userId, text, state) {
     const t = (text || "").trim();
     const cleaned = t.replace(/[^\d.,]/g, "").replace(",", ".");
     const num = parseFloat(cleaned);
@@ -323,41 +323,45 @@ export class OnboardingEngine {
     const { hrMaxCandidate, hrThresholdCandidate } =
       this._extractHrCandidates(state);
 
-    const lines = [];
+    const bubbles = [];
+
     if (hrMaxCandidate != null || hrThresholdCandidate != null) {
-      // בועה ראשונה – מעבר לדופק + הערכים מסטרבה
-      const firstBubble = [];
-      firstBubble.push("עכשיו נעבור לדופק.");
-      if (hrMaxCandidate != null && hrThresholdCandidate != null) {
-        firstBubble.push(
-          `לפי הנתונים מסטרבה אני רואה דופק מקסימלי משוער של ~${hrMaxCandidate} bpm ודופק סף משוער של ~${hrThresholdCandidate} bpm.`
-        );
-      } else if (hrMaxCandidate != null) {
-        firstBubble.push(
-          `לפי הנתונים מסטרבה אני רואה דופק מקסימלי משוער של ~${hrMaxCandidate} bpm.`
-        );
+      // בועה 1 — מעבר לדופק
+      bubbles.push(
+        "עכשיו נעבור לדופק — מדד שיעזור לי לקבוע אזורי מאמץ מדויקים."
+      );
+
+      // בועה 2 — הצגת הערכים מסטרבה בפורמט מסודר
+      const lines = [];
+      if (hrMaxCandidate != null) {
+        lines.push(`• דופק מקסימלי משוער: ~${hrMaxCandidate} bpm`);
+      }
+      if (hrThresholdCandidate != null) {
+        lines.push(`• דופק סף משוער: ~${hrThresholdCandidate} bpm`);
       }
 
-      // זו תהיה בועה 1
-      lines.push(firstBubble.join("\n"));
+      let secondBubble = "לפי הנתונים מסטרבה אני רואה:\n" + lines.join("\n");
+      bubbles.push(secondBubble);
 
-      // בועה שנייה – הוראות למשתמש
-      lines.push(
+      // בועה 3 — הוראות למשתמש
+      bubbles.push(
         'אם זה נראה לך סביר, תכתוב "אישור".\n' +
           "אם אתה מעדיף לעדכן, תכתוב את הדופק המקסימלי שלך (למשל 175)."
       );
-
-      return lines.join("\n\n");
     } else {
-      lines.push(
-        "עכשיו נעבור לדופק.\n" +
-          "אם אתה יודע את הדופק המקסימלי שלך, תכתוב לי אותו (למשל 175).\n" +
-          'אם אתה לא בטוח, תכתוב לי שאתה לא יודע ונמשיך הלאה.'
+      // אין לנו ערכים מסטרבה – 2 בועות פשוטות
+      bubbles.push(
+        "עכשיו נעבור לדופק — אם אתה יודע את הדופק המקסימלי שלך, תכתוב לי אותו (למשל 175)."
       );
-
-      return lines.join("\n");
+      bubbles.push(
+        'אם אתה לא בטוח, תכתוב לי שאתה לא יודע ונמשיך הלאה.'
+      );
     }
+
+    // כל בועה מופרדת ב-\n\n כדי שהפרונט יעשה 2–3 בועות נפרדות
+    return bubbles.join("\n\n");
   }
+
 
   _extractHrCandidates(state) {
     const hr = (state.data && state.data.hr) || {};
