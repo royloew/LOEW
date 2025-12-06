@@ -233,10 +233,10 @@ export class OnboardingEngine {
       );
     }
 
-    // אם כבר יש טוקנים – מדלגים ישירות לסיכום מסטרבה
+    // אם כבר יש טוקנים – נביא סיכום מסטרבה ונמשיך ישר לנתונים האישיים
     state = await this._bootstrapStateFromStrava(userId);
     await this._saveState(userId, state);
-    return this._formatStravaSummaryAndNext(state);
+    return await this._stagePostStravaSummary(userId, state);
   }
 
   // ===== שלב סיכום מסטרבה =====
@@ -299,7 +299,13 @@ export class OnboardingEngine {
       weightLine = 'נתחיל ממשקל — כמה אתה שוקל בק"ג?';
     }
 
-    return summaryText + "\n\n" + weightLine;
+    return (
+      summaryText +
+      "\n\n" +
+      "עכשיו שיש לנו סטרבה אני צריך להשלים עוד כמה נתונים בסיסים " +
+      "\n\n" +
+      weightLine
+    );
   }
 
   // ===== שלב נתונים אישיים =====
@@ -475,8 +481,6 @@ export class OnboardingEngine {
     const { hrMaxCandidate } = this._extractHrCandidates(state);
     const bubbles = [];
 
-    bubbles.push("עכשיו נעבור לדופק.");
-
     if (hrMaxCandidate != null) {
       bubbles.push(
         `לפי הנתונים מסטרבה אני רואה דופק מקסימלי משוער של ${hrMaxCandidate} bpm.`
@@ -515,8 +519,6 @@ export class OnboardingEngine {
   }
 
   // ===== שלב דופק =====
-
-   // ===== שלב דופק =====
 
   async _stageHrCollect(userId, text, state) {
     const t = (text || "").trim();
@@ -569,7 +571,6 @@ export class OnboardingEngine {
         const thr = Math.round(num * 0.9);
 
         return [
-          `מצוין, נשמור דופק מקסימלי של ${num} bpm.`,
           `הדופק סף המשוער שלי הוא ${thr} bpm.`,
           'אם זה נראה לך סביר, תכתוב "אישור". אם אתה מעדיף לעדכן, תכתוב את הדופק סף שלך (למשל 160).',
         ].join("\n\n");
@@ -626,10 +627,7 @@ export class OnboardingEngine {
         state.stage = "goal_collect";
         await this._saveState(userId, state);
 
-        return [
-          `נשמור דופק סף של ${num} bpm.`,
-          "מה המטרה המרכזית שלך לתקופה הקרובה?",
-        ].join("\n\n");
+        return "מה המטרה המרכזית שלך לתקופה הקרובה?";
       }
 
       // תשובה לא תקינה – מסבירים שוב
@@ -658,7 +656,6 @@ export class OnboardingEngine {
     await this._saveState(userId, state);
     return await this._stageHrCollect(userId, text, state);
   }
-
 
   // ===== שלב מטרה =====
 
