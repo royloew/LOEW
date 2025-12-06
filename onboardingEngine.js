@@ -516,8 +516,13 @@ export class OnboardingEngine {
 
   // ===== שלב דופק =====
 
+   // ===== שלב דופק =====
+
   async _stageHrCollect(userId, text, state) {
     const t = (text || "").trim();
+    state.data = state.data || {};
+
+    // hrStep אומר לנו באיזה תת-שלב אנחנו: דופק מקס או דופק סף
     const step = state.data.hrStep || "hrMax";
 
     const { hrMaxCandidate, hrThresholdCandidate } =
@@ -525,6 +530,7 @@ export class OnboardingEngine {
 
     // --- שלב 1: דופק מקסימלי ---
     if (step === "hrMax") {
+      // המשתמש מאשר את הערך מהחישוב
       if (
         t === "אישור" ||
         t.toLowerCase() === "ok" ||
@@ -535,28 +541,25 @@ export class OnboardingEngine {
           state.data.hrStep = "hrThreshold";
           await this._saveState(userId, state);
 
-          const thr = hrThresholdCandidate != null
-            ? hrThresholdCandidate
-            : hrMaxCandidate != null
-            ? Math.round(hrMaxCandidate * 0.9)
-            : null;
+          const thr =
+            hrThresholdCandidate != null
+              ? hrThresholdCandidate
+              : Math.round(hrMaxCandidate * 0.9);
 
-          if (thr != null) {
-            return [
-              "מצוין, נמשיך לדופק סף.",
-              `הדופק סף המשוער שלי הוא ${thr} bpm.`,
-              'אם זה נראה לך סביר, תכתוב "אישור". אם אתה מעדיף לעדכן, תכתוב את הדופק סף שלך (למשל 160).`,
-            ].join("\n\n");
-          } else {
-            return [
-              "מצוין, נשמור את הדופק המקסימלי הזה.",
-              "מהו הדופק סף שלך (אם אתה יודע)?",
-            ].join("\n\n");
-          }
+          return [
+            "מצוין, נמשיך לדופק סף.",
+            `הדופק סף המשוער שלי הוא ${thr} bpm.`,
+            'אם זה נראה לך סביר, תכתוב "אישור". אם אתה מעדיף לעדכן, תכתוב את הדופק סף שלך (למשל 160).',
+          ].join("\n\n");
         }
+
+        // אין מועמד הגיוני – מבקשים מהמשתמש ערך מספרי
+        return (
+          "כדי שאוכל לעבוד עם אזורי דופק מדויקים – תכתוב את הדופק המקסימלי שלך (בין 100 ל-230 bpm, למשל 175)."
+        );
       }
 
-      // ניסיון לקרוא מספר כדופק מקסימלי
+      // המשתמש ניסה לתת ערך ידני (דופק מקסימלי)
       const num = parseInt(t.replace(/[^\d]/g, ""), 10);
       if (Number.isFinite(num) && num >= 100 && num <= 230) {
         state.data.hrMaxFinal = num;
@@ -568,33 +571,37 @@ export class OnboardingEngine {
         return [
           `מצוין, נשמור דופק מקסימלי של ${num} bpm.`,
           `הדופק סף המשוער שלי הוא ${thr} bpm.`,
-          'אם זה נראה לך סביר, תכתוב "אישור". אם אתה מעדיף לעדכן, תכתוב את הדופק סף שלך (למשל 160).`,
+          'אם זה נראה לך סביר, תכתוב "אישור". אם אתה מעדיף לעדכן, תכתוב את הדופק סף שלך (למשל 160).',
         ].join("\n\n");
       }
 
-      // אם לא הבנו את התשובה
+      // תשובה לא תקינה – מסבירים שוב
       if (hrMaxCandidate != null) {
         return [
           `כדי שאוכל לעבוד עם אזורי דופק מדויקים – תכתוב את הדופק המקסימלי שלך (בין 100 ל-230 bpm, למשל 175).`,
           `לפי הנתונים מסטרבה אני רואה כרגע דופק מקסימלי משוער של ${hrMaxCandidate} bpm.`,
         ].join("\n\n");
       } else {
-        return "כדי שאוכל לעבוד עם אזורי דופק מדויקים – תכתוב את הדופק המקסימלי שלך (בין 100 ל-230 bpm, למשל 175).";
+        return (
+          "כדי שאוכל לעבוד עם אזורי דופק מדויקים – תכתוב את הדופק המקסימלי שלך (בין 100 ל-230 bpm, למשל 175)."
+        );
       }
     }
 
     // --- שלב 2: דופק סף ---
     if (step === "hrThreshold") {
+      // המשתמש מאשר את הערך מהחישוב
       if (
         t === "אישור" ||
         t.toLowerCase() === "ok" ||
         t.toLowerCase() === "okay"
       ) {
+        const maxFinal = state.data.hrMaxFinal || hrMaxCandidate || null;
         const thr =
           hrThresholdCandidate != null
             ? hrThresholdCandidate
-            : state.data.hrMaxFinal != null
-            ? Math.round(state.data.hrMaxFinal * 0.9)
+            : maxFinal != null
+            ? Math.round(maxFinal * 0.9)
             : null;
 
         if (thr != null) {
@@ -611,6 +618,7 @@ export class OnboardingEngine {
         ].join("\n\n");
       }
 
+      // המשתמש נותן ערך ידני לדופק סף
       const num = parseInt(t.replace(/[^\d]/g, ""), 10);
       if (Number.isFinite(num) && num >= 90 && num <= 220) {
         state.data.hrThresholdFinal = num;
@@ -624,11 +632,13 @@ export class OnboardingEngine {
         ].join("\n\n");
       }
 
+      // תשובה לא תקינה – מסבירים שוב
+      const maxFinal = state.data.hrMaxFinal || hrMaxCandidate || null;
       const thr =
         hrThresholdCandidate != null
           ? hrThresholdCandidate
-          : state.data.hrMaxFinal != null
-          ? Math.round(state.data.hrMaxFinal * 0.9)
+          : maxFinal != null
+          ? Math.round(maxFinal * 0.9)
           : null;
 
       if (thr != null) {
@@ -638,14 +648,17 @@ export class OnboardingEngine {
         ].join("\n\n");
       }
 
-      return "כדי שאוכל לעבוד עם דופק סף מדויק – תכתוב את הדופק סף שלך (אם אתה יודע). אם לא, אפשר לכתוב שאתה לא יודע ונמשיך הלאה.";
+      return (
+        "כדי שאוכל לעבוד עם דופק סף מדויק – תכתוב את הדופק סף שלך (אם אתה יודע). אם לא, אפשר לכתוב שאתה לא יודע ונמשיך הלאה."
+      );
     }
 
-    // אם משום מה hrStep לא מוגדר – נחזור לדופק מקס
+    // fallback – אם משום מה hrStep לא מוגדר, נחזור להתחלה של דופק מקס
     state.data.hrStep = "hrMax";
     await this._saveState(userId, state);
     return await this._stageHrCollect(userId, text, state);
   }
+
 
   // ===== שלב מטרה =====
 
