@@ -203,62 +203,73 @@ export class OnboardingEngine {
     }
   }
 
-    async _ensureStravaMetricsInState(userId, state) {
-    state.data = state.data || {};
-    const hasTS =
-      state.data.trainingSummary &&
-      state.data.trainingSummary.rides_count != null;
-    const hasFtp = state.data.ftpModels != null;
-    const hasHr = state.data.hr != null;
+  async _ensureStravaMetricsInState(userId, state) {
+  state.data = state.data || {};
+  const currentPersonal = state.data.personal || {};
+  const currentFtpModels = state.data.ftpModels || {};
 
-    // בודק אם כבר יש לנו personal עם weightFromStrava (או בכלל personal)
-    const currentPersonal = state.data.personal || {};
-    const hasPersonalFromSnapshot =
-      currentPersonal && currentPersonal.weightFromStrava != null;
+  const hasTS =
+    state.data.trainingSummary &&
+    state.data.trainingSummary.rides_count != null;
 
-    // האם בכלל צריך למשוך snapshot?
-    const needSnapshot = !hasTS || !hasFtp || !hasHr || !hasPersonalFromSnapshot;
+  const hasHr =
+    state.data.hr &&
+    typeof state.data.hr.hrMax === "number";
 
-    if (!needSnapshot) {
-      // יש הכל כולל personal עם weightFromStrava → אפשר לחזור
-      return state;
-    }
+  const hasPersonal =
+    currentPersonal &&
+    (currentPersonal.weightFromStrava != null ||
+     currentPersonal.heightCm != null ||
+     currentPersonal.age != null);
 
-    try {
-      if (
-        this.db &&
-        typeof this.db.getStravaOnboardingSnapshot === "function"
-      ) {
-        const snapshot = await this.db.getStravaOnboardingSnapshot(userId);
-        if (snapshot) {
-          // ממלא trainingSummary / volume רק אם חסר
-          if (!hasTS) {
-            state.data.trainingSummary = snapshot.trainingSummary || null;
-            state.data.volume = snapshot.volume || null;
-          }
-          // ממלא ftpModels אם חסר
-          if (!hasFtp) {
-            state.data.ftpModels = snapshot.ftpModels || null;
-          }
-          // ממלא hr אם חסר
-          if (!hasHr) {
-            state.data.hr = snapshot.hr || null;
-          }
+  const hasFtp =
+    currentFtpModels &&
+    Object.keys(currentFtpModels).length > 0;
 
-          // תמיד דואג למזג personal מה-snapshot (כולל weightFromStrava)
-          const snapshotPersonal = snapshot.personal || {};
-          state.data.personal = { ...snapshotPersonal, ...currentPersonal };
-        }
-      }
-    } catch (e) {
-      console.error(
-        "OnboardingEngine._ensureStravaMetricsInState error:",
-        e
-      );
-    }
+  const needSnapshot = !hasTS || !hasHr || !hasPersonal || !hasFtp;
 
+  if (!needSnapshot) {
     return state;
   }
+
+  try {
+    if (
+      this.db &&
+      typeof this.db.getStravaOnboardingSnapshot === "function"
+    ) {
+      const snapshot = await this.db.getStravaOnboardingSnapshot(userId);
+
+      if (snapshot) {
+        // ALWAYS MERGE PERSONAL
+        const snapshotPersonal = snapshot.personal || {};
+        state.data.personal = { ...snapshotPersonal, ...currentPersonal };
+
+        // ALWAYS MERGE FTP MODELS
+        const snapshotFtpModels = snapshot.ftpModels || {};
+        state.data.ftpModels = { ...snapshotFtpModels, ...currentFtpModels };
+
+        // MERGE TS & VOLUME IF EMPTY
+        if (!hasTS) {
+          state.data.trainingSummary = snapshot.trainingSummary || null;
+          state.data.volume = snapshot.volume || null;
+        }
+
+        // MERGE HR IF EMPTY
+        if (!hasHr) {
+          state.data.hr = snapshot.hr || null;
+        }
+      }
+    }
+  } catch (err) {
+    console.error(
+      "OnboardingEngine._ensureStravaMetricsInState error:",
+      err
+    );
+  }
+
+  return state;
+}
+
 
 
 
