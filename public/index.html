@@ -35,6 +35,7 @@
       .bubble-text {
         text-align: right;
         direction: rtl;
+        unicode-bidi: plaintext; /* שיפור יישור כשיש עברית + אנגלית */
         white-space: pre-wrap;
         line-height: 1.5;
       }
@@ -160,6 +161,7 @@
         const data = await res.json();
 
         if (data.reply) {
+          // משאיר את הלוגיקה של פיצול לבועות, אבל כל חלק מוצג עם RTL מלא
           const parts = String(data.reply).split("\n\n");
           for (const part of parts) {
             const trimmed = part.trim();
