@@ -203,7 +203,7 @@ export class OnboardingEngine {
     }
   }
 
-  async _ensureStravaMetricsInState(userId, state) {
+    async _ensureStravaMetricsInState(userId, state) {
     state.data = state.data || {};
     const hasTS =
       state.data.trainingSummary &&
@@ -211,6 +211,7 @@ export class OnboardingEngine {
     const hasFtp = state.data.ftpModels != null;
     const hasHr = state.data.hr != null;
 
+    // אם כבר יש הכל – לא נוגעים
     if (hasTS && hasFtp && hasHr) return state;
 
     try {
@@ -230,9 +231,14 @@ export class OnboardingEngine {
           if (!hasHr) {
             state.data.hr = snapshot.hr || null;
           }
+
+          // 🔹 כאן החלק החשוב למשקל / פרופיל אישי
           const currentPersonal = state.data.personal || {};
           const snapshotPersonal = snapshot.personal || {};
-          state.data.personal = { ...snapshotPersonal, ...currentPersonal };
+          state.data.personal = {
+            ...snapshotPersonal,
+            ...currentPersonal,
+          };
         }
       }
     } catch (e) {
