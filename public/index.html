@@ -129,7 +129,17 @@
 
         const textDiv = document.createElement("div");
         textDiv.className = "bubble-text";
-        textDiv.innerHTML = linkify(text);
+        // אם יש בולטים, נהפוך אותם לרשימה מוסדרת שמיושרת נכון ב-RTL
+        let html = linkify(text)
+          .replace(/\n•\s*(.+)/g, "<li>$1</li>");  // כל "• ..." יהפוך ל <li>
+
+        if (html.includes("<li>")) {
+          html = html.replace(/^(.*?):/, "<strong>$1:</strong>"); // כותרת שמנה
+          html = html.replace(/(<li>[\s\S]*<\/li>)/, "<ul dir='rtl'>$1</ul>");
+        }
+
+        textDiv.innerHTML = html;
+
 
         bubble.appendChild(textDiv);
         messagesDiv.appendChild(bubble);
