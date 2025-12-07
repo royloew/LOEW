@@ -102,7 +102,7 @@ export class OnboardingEngine {
       }
     }
 
-    // 2) אם ה-DB לא עבד – נ fallback לזיכרון
+    // 2) אם ה-DB לא עבד – fallback לזיכרון
     const mem = this._memStates.get(userId);
     if (mem && mem.stage) {
       return mem;
@@ -113,27 +113,24 @@ export class OnboardingEngine {
   }
 
   async _saveState(userId, state) {
-  const cleanState = {
-    stage: state.stage,
-    data: state.data || {},
-  };
+    const cleanState = {
+      stage: state.stage,
+      data: state.data || {},
+    };
 
-  // זיכרון פנימי
-  this._memStates.set(userId, cleanState);
+    // זיכרון פנימי
+    this._memStates.set(userId, cleanState);
 
-  if (!this.db || typeof this.db.saveOnboardingState !== "function") {
-    return;
+    if (!this.db || typeof this.db.saveOnboardingState !== "function") {
+      return;
+    }
+
+    try {
+      await this.db.saveOnboardingState(userId, cleanState);
+    } catch (e) {
+      console.error("OnboardingEngine._saveState DB error:", e);
+    }
   }
-
-  try {
-    // הכי חשוב:
-    await this.db.saveOnboardingState(userId, cleanState);
-  } catch (e) {
-    console.error("OnboardingEngine._saveState DB error:", e);
-  }
-}
-
-
 
   async _bootstrapStateFromStrava(userId) {
     let snapshot = null;
@@ -162,6 +159,48 @@ export class OnboardingEngine {
     };
 
     return state;
+  }
+
+  // מעדכן training_params לפי הערכים הסופיים מה-state (FTP / HR)
+  async _updateTrainingParamsFromState(userId, state) {
+    if (
+      !this.db ||
+      typeof this.db.getTrainingParams !== "function" ||
+      typeof this.db.saveTrainingParams !== "function"
+    ) {
+      return;
+    }
+
+    const d = state.data || {};
+    const ftpFinal = d.ftpFinal ?? null;
+
+    const hr = d.hr || {};
+    const hrMaxFinal = hr.hrMaxFinal ?? null;
+    const hrThresholdFinal = hr.hrThresholdFinal ?? null;
+
+    try {
+      const existing = (await this.db.getTrainingParams(userId)) || {};
+
+      const newParams = {
+        ...existing,
+        // FTP שהמשתמש אישר – זה הערך שהמאמן צריך לעבוד איתו
+        ftp: ftpFinal != null ? ftpFinal : existing.ftp ?? null,
+        // HR סופי מהאונבורדינג גובר על מודל אוטומטי
+        hrMax:
+          hrMaxFinal != null ? hrMaxFinal : existing.hrMax ?? null,
+        hrThreshold:
+          hrThresholdFinal != null
+            ? hrThresholdFinal
+            : existing.hrThreshold ?? null,
+      };
+
+      await this.db.saveTrainingParams(userId, newParams);
+    } catch (e) {
+      console.error(
+        "OnboardingEngine._updateTrainingParamsFromState error:",
+        e
+      );
+    }
   }
 
   async _ensureStravaMetricsInState(userId, state) {
@@ -426,7 +465,10 @@ export class OnboardingEngine {
     addLine("ftpFromCP", "Critical Power model");
     addLine("ftpFrom8min", "FTP from 8min model");
 
-    if (ftpModels.ftpFromStrava && ftpModels.ftpFromStrava.value != null) {
+    if (
+      ftpModels.ftpFromStrava &&
+      ftpModels.ftpFromStrava.value != null
+    ) {
       lines.push(
         `• FTP from Strava: ${ftpModels.ftpFromStrava.value} W (כפי שמופיע בסטרבה)`
       );
@@ -455,7 +497,11 @@ export class OnboardingEngine {
     const summary = this._formatFtpModels(ftpModels);
 
     let recommendedStr = "";
-    if (ftpModels && ftpModels.ftpRecommended && ftpModels.ftpRecommended.value) {
+    if (
+      ftpModels &&
+      ftpModels.ftpRecommended &&
+      ftpModels.ftpRecommended.value
+    ) {
       recommendedStr = `לפי החישובים שלי, ה-FTP המומלץ עבורך כרגע הוא ${ftpModels.ftpRecommended.value} W.`;
     } else {
       recommendedStr = "לא הצלחתי לגזור ערך FTP מומלץ חד-משמעי מהנתונים.";
@@ -505,7 +551,9 @@ export class OnboardingEngine {
       bubbles.push(
         "אם אתה יודע את הדופק המקסימלי שלך, תכתוב לי אותו (למשל 175)."
       );
-      bubbles.push("אם אתה לא בטוח, תכתוב לי שאתה לא יודע ונמשיך הלאה.");
+      bubbles.push(
+        "אם אתה לא בטוח, תכתוב לי שאתה לא יודע ונמשיך הלאה."
+      );
     }
 
     return bubbles.join("\n\n");
@@ -632,6 +680,8 @@ export class OnboardingEngine {
         }
         state.stage = "training_time";
         state.data.trainingTimeStep = "fromStrava";
+
+        await this._updateTrainingParamsFromState(userId, state);
         await this._saveState(userId, state);
 
         return "נעבור עכשיו למשך האימונים שלך – כמה זמן אתה בדרך כלל רוכב?";
@@ -642,6 +692,8 @@ export class OnboardingEngine {
         state.data.hr.hrThresholdFinal = hrThresholdCandidate;
         state.stage = "training_time";
         state.data.trainingTimeStep = "fromStrava";
+
+        await this._updateTrainingParamsFromState(userId, state);
         await this._saveState(userId, state);
 
         return "מעולה, יש לנו גם דופק סף. נעבור עכשיו למשך האימונים שלך – כמה זמן אתה בדרך כלל רוכב?";
@@ -674,6 +726,8 @@ export class OnboardingEngine {
       state.data.hr.hrThresholdFinal = parsed;
       state.stage = "training_time";
       state.data.trainingTimeStep = "fromStrava";
+
+      await this._updateTrainingParamsFromState(userId, state);
       await this._saveState(userId, state);
 
       return "מעולה, יש לנו גם דופק סף. נעבור עכשיו למשך האימונים שלך – כמה זמן אתה בדרך כלל רוכב?";
