@@ -204,74 +204,72 @@ export class OnboardingEngine {
   }
 
   async _ensureStravaMetricsInState(userId, state) {
-  state.data = state.data || {};
-  const currentPersonal = state.data.personal || {};
-  const currentFtpModels = state.data.ftpModels || {};
+    state.data = state.data || {};
+    const currentPersonal = state.data.personal || {};
+    const currentFtpModels = state.data.ftpModels || {};
 
-  const hasTS =
-    state.data.trainingSummary &&
-    state.data.trainingSummary.rides_count != null;
+    const hasTS =
+      state.data.trainingSummary &&
+      state.data.trainingSummary.rides_count != null;
 
-  const hasHr =
-    state.data.hr &&
-    typeof state.data.hr.hrMax === "number";
+    const hasHr =
+      state.data.hr && typeof state.data.hr.hrMax === "number";
 
-  const hasPersonal =
-    currentPersonal &&
-    (currentPersonal.weightFromStrava != null ||
-     currentPersonal.heightCm != null ||
-     currentPersonal.age != null);
+    const hasPersonal =
+      currentPersonal &&
+      (currentPersonal.weightFromStrava != null ||
+        currentPersonal.heightCm != null ||
+        currentPersonal.age != null);
 
-  const hasFtp =
-    currentFtpModels &&
-    Object.keys(currentFtpModels).length > 0;
+    const hasFtp =
+      currentFtpModels && Object.keys(currentFtpModels).length > 0;
 
-  const needSnapshot = !hasTS || !hasHr || !hasPersonal || !hasFtp;
+    const needSnapshot = !hasTS || !hasHr || !hasPersonal || !hasFtp;
 
-  if (!needSnapshot) {
-    return state;
-  }
+    if (!needSnapshot) {
+      return state;
+    }
 
-  try {
-    if (
-      this.db &&
-      typeof this.db.getStravaOnboardingSnapshot === "function"
-    ) {
-      const snapshot = await this.db.getStravaOnboardingSnapshot(userId);
+    try {
+      if (
+        this.db &&
+        typeof this.db.getStravaOnboardingSnapshot === "function"
+      ) {
+        const snapshot = await this.db.getStravaOnboardingSnapshot(userId);
 
-      if (snapshot) {
-        // ALWAYS MERGE PERSONAL
-        const snapshotPersonal = snapshot.personal || {};
-        state.data.personal = { ...snapshotPersonal, ...currentPersonal };
+        if (snapshot) {
+          // ALWAYS MERGE PERSONAL
+          const snapshotPersonal = snapshot.personal || {};
+          state.data.personal = { ...snapshotPersonal, ...currentPersonal };
 
-        // ALWAYS MERGE FTP MODELS
-        const snapshotFtpModels = snapshot.ftpModels || {};
-        state.data.ftpModels = { ...snapshotFtpModels, ...currentFtpModels };
+          // ALWAYS MERGE FTP MODELS
+          const snapshotFtpModels = snapshot.ftpModels || {};
+          state.data.ftpModels = {
+            ...snapshotFtpModels,
+            ...currentFtpModels,
+          };
 
-        // MERGE TS & VOLUME IF EMPTY
-        if (!hasTS) {
-          state.data.trainingSummary = snapshot.trainingSummary || null;
-          state.data.volume = snapshot.volume || null;
-        }
+          // MERGE TS & VOLUME IF EMPTY
+          if (!hasTS) {
+            state.data.trainingSummary = snapshot.trainingSummary || null;
+            state.data.volume = snapshot.volume || null;
+          }
 
-        // MERGE HR IF EMPTY
-        if (!hasHr) {
-          state.data.hr = snapshot.hr || null;
+          // MERGE HR IF EMPTY
+          if (!hasHr) {
+            state.data.hr = snapshot.hr || null;
+          }
         }
       }
+    } catch (err) {
+      console.error(
+        "OnboardingEngine._ensureStravaMetricsInState error:",
+        err
+      );
     }
-  } catch (err) {
-    console.error(
-      "OnboardingEngine._ensureStravaMetricsInState error:",
-      err
-    );
+
+    return state;
   }
-
-  return state;
-}
-
-
-
 
   // ===== INTRO =====
 
@@ -330,7 +328,7 @@ export class OnboardingEngine {
       `• זמן רכיבה מצטבר: ${hours} שעות`,
       `• מרחק מצטבר: ${km} ק״מ`,
       `• טיפוס מצטבר: ${elevation} מטר`,
-      `• משך רכיבה ממוצע: כ-${avgMin} דקות לרכיבה.`,
+      `• משך רכיבה ממוצעת: כ-${avgMin} דקות לרכיבה.`,
     ].join("\n");
   }
 
@@ -396,7 +394,7 @@ export class OnboardingEngine {
         if (weightFromStrava != null) {
           return (
             "לא הצלחתי להבין את המשקל שכתבת.\n" +
-            `בסטרבה מופיע ${weightFromStrava} ק\"ג.\n` +
+            `בסטרבה מופיע ${weightFromStrra} ק\"ג.\n` +
             "תכתוב משקל מספרי בק\"ג (למשל 72.5), או תכתוב 'אישור' אם אתה רוצה להשאיר כמו שמופיע."
           );
         }
@@ -441,7 +439,6 @@ export class OnboardingEngine {
     }
 
     // גיל
-       // גיל
     if (step === "age") {
       let parsed = null;
       if (t) {
@@ -472,8 +469,6 @@ export class OnboardingEngine {
     return await this._stageFtpIntro(userId, state);
   }
 
-
-
   // ===== FTP =====
 
   _formatFtpModels(ftpModels) {
@@ -481,7 +476,8 @@ export class OnboardingEngine {
       return "עדיין לא הצלחתי לחשב מודלים ל-FTP מהנתונים שלך.";
     }
 
-    const lines = ["בדקתי את הרכיבות שלך ובניתי כמה מודלים ל-FTP:"];
+    const lines = [];
+
     const addLine = (key, label) => {
       if (ftpModels[key] && ftpModels[key].value != null) {
         lines.push(
@@ -497,10 +493,7 @@ export class OnboardingEngine {
     addLine("ftpFromCP", "Critical Power model");
     addLine("ftpFrom8min", "FTP from 8min model");
 
-    if (
-      ftpModels.ftpFromStrava &&
-      ftpModels.ftpFromStrava.value != null
-    ) {
+    if (ftpModels.ftpFromStrava && ftpModels.ftpFromStrava.value != null) {
       lines.push(
         `• FTP from Strava: ${ftpModels.ftpFromStrava.value} W (כפי שמופיע בסטרבה)`
       );
@@ -509,10 +502,10 @@ export class OnboardingEngine {
     if (
       ftpModels.ftpRecommended &&
       ftpModels.ftpRecommended.value != null &&
-      lines.length > 1
+      lines.length > 0
     ) {
       lines.push(
-        `• Recommended FTP (median): ${ftpModels.ftpRecommended.value} W (חציון בין המודלים הסבירים)`
+        `• Recommended FTP: ${ftpModels.ftpRecommended.value} W`
       );
     }
 
@@ -536,10 +529,31 @@ export class OnboardingEngine {
     ) {
       recommendedStr = `לפי החישובים שלי, ה-FTP המומלץ עבורך כרגע הוא ${ftpModels.ftpRecommended.value} W.`;
     } else {
-      recommendedStr = "לא הצלחתי לגזור ערך FTP מומלץ חד-משמעי מהנתונים.";
+      recommendedStr =
+        "לא הצלחתי לגזור ערך FTP מומלץ חד-משמעי מהנתונים.";
     }
 
+    // אם אין לנו מודלים בכלל – נשאיר את הפורמט הישן (הודעת שגיאה אחת)
+    if (
+      !ftpModels ||
+      !summary ||
+      summary.startsWith("עדיין לא הצלחתי")
+    ) {
+      return (
+        summary +
+        "\n\n" +
+        (recommendedStr + "\nתאשר לי או שתרשום ערך FTP אחר")
+      );
+    }
+
+    const header1 = "בדקתי את הרכיבות שלך מהתקופה האחרונה.";
+    const header2 = "בניתי כמה מודלים ל-FTP:";
+
     return (
+      header1 +
+      "\n\n" +
+      header2 +
+      "\n" +
       summary +
       "\n\n" +
       (recommendedStr + "\nתאשר לי או שתרשום ערך FTP אחר")
@@ -574,17 +588,11 @@ export class OnboardingEngine {
 
     if (hrMaxCandidate != null) {
       bubbles.push(
-        "אם אתה יודע את הדופק המקסימלי שלך, תכתוב לי אותו (למשל 175)."
-      );
-      bubbles.push(
         `לפי הנתונים מסטרבה אני רואה דופק מקסימלי משוער של ${hrMaxCandidate} bpm. אם זה נראה לך סביר, תכתוב "אישור" או תכתוב ערך אחר.`
       );
     } else {
       bubbles.push(
-        "אם אתה יודע את הדופק המקסימלי שלך, תכתוב לי אותו (למשל 175)."
-      );
-      bubbles.push(
-        "אם אתה לא בטוח, תכתוב לי שאתה לא יודע ונמשיך הלאה."
+        "לא קיבלתי עדיין דופק מקסימלי ממך. תכתוב מספר בין 120 ל-220 (למשל 175), או תכתוב 'לא יודע' אם אתה לא בטוח."
       );
     }
 
@@ -728,7 +736,7 @@ export class OnboardingEngine {
         await this._updateTrainingParamsFromState(userId, state);
         await this._saveState(userId, state);
 
-        return "מעולה, יש לנו גם דופק סף. נעבור עכשיו למשך האימונים שלך – כמה זמן אתה בדרך כלל רוכב?";
+        return "נעבור עכשיו למשך האימונים שלך – כמה זמן אתה בדרך כלל רוכב?";
       }
 
       let parsed = null;
@@ -762,14 +770,14 @@ export class OnboardingEngine {
       await this._updateTrainingParamsFromState(userId, state);
       await this._saveState(userId, state);
 
-      return "מעולה, יש לנו גם דופק סף. נעבור עכשיו למשך האימונים שלך – כמה זמן אתה בדרך כלל רוכב?";
+      return "נעבור עכשיו למשך האימונים שלך – כמה זמן אתה בדרך כלל רוכב?";
     }
 
     // fallback – ממשיכים הלאה למשך אימון
     state.stage = "training_time";
     state.data.trainingTimeStep = "fromStrava";
     await this._saveState(userId, state);
-    return "נעבור למשך האימונים שלך – כמה זמן אתה בדרך כלל רוכב?";
+    return "נעבור עכשיו למשך האימונים שלך – כמה זמן אתה בדרך כלל רוכב?";
   }
 
   // ===== TRAINING TIME =====
@@ -843,12 +851,7 @@ export class OnboardingEngine {
         state.stage = "goal_collect";
         await this._saveState(userId, state);
 
-        return (
-          "מעולה, נשתמש בערכים הבאים למשך האימונים שלך:\n" +
-          `• רכיבה קצרה: ${tt.minMinutes} דקות\n` +
-          `• רכיבה ממוצעת: ${tt.avgMinutes} דקות\n` +
-          `• רכיבה ארוכה: ${tt.maxMinutes} דקות`
-        );
+        return "נעבור למטרה שלך לתקופה הקרובה.";
       }
 
       const nums = t
@@ -880,29 +883,13 @@ export class OnboardingEngine {
       state.stage = "goal_collect";
       await this._saveState(userId, state);
 
-      return (
-        "מעולה, נשתמש בערכים הבאים למשך האימונים שלך:\n" +
-        `• רכיבה קצרה: ${minMinutes} דקות\n` +
-        `• רכיבה ממוצעת: ${avgMinutes} דקות\n` +
-        `• רכיבה ארוכה: ${maxMinutes} דקות`
-      );
+      return "נעבור למטרה שלך לתקופה הקרובה.";
     }
 
     // fallback – כבר יש לנו נתונים, ממשיכים
     state.stage = "goal_collect";
     state.data.trainingTimeStep = "done";
     await this._saveState(userId, state);
-
-    const tt = state.data.trainingTime || state.data.trainingTimeFromStrava;
-    if (tt) {
-      const { minMinutes, avgMinutes, maxMinutes } = tt;
-      return (
-        "מעולה, נשתמש בערכים הבאים למשך האימונים שלך:\n" +
-        `• רכיבה קצרה: ${minMinutes} דקות\n` +
-        `• רכיבה ממוצעת: ${avgMinutes} דקות\n` +
-        `• רכיבה ארוכה: ${maxMinutes} דקות`
-      );
-    }
 
     return "נעבור למטרה שלך לתקופה הקרובה.";
   }
