@@ -2,20 +2,15 @@ import sqlite3 from "sqlite3";
 
 sqlite3.verbose();
 
-// ברירת מחדל: /tmp/loew.db (מתאים ל-Render)
-// בחירת מיקום DB:
-// 1. אם יש LOEW_DB_FILE – משתמשים בו.
-// 2. אם רצים על Render עם דיסק קבוע (למשל mount ב-/var/data) – נשתמש שם.
-// 3. אחרת (לוקאלי) – loew.db בתיקייה הנוכחית.
+// בחירת מיקום ה־DB
 let DB_FILE;
-
 if (process.env.LOEW_DB_FILE) {
   DB_FILE = process.env.LOEW_DB_FILE;
 } else if (process.env.RENDER === "true") {
-  // ברנדר: מומלץ לחבר Disk ולתת לו mount path כמו /var/data
+  // ברנדר מומלץ לחבר דיסק קבוע (למשל /var/data)
   DB_FILE = "/var/data/loew.db";
 } else {
-  // לוקאלי: קובץ קבוע בתיקייה
+  // לוקאלי
   DB_FILE = "./loew.db";
 }
 
@@ -35,7 +30,8 @@ const db = new sqlite3.Database(
   }
 );
 
-// עטיפות Promise נוחות
+// ---------- Promise helpers ----------
+
 function run(sql, params = []) {
   return new Promise((resolve, reject) => {
     db.run(sql, params, function (err) {
@@ -66,7 +62,7 @@ function all(sql, params = []) {
 // ---------- Schema ----------
 
 async function init() {
-  // טבלת users בסיסית
+  // users
   await run(`
     CREATE TABLE IF NOT EXISTS users (
       user_id    TEXT PRIMARY KEY,
@@ -75,7 +71,7 @@ async function init() {
     );
   `);
 
-  // טבלת פרמטרים לאימון
+  // training_params
   await run(`
     CREATE TABLE IF NOT EXISTS training_params (
       user_id              TEXT PRIMARY KEY,
@@ -92,7 +88,7 @@ async function init() {
     );
   `);
 
-  // טבלת מצב אונבורדינג
+  // onboarding state
   await run(`
     CREATE TABLE IF NOT EXISTS onboarding_states (
       user_id    TEXT PRIMARY KEY,
@@ -102,7 +98,7 @@ async function init() {
     );
   `);
 
-  // הרחבות אם חסר (למקרה של DB ישן יותר)
+  // הרחבות בטיחות (ל־DB ישן יותר)
   try {
     await run(`ALTER TABLE training_params ADD COLUMN ftp20 INTEGER;`);
   } catch (_) {}
@@ -113,12 +109,17 @@ async function init() {
     await run(`ALTER TABLE training_params ADD COLUMN ftp_from_cp INTEGER;`);
   } catch (_) {}
   try {
-    await run(`ALTER TABLE training_params ADD COLUMN ftp_recommended INTEGER;`);
+    await run(
+      `ALTER TABLE training_params ADD COLUMN ftp_recommended INTEGER;`
+    );
   } catch (_) {}
   try {
-    await run(`ALTER TABLE training_params ADD COLUMN metrics_window_days INTEGER;`);
+    await run(
+      `ALTER TABLE training_params ADD COLUMN metrics_window_days INTEGER;`
+    );
   } catch (_) {}
 
+  // טבלת OAuth טוקנים של סטרבה
   await run(`
     CREATE TABLE IF NOT EXISTS strava_tokens (
       user_id       TEXT PRIMARY KEY,
@@ -128,7 +129,7 @@ async function init() {
     );
   `);
 
-  // טבלה לפרופיל רוכב מסטרבה (כרגע משקל בלבד)
+  // פרופיל אתלט מסטרבה (כרגע משקל)
   await run(`
     CREATE TABLE IF NOT EXISTS strava_athlete (
       user_id    TEXT PRIMARY KEY,
@@ -137,6 +138,7 @@ async function init() {
     );
   `);
 
+  // פעילויות מסטרבה
   await run(`
     CREATE TABLE IF NOT EXISTS strava_activities (
       id                     INTEGER PRIMARY KEY,
@@ -155,6 +157,7 @@ async function init() {
     );
   `);
 
+  // streams (watts / heartrate)
   await run(`
     CREATE TABLE IF NOT EXISTS strava_streams (
       user_id     TEXT,
@@ -165,6 +168,7 @@ async function init() {
     );
   `);
 
+  // עקומות כוח
   await run(`
     CREATE TABLE IF NOT EXISTS power_curves (
       user_id    TEXT,
@@ -176,7 +180,7 @@ async function init() {
   `);
 }
 
-// ---------- עזרי JSON פשוטים ----------
+// ---------- JSON helpers ----------
 
 function parseJsonArray(text) {
   if (!text) return null;
@@ -189,7 +193,7 @@ function parseJsonArray(text) {
   }
 }
 
-// ---------- ניקוי ספייקים (Outliers) ----------
+// ---------- Outliers helper ----------
 
 function filterOutliersRobust(values, { min = null, max = null } = {}) {
   let vals = values.filter((v) => Number.isFinite(v));
@@ -203,7 +207,9 @@ function filterOutliersRobust(values, { min = null, max = null } = {}) {
   const median =
     sorted.length % 2 === 1
       ? sorted[(sorted.length - 1) / 2]
-      : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2;
+      : (sorted[sorted.length / 2 - 1] +
+          sorted[sorted.length / 2]) /
+        2;
 
   const absDeviations = sorted.map((v) => Math.abs(v - median));
   const sortedDev = absDeviations.slice().sort((a, b) => a - b);
@@ -214,15 +220,13 @@ function filterOutliersRobust(values, { min = null, max = null } = {}) {
           sortedDev[sortedDev.length / 2]) /
         2;
 
-  if (!mad || mad === 0) {
-    return vals;
-  }
+  if (!mad || mad === 0) return vals;
 
-  const threshold = 3 * mad; // 3*MAD ~ "חזק" נגד ספייקים
+  const threshold = 3 * mad;
   return vals.filter((v) => Math.abs(v - median) <= threshold);
 }
 
-// ---------- לוגיקת DB ראשית ----------
+// ---------- DB logic ----------
 
 export async function createDbImpl() {
   await init();
@@ -265,9 +269,10 @@ export async function createDbImpl() {
     return { stage: row.stage || null, data };
   }
 
-  async function saveOnboardingState(userId, state) {
+  // >>> זה החלק הקריטי שתואם ל־OnboardingEngine <<<
+  async function saveOnboardingState(userId, stage, data) {
     const now = Math.floor(Date.now() / 1000);
-    const dataJson = JSON.stringify(state.data || {});
+    const dataJson = JSON.stringify(data || {});
     const existing = await get(
       `SELECT user_id FROM onboarding_states WHERE user_id = ?`,
       [userId]
@@ -277,14 +282,14 @@ export async function createDbImpl() {
       await run(
         `INSERT INTO onboarding_states (user_id, stage, data_json, updated_at)
          VALUES (?, ?, ?, ?)`,
-        [userId, state.stage || null, dataJson, now]
+        [userId, stage || null, dataJson, now]
       );
     } else {
       await run(
         `UPDATE onboarding_states
          SET stage = ?, data_json = ?, updated_at = ?
          WHERE user_id = ?`,
-        [state.stage || null, dataJson, now, userId]
+        [stage || null, dataJson, now, userId]
       );
     }
   }
@@ -446,7 +451,7 @@ export async function createDbImpl() {
     await run(`DELETE FROM strava_athlete WHERE user_id = ?`, [userId]);
   }
 
-  // ===== חישוב נפח ו-SUMMARY מתוך ה-DB =====
+  // ===== SUMMARY & VOLUME =====
 
   async function computeVolumeAndSummaryFromDb(userId) {
     const DAYS_BACK = await getMetricsWindowDays(userId);
@@ -460,7 +465,6 @@ export async function createDbImpl() {
       "MountainBikeRide",
       "EBikeRide",
     ];
-
     const placeholders = RIDE_TYPES.map(() => "?").join(",");
 
     const rows = await all(
@@ -494,7 +498,7 @@ export async function createDbImpl() {
     let maxDurationSec = 0;
     let offroadCount = 0;
 
-    const weeks = new Map(); // key: YYYY-WW, value: { timeSec, rides }
+    const weeks = new Map();
 
     for (const r of rows) {
       const mt = Number(r.moving_time || 0);
@@ -523,7 +527,8 @@ export async function createDbImpl() {
       const d = new Date(startDateSec * 1000);
       const year = d.getUTCFullYear();
       const firstJan = new Date(Date.UTC(year, 0, 1));
-      const dayOfYear = Math.floor((d - firstJan) / (24 * 3600 * 1000)) + 1;
+      const dayOfYear =
+        Math.floor((d - firstJan) / (24 * 3600 * 1000)) + 1;
       const week = Math.ceil(dayOfYear / 7);
       const weekKey = `${year}-${week}`;
 
@@ -580,7 +585,7 @@ export async function createDbImpl() {
     return { trainingSummary, volume };
   }
 
-  // ===== חישוב מודלי FTP ודופק מתוך training_params =====
+  // ===== FTP & HR MODELS FROM DB =====
 
   async function computeFtpAndHrModelsFromDb(userId) {
     const row = await get(
@@ -645,7 +650,7 @@ export async function createDbImpl() {
     return { ftpModels, hr, metricsWindowDays };
   }
 
-  // ===== STRAVA HELPERS: FETCH + STREAMS + POWER CURVES + FTP =====
+  // ===== STRAVA helpers (fetch + streams + power curves + FTP + HR) =====
 
   async function fetchStravaJson(url, accessToken, label) {
     const res = await fetch(url, {
@@ -740,7 +745,7 @@ export async function createDbImpl() {
       return;
     }
 
-    const WINDOWS = [60, 180, 300, 480, 1200]; // 1, 3, 5, 8, 20 דקות
+    const WINDOWS = [60, 180, 300, 480, 1200]; // 1,3,5,8,20 דקות
     const best = new Map();
     for (const w of WINDOWS) best.set(w, 0);
 
@@ -791,7 +796,6 @@ export async function createDbImpl() {
     console.log("[STRAVA] Power curves updated for", userId);
   }
 
-  // FTP לפי חתך ימים דינמי מתוך streams + activities
   async function computeFtpModelsFromStreamsWithWindow(userId) {
     const DAYS_BACK = await getMetricsWindowDays(userId);
     const nowSec = Math.floor(Date.now() / 1000);
@@ -872,8 +876,7 @@ export async function createDbImpl() {
     if (records20.length) {
       const sorted = records20.slice().sort((a, b) => b - a);
       const top3 = sorted.slice(0, 3);
-      const mean20 =
-        top3.reduce((s, v) => s + v, 0) / top3.length;
+      const mean20 = top3.reduce((s, v) => s + v, 0) / top3.length;
       ftp20 = Math.round(mean20 * 0.95);
       candidates.push(ftp20);
     }
@@ -881,8 +884,7 @@ export async function createDbImpl() {
     if (records3.length) {
       const sorted = records3.slice().sort((a, b) => b - a);
       const top3 = sorted.slice(0, 3);
-      const mean3 =
-        top3.reduce((s, v) => s + v, 0) / top3.length;
+      const mean3 = top3.reduce((s, v) => s + v, 0) / top3.length;
       ftpFrom3min = Math.round(mean3 * 0.8);
       candidates.push(ftpFrom3min);
     }
@@ -942,8 +944,6 @@ export async function createDbImpl() {
     );
   }
 
-  // ===== HR (עם ניקוי ספייקים + חתך ימים) =====
-
   async function recomputeHrFromActivities(userId) {
     const DAYS_BACK = await getMetricsWindowDays(userId);
     const nowSec = Math.floor(Date.now() / 1000);
@@ -973,7 +973,6 @@ export async function createDbImpl() {
       )
       .filter((v) => Number.isFinite(v));
 
-    // טווח הגיוני לדופק מקסימלי
     vals = filterOutliersRobust(vals, { min: 100, max: 230 });
 
     if (!vals.length) {
@@ -984,7 +983,6 @@ export async function createDbImpl() {
       return;
     }
 
-    // לוקחים את ה-3 הגבוהים ביותר אחרי הניקוי
     const topSorted = vals.slice().sort((a, b) => b - a);
     const top3 = topSorted.slice(0, 3);
     const hrMaxCandidate = Math.round(
@@ -1019,7 +1017,7 @@ export async function createDbImpl() {
     );
   }
 
-  // ===== STRAVA INGEST (מלא: API → DB → Metrics) =====
+  // ===== STRAVA ingest (full) =====
 
   async function pullAndStoreStravaData(userId, tokens) {
     const accessToken = tokens && tokens.accessToken;
@@ -1028,7 +1026,7 @@ export async function createDbImpl() {
       return;
     }
 
-    // 1) Athlete profile (משקל)
+    // 1) Athlete profile
     try {
       const athlete = await fetchStravaJson(
         "https://www.strava.com/api/v3/athlete",
@@ -1042,7 +1040,6 @@ export async function createDbImpl() {
       console.error("[STRAVA] Failed to fetch athlete profile:", err);
     }
 
-    // 2) Activities + basic metrics
     const RIDE_TYPES = [
       "Ride",
       "VirtualRide",
@@ -1053,7 +1050,7 @@ export async function createDbImpl() {
     const perPage = 100;
     const maxPages = 3;
     const nowSec = Math.floor(Date.now() / 1000);
-    const sinceSec = nowSec - 180 * 24 * 3600; // עדיין חצי שנה אחורה לאינג'סט; החתך יקרה בחישובים
+    const sinceSec = nowSec - 180 * 24 * 3600; // חצי שנה אחורה לאינג'סט
 
     const activityIdsForPower = [];
 
@@ -1088,7 +1085,6 @@ export async function createDbImpl() {
           ? Math.floor(new Date(a.start_date).getTime() / 1000)
           : 0;
         if (startDateSec && startDateSec < sinceSec) {
-          // ישנים מדי – לא צריך להמשיך עוד הרבה עמודים
           continue;
         }
 
@@ -1155,7 +1151,6 @@ export async function createDbImpl() {
       }
     }
 
-    // 3) Streams + power curves + FTP models + HR
     if (activityIdsForPower.length) {
       console.log(
         "[STRAVA] Fetching streams for",
@@ -1199,7 +1194,6 @@ export async function createDbImpl() {
       );
     }
 
-    // תמיד בסוף מחשבים summary + ftp/hr מה-DB (כמו קודם, אבל עם windowDays)
     const { trainingSummary, volume } =
       await computeVolumeAndSummaryFromDb(userId);
     const { ftpModels, hr, metricsWindowDays } =
@@ -1214,7 +1208,7 @@ export async function createDbImpl() {
     };
   }
 
-  // ===== משקל רוכב מסטרבה =====
+  // ===== Athlete profile (weight) =====
 
   async function saveAthleteProfile(userId, weightKg) {
     if (weightKg == null) return;
@@ -1261,7 +1255,7 @@ export async function createDbImpl() {
   return {
     ensureUser,
     getOnboardingState,
-    saveOnboardingState,
+    saveOnboardingState, // חשוב: חתימה חדשה שתואמת ל־OnboardingEngine
     getTrainingParams,
     saveTrainingParams,
     getMetricsWindowDays,
