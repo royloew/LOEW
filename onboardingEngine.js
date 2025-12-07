@@ -92,29 +92,17 @@ export class OnboardingEngine {
   async _saveState(userId, state) {
     if (!this.db || typeof this.db.saveOnboardingState !== "function") return;
     try {
-      await this.db.saveOnboardingState(userId, {
-        stage: state.stage,
-        data: state.data || {},
-      });
+      await this.db.saveOnboardingState(userId, state.stage, state.data || {});
     } catch (e) {
       console.error("OnboardingEngine._saveState error:", e);
     }
   }
 
-  // ===== STRAVA BOOTSTRAP =====
-
   async _bootstrapStateFromStrava(userId) {
-    let hasTokens = false;
     let snapshot = null;
 
     try {
-      if (this.db && typeof this.db.getStravaTokens === "function") {
-        const tokens = await this.db.getStravaTokens(userId);
-        hasTokens = !!(tokens && tokens.accessToken);
-      }
-
       if (
-        hasTokens &&
         this.db &&
         typeof this.db.getStravaOnboardingSnapshot === "function"
       ) {
@@ -124,33 +112,19 @@ export class OnboardingEngine {
       console.error("OnboardingEngine._bootstrapStateFromStrava error:", e);
     }
 
-    if (!hasTokens) {
-      return {
-        stage: "intro",
-        data: {
-          stravaConnected: false,
-          trainingSummary: null,
-          volume: null,
-          ftpModels: null,
-          hr: null,
-          personal: {},
-        },
-      };
-    }
-
-    const data = {
-      stravaConnected: true,
-      trainingSummary: snapshot ? snapshot.trainingSummary || null : null,
-      volume: snapshot ? snapshot.volume || null : null,
-      ftpModels: snapshot ? snapshot.ftpModels || null : null,
-      hr: snapshot ? snapshot.hr || null : null,
-      personal: snapshot && snapshot.personal ? snapshot.personal : {},
+    const state = {
+      stage: "intro",
+      data: {
+        snapshotAvailable: !!snapshot,
+        trainingSummary: snapshot ? snapshot.trainingSummary || null : null,
+        volume: snapshot ? snapshot.volume || null : null,
+        ftpModels: snapshot ? snapshot.ftpModels || null : null,
+        hr: snapshot ? snapshot.hr || null : null,
+        personal: snapshot ? snapshot.personal || {} : {},
+      },
     };
 
-    return {
-      stage: "post_strava_summary",
-      data,
-    };
+    return state;
   }
 
   async _ensureStravaMetricsInState(userId, state) {
@@ -180,9 +154,9 @@ export class OnboardingEngine {
           if (!hasHr) {
             state.data.hr = snapshot.hr || null;
           }
-          if (!state.data.personal) {
-            state.data.personal = snapshot.personal || {};
-          }
+          const currentPersonal = state.data.personal || {};
+          const snapshotPersonal = snapshot.personal || {};
+          state.data.personal = { ...snapshotPersonal, ...currentPersonal };
         }
       }
     } catch (e) {
@@ -198,54 +172,65 @@ export class OnboardingEngine {
   // ===== INTRO =====
 
   async _stageIntro(userId, text, state) {
-    const introText =
-      "נעים מאוד, אני LOEW — המאמן האישי שלך.\n" +
-      "אני מבסס את כל ההמלצות על ידע מקצועי, מתודולוגיות אימון מהטופ העולמי וניתוח פרסונלי של הנתונים שלך — כולל שינה, תחושה, עומס, בריאות, תזונה וכל מה שמשפיע על הביצועים שלך.\n\n" +
-      "המטרה שלי: לבנות עבורך אימונים חכמים, פשוטים ליישום, שמתקדמים בקצב שמתאים בדיוק לך.\n\n" +
-      "נתחיל מחיבור לסטרבה כדי שאוכל לראות את הרכיבות האחרונות שלך.";
-
-    let hasStravaTokens = false;
-    try {
-      if (this.db && typeof this.db.getStravaTokens === "function") {
-        const tokens = await this.db.getStravaTokens(userId);
-        hasStravaTokens = !!(tokens && tokens.accessToken);
-      }
-    } catch (err) {
-      console.error("OnboardingEngine._stageIntro getStravaTokens error:", err);
-    }
-
-    if (!hasStravaTokens) {
-      state.stage = "intro";
+    if (!text) {
+      state.stage = "post_strava_summary";
       await this._saveState(userId, state);
-      const connectUrl = `/auth/strava?userId=${encodeURIComponent(userId)}`;
+
+      if (!state.data.snapshotAvailable) {
+        return (
+          "נעים מאוד, אני LOEW — המאמן האישי שלך.\n" +
+          "אני מבסס את כל ההמלצות על ידע מקצועי, מתודולוגיות אימון מהטופ העולמי וניתוח פרסונלי של הנתונים שלך — כולל שינה, תחושה, עומס, בריאות, תזונה וכל מה שמשפיע על הביצועים שלך.\n\n" +
+          "המטרה שלי: לבנות עבורך אימונים חכמים, יעילים ומהנים, שמתאימים בדיוק לחיים שלך.\n\n" +
+          "כדי שאוכל לעבוד עם נתונים אמיתיים, נתחיל בחיבור לסטרבה (Strava).\n" +
+          "לחץ על הקישור הבא כדי להתחבר לסטרבה, ואז נחזור לכאן ונמשיך:"
+        );
+      }
+
       return (
-        introText +
-        "\n\n" +
-        `לחיבור לסטרבה, תלחץ על הקישור הבא:\n${connectUrl}`
+        "נעים מאוד, אני LOEW — המאמן האישי שלך.\n" +
+        "אני מבסס את כל ההמלצות על ידע מקצועי, מתודולוגיות אימון מהטופ העולמי וניתוח פרסונלי של הנתונים שלך — כולל שינה, תחושה, עומס, בריאות, תזונה וכל מה שמשפיע על הביצועים שלך.\n\n" +
+        "המטרה שלי: לבנות עבורך אימונים חכמים, יעילים ומהנים, שמתאימים בדיוק לחיים שלך.\n\n" +
+        "כבר יש לי נתונים מסטרבה שלך — נתחיל מסיכום קצר ואז נשלים עוד כמה פרטים חשובים."
       );
     }
 
-    state = await this._bootstrapStateFromStrava(userId);
+    const lower = text.toLowerCase();
+    if (lower.includes("סטרבה") || lower.includes("strava")) {
+      state.stage = "post_strava_summary";
+      await this._saveState(userId, state);
+
+      if (!state.data.snapshotAvailable) {
+        return (
+          "כדי שאוכל לנתח את הרכיבות שלך — צריך להתחבר לסטרבה.\n" +
+          "לחץ על הקישור הבא כדי להתחבר:"
+        );
+      }
+
+      return "כבר התחברת לסטרבה בעבר — נתחיל מסיכום קצר של מה שאני רואה מהנתונים.";
+    }
+
+    state.stage = "post_strava_summary";
     await this._saveState(userId, state);
-    return await this._stagePostStravaSummary(userId, state);
+
+    if (!state.data.snapshotAvailable) {
+      return (
+        "כדי שאוכל לנתח את הרכיבות שלך — צריך להתחבר לסטרבה.\n" +
+        "לחץ על הקישור הבא כדי להתחבר:"
+      );
+    }
+
+    return "מצוין, נתחיל מסיכום קצר של הנתונים שלך מסטרבה ואז נשלים פרטים אישיים.";
   }
 
-  // ===== STRAVA SUMMARY =====
-
   _formatTrainingSummary(ts) {
-    if (!ts || !ts.rides_count) {
-      return "לא מצאתי מספיק רכיבות מהתקופה האחרונה כדי להציג סיכום נפח.";
+    if (!ts || !ts.rides_count || ts.rides_count <= 0) {
+      return "לא הצלחתי למצוא מספיק רכיבות מהתקופה האחרונה כדי להציג סיכום נפח.";
     }
 
     const rides = ts.rides_count;
     const hours = (ts.totalMovingTimeSec / 3600).toFixed(1);
-    const km = ts.totalDistanceKm.toLocaleString("he-IL", {
-      minimumFractionDigits: 1,
-      maximumFractionDigits: 1,
-    });
-    const elevation = Math.round(ts.totalElevationGainM).toLocaleString(
-      "he-IL"
-    );
+    const km = ts.totalDistanceKm.toFixed(1);
+    const elevation = Math.round(ts.totalElevationGainM);
     const avgMin = Math.round(ts.avgDurationSec / 60);
 
     return [
@@ -313,23 +298,36 @@ export class OnboardingEngine {
       }
 
       if (!t && weightFromStrava != null) {
-        personal.weightKg = weightFromStrava;
-      } else if (parsed != null) {
-        personal.weightKg = parsed;
-      } else {
-        return 'כדי שאוכל לעבוד עם אזורי מאמץ נכונים – תכתוב משקל בק"ג (למשל 71).';
+        return `מופיע בסטרבה משקל ${weightFromStrava} ק"ג — לאשר או שאתה מעוניין לעדכן?`;
       }
 
-      state.data.personal = personal;
+      if (t && !parsed) {
+        if (weightFromStrava != null) {
+          return (
+            "לא הצלחתי להבין את המשקל שכתבת.\n" +
+            `בסטרבה מופיע ${weightFromStrava} ק\"ג.\n` +
+            "תכתוב משקל מספרי בק\"ג (למשל 72.5), או תכתוב 'אישור' אם אתה רוצה להשאיר כמו שמופיע."
+          );
+        }
+        return "לא הצלחתי להבין את המשקל שכתבת. תכתוב מספר בק\"ג (למשל 72.5).";
+      }
+
+      if (t === "אישור" && weightFromStrava != null) {
+        state.data.personal.weight = weightFromStrava;
+      } else if (parsed != null) {
+        state.data.personal.weight = parsed;
+      } else if (!state.data.personal.weight && !parsed) {
+        return "כדי שאוכל לחשב עומסים בצורה נכונה — אני צריך את המשקל שלך בק\"ג.";
+      }
+
       state.data.personalStep = "height";
       await this._saveState(userId, state);
-
       return "מה הגובה שלך בסנטימטרים?";
     }
 
     // גובה
     if (step === "height") {
-      const personal = state.data.personal;
+      state.data.personal.height = state.data.personal.height || null;
 
       let parsed = null;
       if (t) {
@@ -340,66 +338,81 @@ export class OnboardingEngine {
         }
       }
 
-      if (parsed != null) {
-        personal.heightCm = parsed;
-      } else {
-        return 'כדי שאוכל לדייק את החישובים – תכתוב גובה בס"מ (למשל 178).';
+      if (!parsed) {
+        return "תכתוב גובה בסנטימטרים (למשל 178).";
       }
 
-      state.data.personal = personal;
+      state.data.personal.height = parsed;
       state.data.personalStep = "age";
       await this._saveState(userId, state);
-
       return "בן כמה אתה?";
     }
 
     // גיל
     if (step === "age") {
-      const age = parseInt(t, 10);
-      if (!Number.isFinite(age) || age < 10 || age > 90) {
-        return "כדי שאדע לעבוד לפי טווח גיל מתאים – בן כמה אתה?";
+      let parsed = null;
+      if (t) {
+        const cleaned = t.replace(/[^\d.,]/g, "").replace(",", ".");
+        const num = parseFloat(cleaned);
+        if (Number.isFinite(num) && num > 10 && num < 100) {
+          parsed = Math.round(num);
+        }
       }
 
-      state.data.personal.age = age;
+      if (!parsed) {
+        return "תכתוב גיל במספרים (למשל 35).";
+      }
+
+      state.data.personal.age = parsed;
       state.data.personalStep = "done";
       state.stage = "ftp_intro";
       await this._saveState(userId, state);
 
-      return await this._stageFtpIntro(userId, state);
+      return "מעולה, יש לי עכשיו נתונים בסיסיים עליך. בוא נעבור לחלק של ה-FTP — הסמן המרכזי לעומס ולרמת הקושי באימונים.";
     }
 
-    state.data.personalStep = "weight";
+    state.data.personalStep = "done";
+    state.stage = "ftp_intro";
     await this._saveState(userId, state);
-    return 'נתחיל ממשקל — כמה אתה שוקל בק"ג?';
+    return "נמשיך ל-FTP — הסמן המרכזי לעומס ולרמת הקושי באימונים.";
   }
 
   // ===== FTP =====
 
   _formatFtpModels(ftpModels) {
     if (!ftpModels) {
-      return "לא הצלחתי לחשב מודלים ל-FTP מהנתונים הקיימים.";
+      return "עדיין לא הצלחתי לחשב מודלים ל-FTP מהנתונים שלך.";
     }
 
     const lines = ["בדקתי את הרכיבות שלך ובניתי כמה מודלים ל-FTP:"];
+    const addLine = (key, label) => {
+      if (ftpModels[key] && ftpModels[key].value != null) {
+        lines.push(
+          `• ${label}: ${ftpModels[key].value} W${
+            ftpModels[key].extraLabel ? ` (${ftpModels[key].extraLabel})` : ""
+          }`
+        );
+      }
+    };
 
-    if (ftpModels.ftp20 && ftpModels.ftp20.value != null) {
+    addLine("ftp20", "FTP 20min (95%)");
+    addLine("ftpFrom3min", "FTP from 3min model");
+    addLine("ftpFromCP", "Critical Power model");
+    addLine("ftpFrom8min", "FTP from 8min model");
+
+    if (ftpModels.ftpFromStrava && ftpModels.ftpFromStrava.value != null) {
       lines.push(
-        `• ${ftpModels.ftp20.label}: ${ftpModels.ftp20.value} W (מבוסס על 20 דקות חזקות)`
+        `• FTP from Strava: ${ftpModels.ftpFromStrava.value} W (כפי שמופיע בסטרבה)`
       );
     }
-    if (ftpModels.ftpFrom3min && ftpModels.ftpFrom3min.value != null) {
+
+    if (
+      ftpModels.ftpRecommended &&
+      ftpModels.ftpRecommended.value != null &&
+      lines.length > 1
+    ) {
       lines.push(
-        `• ${ftpModels.ftpFrom3min.label}: ${ftpModels.ftpFrom3min.value} W (מודל שמתבסס על 3 דקות חזקות)`
-      );
-    }
-    if (ftpModels.ftpFromCP && ftpModels.ftpFromCP.value != null) {
-      lines.push(
-        `• ${ftpModels.ftpFromCP.label}: ${ftpModels.ftpFromCP.value} W (Critical Power מחושב ממספר חלונות זמן)`
-      );
-    }
-    if (ftpModels.ftpRecommended && ftpModels.ftpRecommended.value != null) {
-      lines.push(
-        `• ${ftpModels.ftpRecommended.label}: ${ftpModels.ftpRecommended.value} W (חציון בין המודלים הסבירים)`
+        `• Recommended FTP (median): ${ftpModels.ftpRecommended.value} W (חציון בין המודלים הסבירים)`
       );
     }
 
@@ -408,12 +421,12 @@ export class OnboardingEngine {
 
   async _stageFtpIntro(userId, state) {
     state = await this._ensureStravaMetricsInState(userId, state);
-
     const ftpModels = state.data.ftpModels || null;
-    const summary = this._formatFtpModels(ftpModels);
 
     state.stage = "ftp_choice";
     await this._saveState(userId, state);
+
+    const summary = this._formatFtpModels(ftpModels);
 
     let recommendedStr = "";
     if (ftpModels && ftpModels.ftpRecommended && ftpModels.ftpRecommended.value) {
@@ -425,9 +438,7 @@ export class OnboardingEngine {
     return (
       summary +
       "\n\n" +
-      recommendedStr +
-      "\n\n" +
-      "אם ה-FTP שאתה משתמש בו היום דומה למה שאני מציע, תכתוב לי את הערך שאתה רוצה שנעבוד איתו (למשל 240)."
+      (recommendedStr + "\nתאשר לי או שתרשום ערך FTP אחר")
     );
   }
 
@@ -459,36 +470,32 @@ export class OnboardingEngine {
 
     if (hrMaxCandidate != null) {
       bubbles.push(
-        `לפי הנתונים מסטרבה אני רואה דופק מקסימלי משוער של ${hrMaxCandidate} bpm.`
+        "אם אתה יודע את הדופק המקסימלי שלך, תכתוב לי אותו (למשל 175)."
       );
       bubbles.push(
-        'אם זה נראה לך סביר, תכתוב "אישור". אם אתה מעדיף לעדכן, תכתוב את הדופק המקסימלי שלך (למשל 175).'
+        `לפי הנתונים מסטרבה אני רואה דופק מקסימלי משוער של ${hrMaxCandidate} bpm. אם זה נראה לך סביר, תכתוב "אישור" או תכתוב ערך אחר.`
       );
     } else {
       bubbles.push(
         "אם אתה יודע את הדופק המקסימלי שלך, תכתוב לי אותו (למשל 175)."
       );
-      bubbles.push(
-        'אם אתה לא בטוח, תכתוב לי שאתה לא יודע ונמשיך הלאה.'
-      );
+      bubbles.push("אם אתה לא בטוח, תכתוב לי שאתה לא יודע ונמשיך הלאה.");
     }
 
     return bubbles.join("\n\n");
   }
 
   _extractHrCandidates(state) {
-    const hr = (state.data && state.data.hr) || {};
+    const hr = state.data && state.data.hr ? state.data.hr : null;
     let hrMaxCandidate = null;
     let hrThresholdCandidate = null;
 
-    if (typeof hr.hrMax === "number") {
-      hrMaxCandidate = Math.round(hr.hrMax);
-    }
-
-    if (typeof hr.hrThreshold === "number") {
-      hrThresholdCandidate = Math.round(hr.hrThreshold);
-    } else if (hrMaxCandidate != null) {
-      hrThresholdCandidate = Math.round(hrMaxCandidate * 0.9);
+    if (hr) {
+      if (hr.hrMax != null) hrMaxCandidate = hr.hrMax;
+      if (hr.hrThreshold != null) hrThresholdCandidate = hr.hrThreshold;
+      if (!hrThresholdCandidate && hr.hrThresholdFromModels != null) {
+        hrThresholdCandidate = hr.hrThresholdFromModels;
+      }
     }
 
     return { hrMaxCandidate, hrThresholdCandidate };
@@ -498,193 +505,258 @@ export class OnboardingEngine {
 
   async _stageHrCollect(userId, text, state) {
     const t = (text || "").trim();
-    state.data = state.data || {};
-
-    const step = state.data.hrStep || "hrMax";
+    state.data.hr = state.data.hr || {};
+    let step = state.data.hrStep || "hrMax";
 
     const { hrMaxCandidate, hrThresholdCandidate } =
       this._extractHrCandidates(state);
 
-    // דופק מקסימלי
+    // HRmax
     if (step === "hrMax") {
-      if (
-        t === "אישור" ||
-        t.toLowerCase() === "ok" ||
-        t.toLowerCase() === "okay"
-      ) {
+      if (t === "לא יודע" || t === "לא יודעת") {
+        state.data.hr.hrMaxUser = null;
         if (hrMaxCandidate != null) {
-          state.data.hrMaxFinal = hrMaxCandidate;
-          state.data.hrStep = "hrThreshold";
-          await this._saveState(userId, state);
-
-          const thr =
-            hrThresholdCandidate != null
-              ? hrThresholdCandidate
-              : Math.round(hrMaxCandidate * 0.9);
-
-          return [
-            `הדופק סף המשוער שלי הוא ${thr} bpm.`,
-            'אם זה נראה לך סביר, תכתוב "אישור". אם אתה מעדיף לעדכן, תכתוב את הדופק סף שלך (למשל 160).',
-          ].join("\n\n");
+          state.data.hr.hrMaxFinal = hrMaxCandidate;
         }
-
-        return (
-          "כדי שאוכל לעבוד עם אזורי דופק מדויקים – תכתוב את הדופק המקסימלי שלך (בין 100 ל-230 bpm, למשל 175)."
-        );
-      }
-
-      const num = parseInt(t.replace(/[^\d]/g, ""), 10);
-      if (Number.isFinite(num) && num >= 100 && num <= 230) {
-        state.data.hrMaxFinal = num;
         state.data.hrStep = "hrThreshold";
         await this._saveState(userId, state);
 
-        const thr = Math.round(num * 0.9);
-
-        return [
-          `הדופק סף המשוער שלי הוא ${thr} bpm.`,
-          'אם זה נראה לך סביר, תכתוב "אישור". אם אתה מעדיף לעדכן, תכתוב את הדופק סף שלך (למשל 160).',
-        ].join("\n\n");
-      }
-
-      if (hrMaxCandidate != null) {
-        return [
-          `כדי שאוכל לעבוד עם אזורי דופק מדויקים – תכתוב את הדופק המקסימלי שלך (בין 100 ל-230 bpm, למשל 175).`,
-          `לפי הנתונים מסטרבה אני רואה כרגע דופק מקסימלי משוער של ${hrMaxCandidate} bpm.`,
-        ].join("\n\n");
-      } else {
-        return (
-          "כדי שאוכל לעבוד עם אזורי דופק מדויקים – תכתוב את הדופק המקסימלי שלך (בין 100 ל-230 bpm, למשל 175)."
-        );
-      }
-    }
-
-    // דופק סף
-    if (step === "hrThreshold") {
-      if (
-        t === "אישור" ||
-        t.toLowerCase() === "ok" ||
-        t.toLowerCase() === "okay"
-      ) {
-        const maxFinal = state.data.hrMaxFinal || hrMaxCandidate || null;
-        const thr =
-          hrThresholdCandidate != null
-            ? hrThresholdCandidate
-            : maxFinal != null
-            ? Math.round(maxFinal * 0.9)
-            : null;
-
-        if (thr != null) {
-          state.data.hrThresholdFinal = thr;
+        if (hrThresholdCandidate != null) {
+          return (
+            `הדופק סף המשוער שלי הוא ${hrThresholdCandidate} bpm.\n\n` +
+            'אם זה נראה לך סביר, תכתוב "אישור". אם אתה מעדיף לעדכן, תכתוב את הדופק סף שלך (למשל 160).'
+          );
         }
 
-        state.data.hrStep = "done";
-        state.stage = "training_time";
-        await this._saveState(userId, state);
-
-        return await this._stageTrainingTime(userId, "", state);
+        return (
+          "לא קיבלתי ערך דופק מקסימלי ממך.\n" +
+          "נעבור לדופק סף — אם אתה יודע אותו, תכתוב לי (למשל 160). אם אתה לא יודע, תכתוב 'לא יודע'."
+        );
       }
 
-      const num = parseInt(t.replace(/[^\d]/g, ""), 10);
-      if (Number.isFinite(num) && num >= 90 && num <= 220) {
-        state.data.hrThresholdFinal = num;
-        state.data.hrStep = "done";
-        state.stage = "training_time";
+      if (t === "אישור" && hrMaxCandidate != null) {
+        state.data.hr.hrMaxUser = hrMaxCandidate;
+        state.data.hr.hrMaxFinal = hrMaxCandidate;
+        state.data.hrStep = "hrThreshold";
         await this._saveState(userId, state);
 
-        return await this._stageTrainingTime(userId, "", state);
+        if (hrThresholdCandidate != null) {
+          return (
+            `הדופק סף המשוער שלי הוא ${hrThresholdCandidate} bpm.\n\n` +
+            'אם זה נראה לך סביר, תכתוב "אישור". אם אתה מעדיף לעדכן, תכתוב את הדופק סף שלך (למשל 160).'
+          );
+        }
+
+        return (
+          "מעולה.\n" +
+          "עכשיו נעבור לדופק סף — אם אתה יודע אותו, תכתוב לי (למשל 160). אם אתה לא יודע, תכתוב 'לא יודע'."
+        );
       }
 
-      const maxFinal = state.data.hrMaxFinal || hrMaxCandidate || null;
-      const thr =
-        hrThresholdCandidate != null
-          ? hrThresholdCandidate
-          : maxFinal != null
-          ? Math.round(maxFinal * 0.9)
-          : null;
+      let parsed = null;
+      if (t) {
+        const cleaned = t.replace(/[^\d.,]/g, "").replace(",", ".");
+        const num = parseFloat(cleaned);
+        if (Number.isFinite(num) && num > 100 && num < 230) {
+          parsed = Math.round(num);
+        }
+      }
 
-      if (thr != null) {
-        return [
-          `הדופק סף המשוער שלי הוא ${thr} bpm.`,
-          'אם זה נראה לך סביר, תכתוב "אישור". אם אתה מעדיף לעדכן, תכתוב מספר אחר.',
-        ].join("\n\n");
+      if (parsed == null) {
+        const bubbles = [];
+        if (hrMaxCandidate != null) {
+          bubbles.push(
+            "לא הצלחתי להבין את הערך שכתבת לדופק מקסימלי.\nתכתוב מספר בין 120 ל-220 (למשל 175)."
+          );
+          bubbles.push(
+            `לפי הנתונים מסטרבה אני רואה דופק מקסימלי משוער של ${hrMaxCandidate} bpm. אם זה נראה לך סביר, תכתוב "אישור".`
+          );
+        } else {
+          bubbles.push(
+            "לא הצלחתי להבין את הערך שכתבת לדופק מקסימלי. תכתוב מספר בין 120 ל-220 (למשל 175)."
+          );
+        }
+        return bubbles.join("\n\n");
+      }
+
+      state.data.hr.hrMaxUser = parsed;
+      state.data.hr.hrMaxFinal = parsed;
+      state.data.hrStep = "hrThreshold";
+      await this._saveState(userId, state);
+
+      if (hrThresholdCandidate != null) {
+        return (
+          `הדופק סף המשוער שלי הוא ${hrThresholdCandidate} bpm.\n\n` +
+          'אם זה נראה לך סביר, תכתוב "אישור". אם אתה מעדיף לעדכן, תכתוב את הדופק סף שלך (למשל 160).'
+        );
       }
 
       return (
-        "כדי שאוכל לעבוד עם דופק סף מדויק – תכתוב את הדופק סף שלך (אם אתה יודע). אם לא, אפשר לכתוב שאתה לא יודע ונמשיך הלאה."
+        "מעולה.\n" +
+        "עכשיו נעבור לדופק סף — אם אתה יודע אותו, תכתוב לי (למשל 160). אם אתה לא יודע, תכתוב 'לא יודע'."
       );
     }
 
-    state.data.hrStep = "hrMax";
+    // HR threshold
+    if (step === "hrThreshold") {
+      if (t === "לא יודע" || t === "לא יודעת") {
+        state.data.hr.hrThresholdUser = null;
+        if (hrThresholdCandidate != null) {
+          state.data.hr.hrThresholdFinal = hrThresholdCandidate;
+        }
+        state.stage = "training_time";
+        state.data.trainingTimeStep = "fromStrava";
+        await this._saveState(userId, state);
+
+        return "נעבור עכשיו למשך האימונים שלך – כמה זמן אתה בדרך כלל רוכב?";
+      }
+
+      if (t === "אישור" && hrThresholdCandidate != null) {
+        state.data.hr.hrThresholdUser = hrThresholdCandidate;
+        state.data.hr.hrThresholdFinal = hrThresholdCandidate;
+        state.stage = "training_time";
+        state.data.trainingTimeStep = "fromStrava";
+        await this._saveState(userId, state);
+
+        return "מעולה, יש לנו גם דופק סף. נעבור עכשיו למשך האימונים שלך – כמה זמן אתה בדרך כלל רוכב?";
+      }
+
+      let parsed = null;
+      if (t) {
+        const cleaned = t.replace(/[^\d.,]/g, "").replace(",", ".");
+        const num = parseFloat(cleaned);
+        if (Number.isFinite(num) && num > 80 && num < 220) {
+          parsed = Math.round(num);
+        }
+      }
+
+      if (parsed == null) {
+        if (hrThresholdCandidate != null) {
+          return (
+            "לא הצלחתי להבין את הערך שכתבת לדופק סף.\n" +
+            'תכתוב מספר בין 120 ל-200 (למשל 160), או תכתוב "לא יודע" אם אתה לא בטוח.\n\n' +
+            `לפי הנתונים מסטרבה אני רואה דופק סף משוער של ${hrThresholdCandidate} bpm.`
+          );
+        }
+        return (
+          "לא הצלחתי להבין את הערך שכתבת לדופק סף.\n" +
+          'תכתוב מספר בין 120 ל-200 (למשל 160), או תכתוב "לא יודע" אם אתה לא בטוח.'
+        );
+      }
+
+      state.data.hr.hrThresholdUser = parsed;
+      state.data.hr.hrThresholdFinal = parsed;
+      state.stage = "training_time";
+      state.data.trainingTimeStep = "fromStrava";
+      await this._saveState(userId, state);
+
+      return "מעולה, יש לנו גם דופק סף. נעבור עכשיו למשך האימונים שלך – כמה זמן אתה בדרך כלל רוכב?";
+    }
+
+    state.stage = "training_time";
+    state.data.trainingTimeStep = "fromStrava";
     await this._saveState(userId, state);
-    return await this._stageHrCollect(userId, text, state);
+    return "נעבור למשך האימונים שלך – כמה זמן אתה בדרך כלל רוכב?";
   }
 
   // ===== TRAINING TIME =====
 
+  _extractTrainingTimeFromSummary(ts) {
+    if (!ts) return null;
+    const avgMin = ts.avgDurationSec ? Math.round(ts.avgDurationSec / 60) : null;
+    if (!avgMin || avgMin <= 0) return null;
+
+    const minMinutes = Math.max(45, Math.round(avgMin * 0.4));
+    const maxMinutes = Math.round(avgMin * 1.8);
+
+    return {
+      minMinutes,
+      avgMinutes: avgMin,
+      maxMinutes,
+    };
+  }
+
   async _stageTrainingTime(userId, text, state) {
-    state.data = state.data || {};
+    state.data.trainingTime = state.data.trainingTime || {};
+    let step = state.data.trainingTimeStep || "fromStrava";
     const t = (text || "").trim();
 
-    const ts = state.data.trainingSummary || null;
+    if (step === "fromStrava") {
+      state = await this._ensureStravaMetricsInState(userId, state);
+      const ts = state.data.trainingSummary || null;
+      const tt = this._extractTrainingTimeFromSummary(ts);
 
-    let avgDefault = null;
-    let minDefault = null;
-    let maxDefault = null;
-
-    if (ts && ts.avgDurationSec) {
-      avgDefault = Math.round(ts.avgDurationSec / 60);
-      if (ts.minDurationSec) {
-        minDefault = Math.round(ts.minDurationSec / 60);
-      } else {
-        minDefault = Math.round(avgDefault * 0.7);
+      if (!tt) {
+        state.data.trainingTimeStep = "manual";
+        await this._saveState(userId, state);
+        return (
+          "לא מצאתי מספיק נתונים מסטרבה כדי להעריך משך אימון טיפוסי.\n" +
+          "תכתוב שלושה מספרים בדקות שמתאימים לרכיבה קצרה / ממוצעת / ארוכה (למשל: 90 120 180)."
+        );
       }
-      if (ts.maxDurationSec) {
-        maxDefault = Math.round(ts.maxDurationSec / 60);
-      } else {
-        maxDefault = Math.round(avgDefault * 1.4);
-      }
-    } else {
-      minDefault = 90;
-      avgDefault = 120;
-      maxDefault = 180;
-    }
 
-    state.data.trainingTimeDefaults = {
-      minMinutes: minDefault,
-      avgMinutes: avgDefault,
-      maxMinutes: maxDefault,
-    };
-
-    // כניסה ראשונה לשלב משך אימון
-    if (!t) {
-      state.data.trainingTimeStep = "collect";
-      state.stage = "training_time";
+      state.data.trainingTimeFromStrava = tt;
+      state.data.trainingTimeStep = "confirm";
       await this._saveState(userId, state);
 
       return (
         "לפי סטרבה זה מה שאני מבין על משך האימונים שלך\n" +
-        `• רכיבה קצרה: ${minDefault} דקות\n` +
-        `• רכיבה ממוצעת: ${avgDefault} דקות\n` +
-        `• רכיבה ארוכה: ${maxDefault} דקות\n` +
-        '\n' +
-        'אם זה מתאים — תכתוב "אישור".\n' +
+        `• רכיבה קצרה: ${tt.minMinutes} דקות\n` +
+        `• רכיבה ממוצעת: ${tt.avgMinutes} דקות\n` +
+        `• רכיבה ארוכה: ${tt.maxMinutes} דקות\n\n` +
+        "אם זה מתאים — תכתוב \"אישור\".\n" +
         "אם אתה מעדיף ערכים אחרים, תכתוב שלושה מספרים בדקות בסדר: קצר / ממוצע / ארוך (למשל: 90 120 180)."
       );
     }
 
-    // המשתמש מאשר את ברירות המחדל
-    if (
-      t === "אישור" ||
-      t.toLowerCase() === "ok" ||
-      t.toLowerCase() === "okay"
-    ) {
-      const { minMinutes, avgMinutes, maxMinutes } =
-        state.data.trainingTimeDefaults || {
-          minMinutes: minDefault,
-          avgMinutes: avgDefault,
-          maxMinutes: maxDefault,
+    if (step === "confirm") {
+      const tt = state.data.trainingTimeFromStrava || null;
+      if (!tt) {
+        state.data.trainingTimeStep = "manual";
+        await this._saveState(userId, state);
+        return (
+          "לא הצלחתי למצוא שוב את הנתונים מסטרבה לגבי משך האימונים.\n" +
+          "תכתוב שלושה מספרים בדקות שמתאימים לרכיבה קצרה / ממוצעת / ארוכה (למשל: 90 120 180)."
+        );
+      }
+
+      if (t === "אישור") {
+        state.data.trainingTime = {
+          minMinutes: tt.minMinutes,
+          avgMinutes: tt.avgMinutes,
+          maxMinutes: tt.maxMinutes,
         };
+        state.data.trainingTimeStep = "done";
+        state.stage = "goal_collect";
+        await this._saveState(userId, state);
+
+        return (
+          "מעולה, נשתמש בערכים הבאים למשך האימונים שלך:\n" +
+          `• רכיבה קצרה: ${tt.minMinutes} דקות\n` +
+          `• רכיבה ממוצעת: ${tt.avgMinutes} דקות\n` +
+          `• רכיבה ארוכה: ${tt.maxMinutes} דקות`
+        );
+      }
+
+      const nums = t
+        .split(/[^0-9]+/)
+        .filter(Boolean)
+        .map((s) => parseInt(s, 10))
+        .filter((n) => Number.isFinite(n) && n > 20 && n < 600);
+
+      if (nums.length !== 3) {
+        return (
+          "כדי שאוכל להגדיר זמנים טיפוסיים — תכתוב שלושה מספרים בדקות בסדר: קצר / ממוצע / ארוך (למשל: 90 120 180)."
+        );
+      }
+
+      const [minMinutes, avgMinutes, maxMinutes] = nums;
+      if (!(minMinutes < avgMinutes && avgMinutes <= maxMinutes)) {
+        return (
+          "המספרים שכתבת לא נראים כמו סדר הגיוני של קצר / ממוצע / ארוך.\n" +
+          "תדאג שהראשון הוא הקצר ביותר, השני באמצע והשלישי הארוך ביותר."
+        );
+      }
 
       state.data.trainingTime = {
         minMinutes,
@@ -695,72 +767,30 @@ export class OnboardingEngine {
       state.stage = "goal_collect";
       await this._saveState(userId, state);
 
-      // בועה אחת: הערכים + השאלה על המטרה
       return (
         "מעולה, נשתמש בערכים הבאים למשך האימונים שלך:\n" +
         `• רכיבה קצרה: ${minMinutes} דקות\n` +
         `• רכיבה ממוצעת: ${avgMinutes} דקות\n` +
-        `• רכיבה ארוכה: ${maxMinutes} דקות\n` +
-        "מה המטרה המרכזית שלך לתקופה הקרובה?"
+        `• רכיבה ארוכה: ${maxMinutes} דקות`
       );
     }
 
-    // המשתמש הזין מספרים ידנית
-    const nums = t
-      .split(/[^0-9]+/)
-      .filter(Boolean)
-      .map((s) => parseInt(s, 10))
-      .filter((n) => Number.isFinite(n));
-
-    if (!nums.length) {
-      return (
-        "כדי שאוכל לתכנן עבורך אימונים בצורה חכמה – תכתוב לי שלושה מספרים בדקות בסדר: קצר / ממוצע / ארוך (למשל: 90 120 180)."
-      );
-    }
-
-    let minMinutes = null;
-    let avgMinutes = null;
-    let maxMinutes = null;
-
-    if (nums.length === 1) {
-      avgMinutes = nums[0];
-      minMinutes = Math.round(avgMinutes * 0.7);
-      maxMinutes = Math.round(avgMinutes * 1.4);
-    } else if (nums.length === 2) {
-      minMinutes = nums[0];
-      maxMinutes = nums[1];
-      avgMinutes = Math.round((minMinutes + maxMinutes) / 2);
-    } else {
-      minMinutes = nums[0];
-      avgMinutes = nums[1];
-      maxMinutes = nums[2];
-    }
-
-    const clamp = (x) => Math.max(30, Math.min(x, 360));
-    minMinutes = clamp(minMinutes);
-    avgMinutes = clamp(avgMinutes);
-    maxMinutes = clamp(maxMinutes);
-
-    if (avgMinutes < minMinutes) avgMinutes = minMinutes;
-    if (maxMinutes < avgMinutes) maxMinutes = avgMinutes;
-
-    state.data.trainingTime = {
-      minMinutes,
-      avgMinutes,
-      maxMinutes,
-    };
-    state.data.trainingTimeStep = "done";
     state.stage = "goal_collect";
+    state.data.trainingTimeStep = "done";
     await this._saveState(userId, state);
 
-    // גם כאן – בועה אחת
-    return (
-      "מעולה, נשתמש בערכים הבאים למשך האימונים שלך:\n" +
-      `• רכיבה קצרה: ${minMinutes} דקות\n` +
-      `• רכיבה ממוצעת: ${avgMinutes} דקות\n` +
-      `• רכיבה ארוכה: ${maxMinutes} דקות\n` +
-      "מה המטרה המרכזית שלך לתקופה הקרובה?"
-    );
+    const tt = state.data.trainingTime || state.data.trainingTimeFromStrava;
+    if (tt) {
+      const { minMinutes, avgMinutes, maxMinutes } = tt;
+      return (
+        "מעולה, נשתמש בערכים הבאים למשך האימונים שלך:\n" +
+        `• רכיבה קצרה: ${minMinutes} דקות\n` +
+        `• רכיבה ממוצעת: ${avgMinutes} דקות\n` +
+        `• רכיבה ארוכה: ${maxMinutes} דקות`
+      );
+    }
+
+    return "נעבור למטרה שלך לתקופה הקרובה.";
   }
 
   // ===== GOAL =====
@@ -768,7 +798,7 @@ export class OnboardingEngine {
   async _stageGoalCollect(userId, text, state) {
     const t = (text || "").trim();
     if (!t) {
-      return "כדי שאוכל לתכנן עבורך אימונים – תכתוב מטרה אחת ברורה (למשל: גרן פונדו אילת או שיפור FTP).";
+      return "מה המטרה המרכזית שלך לתקופה הקרובה?";
     }
 
     state.data.goal = t;
