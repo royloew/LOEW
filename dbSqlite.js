@@ -270,29 +270,30 @@ export async function createDbImpl() {
   }
 
   // >>> זה החלק הקריטי שתואם ל־OnboardingEngine <<<
-  async function saveOnboardingState(userId, stage, data) {
-    const now = Math.floor(Date.now() / 1000);
-    const dataJson = JSON.stringify(data || {});
-    const existing = await get(
-      `SELECT user_id FROM onboarding_states WHERE user_id = ?`,
-      [userId]
-    );
+  async function saveOnboardingState(userId, state) {
+  const now = Math.floor(Date.now() / 1000);
+  const dataJson = JSON.stringify(state.data || {});
+  const existing = await get(
+    `SELECT user_id FROM onboarding_states WHERE user_id = ?`,
+    [userId]
+  );
 
-    if (!existing) {
-      await run(
-        `INSERT INTO onboarding_states (user_id, stage, data_json, updated_at)
-         VALUES (?, ?, ?, ?)`,
-        [userId, stage || null, dataJson, now]
-      );
-    } else {
-      await run(
-        `UPDATE onboarding_states
+  if (!existing) {
+    await run(
+      `INSERT INTO onboarding_states (user_id, stage, data_json, updated_at)
+       VALUES (?, ?, ?, ?)`,
+      [userId, state.stage, dataJson, now]
+    );
+  } else {
+    await run(
+      `UPDATE onboarding_states
          SET stage = ?, data_json = ?, updated_at = ?
-         WHERE user_id = ?`,
-        [stage || null, dataJson, now, userId]
-      );
-    }
+       WHERE user_id = ?`,
+      [state.stage, dataJson, now, userId]
+    );
   }
+}
+
 
   // ===== TRAINING PARAMS & METRICS WINDOW =====
 
