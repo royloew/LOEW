@@ -211,8 +211,18 @@ export class OnboardingEngine {
     const hasFtp = state.data.ftpModels != null;
     const hasHr = state.data.hr != null;
 
-    // אם כבר יש הכל – לא נוגעים
-    if (hasTS && hasFtp && hasHr) return state;
+    // בודק אם כבר יש לנו personal עם weightFromStrava (או בכלל personal)
+    const currentPersonal = state.data.personal || {};
+    const hasPersonalFromSnapshot =
+      currentPersonal && currentPersonal.weightFromStrava != null;
+
+    // האם בכלל צריך למשוך snapshot?
+    const needSnapshot = !hasTS || !hasFtp || !hasHr || !hasPersonalFromSnapshot;
+
+    if (!needSnapshot) {
+      // יש הכל כולל personal עם weightFromStrava → אפשר לחזור
+      return state;
+    }
 
     try {
       if (
@@ -221,24 +231,23 @@ export class OnboardingEngine {
       ) {
         const snapshot = await this.db.getStravaOnboardingSnapshot(userId);
         if (snapshot) {
+          // ממלא trainingSummary / volume רק אם חסר
           if (!hasTS) {
             state.data.trainingSummary = snapshot.trainingSummary || null;
             state.data.volume = snapshot.volume || null;
           }
+          // ממלא ftpModels אם חסר
           if (!hasFtp) {
             state.data.ftpModels = snapshot.ftpModels || null;
           }
+          // ממלא hr אם חסר
           if (!hasHr) {
             state.data.hr = snapshot.hr || null;
           }
 
-          // 🔹 כאן המיזוג הנכון של personal, כולל weightFromStrava
-          const currentPersonal = state.data.personal || {};
+          // תמיד דואג למזג personal מה-snapshot (כולל weightFromStrava)
           const snapshotPersonal = snapshot.personal || {};
-          state.data.personal = {
-            ...snapshotPersonal,
-            ...currentPersonal,
-          };
+          state.data.personal = { ...snapshotPersonal, ...currentPersonal };
         }
       }
     } catch (e) {
@@ -250,6 +259,7 @@ export class OnboardingEngine {
 
     return state;
   }
+
 
 
   // ===== INTRO =====
