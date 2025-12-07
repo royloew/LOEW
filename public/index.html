@@ -150,6 +150,13 @@
 
         textDiv.innerHTML = html;
 
+        // אם יש רשימה של FTP באנגלית – נהפוך אותה ל-LTR
+      if (html.includes("<li>") && html.match(/FTP|W|model|median|Critical/i)) {
+        textDiv.style.direction = "ltr";
+        textDiv.style.textAlign = "left";
+      }
+
+
 
         bubble.appendChild(textDiv);
         messagesDiv.appendChild(bubble);
