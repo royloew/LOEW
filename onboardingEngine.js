@@ -232,7 +232,7 @@ export class OnboardingEngine {
             state.data.hr = snapshot.hr || null;
           }
 
-          // 🔹 כאן החלק החשוב למשקל / פרופיל אישי
+          // 🔹 כאן המיזוג הנכון של personal, כולל weightFromStrava
           const currentPersonal = state.data.personal || {};
           const snapshotPersonal = snapshot.personal || {};
           state.data.personal = {
@@ -250,6 +250,7 @@ export class OnboardingEngine {
 
     return state;
   }
+
 
   // ===== INTRO =====
 
