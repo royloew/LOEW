@@ -448,8 +448,6 @@ export class OnboardingEngine {
       state.data.personalStep = "done";
       state.stage = "ftp_intro";
       await this._saveState(userId, state);
-
-      return "מעולה, יש לי עכשיו נתונים בסיסיים עליך. בוא נעבור לחלק של ה-FTP — הסמן המרכזי לעומס ולרמת הקושי באימונים.";
     }
 
     // fallback – אם משום מה personalStep לא ידוע
