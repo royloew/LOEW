@@ -430,6 +430,7 @@ export class OnboardingEngine {
     }
 
     // גיל
+       // גיל
     if (step === "age") {
       let parsed = null;
       if (t) {
@@ -448,14 +449,18 @@ export class OnboardingEngine {
       state.data.personalStep = "done";
       state.stage = "ftp_intro";
       await this._saveState(userId, state);
+
+      // ישר ממשיכים לשלב ה-FTP בלי הודעת מעבר נוספת
+      return await this._stageFtpIntro(userId, state);
     }
 
-    // fallback – אם משום מה personalStep לא ידוע
-    // fallback – תמיד נכנסים ל־FTP intro בלי הודעת מעבר
+    // fallback – במקרה ששוב נתקענו על personalStep לא ברור
     state.data.personalStep = "done";
     state.stage = "ftp_intro";
     await this._saveState(userId, state);
     return await this._stageFtpIntro(userId, state);
+  }
+
 
 
   // ===== FTP =====
