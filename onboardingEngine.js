@@ -171,56 +171,46 @@ export class OnboardingEngine {
 
   // ===== INTRO =====
 
+  // ===== INTRO =====
+
   async _stageIntro(userId, text, state) {
-    if (!text) {
-      state.stage = "post_strava_summary";
+    const introText =
+      "נעים מאוד, אני LOEW — המאמן האישי שלך.\n" +
+      "אני מבסס את כל ההמלצות על ידע מקצועי, מתודולוגיות אימון מהטופ העולמי וניתוח פרסונלי של הנתונים שלך — כולל שינה, תחושה, עומס, בריאות, תזונה וכל מה שמשפיע על הביצועים שלך.\n\n" +
+      "המטרה שלי: לבנות עבורך אימונים חכמים, פשוטים ליישום, שמתקדמים בקצב שמתאים בדיוק לך.\n\n" +
+      "נתחיל מחיבור לסטרבה כדי שאוכל לראות את הרכיבות האחרונות שלך.";
+
+    // בודק האם כבר יש טוקנים של סטרבה למשתמש הזה
+    let hasStravaTokens = false;
+    try {
+      if (this.db && typeof this.db.getStravaTokens === "function") {
+        const tokens = await this.db.getStravaTokens(userId);
+        hasStravaTokens = !!(tokens && tokens.accessToken);
+      }
+    } catch (err) {
+      console.error("OnboardingEngine._stageIntro getStravaTokens error:", err);
+    }
+
+    // === מקרה 1: אין חיבור סטרבה → מציג פתיח + קישור חיבור, כמו בקובץ הישן ===
+    if (!hasStravaTokens) {
+      state.stage = "intro";
       await this._saveState(userId, state);
 
-      if (!state.data.snapshotAvailable) {
-        return (
-          "נעים מאוד, אני LOEW — המאמן האישי שלך.\n" +
-          "אני מבסס את כל ההמלצות על ידע מקצועי, מתודולוגיות אימון מהטופ העולמי וניתוח פרסונלי של הנתונים שלך — כולל שינה, תחושה, עומס, בריאות, תזונה וכל מה שמשפיע על הביצועים שלך.\n\n" +
-          "המטרה שלי: לבנות עבורך אימונים חכמים, יעילים ומהנים, שמתאימים בדיוק לחיים שלך.\n\n" +
-          "כדי שאוכל לעבוד עם נתונים אמיתיים, נתחיל בחיבור לסטרבה (Strava).\n" +
-          "לחץ על הקישור הבא כדי להתחבר לסטרבה, ואז נחזור לכאן ונמשיך:"
-        );
-      }
+      const connectUrl = `/auth/strava?userId=${encodeURIComponent(userId)}`;
 
       return (
-        "נעים מאוד, אני LOEW — המאמן האישי שלך.\n" +
-        "אני מבסס את כל ההמלצות על ידע מקצועי, מתודולוגיות אימון מהטופ העולמי וניתוח פרסונלי של הנתונים שלך — כולל שינה, תחושה, עומס, בריאות, תזונה וכל מה שמשפיע על הביצועים שלך.\n\n" +
-        "המטרה שלי: לבנות עבורך אימונים חכמים, יעילים ומהנים, שמתאימים בדיוק לחיים שלך.\n\n" +
-        "כבר יש לי נתונים מסטרבה שלך — נתחיל מסיכום קצר ואז נשלים עוד כמה פרטים חשובים."
+        introText +
+        "\n\n" +
+        `לחיבור לסטרבה, תלחץ על הקישור הבא:\n${connectUrl}`
       );
     }
 
-    const lower = text.toLowerCase();
-    if (lower.includes("סטרבה") || lower.includes("strava")) {
-      state.stage = "post_strava_summary";
-      await this._saveState(userId, state);
-
-      if (!state.data.snapshotAvailable) {
-        return (
-          "כדי שאוכל לנתח את הרכיבות שלך — צריך להתחבר לסטרבה.\n" +
-          "לחץ על הקישור הבא כדי להתחבר:"
-        );
-      }
-
-      return "כבר התחברת לסטרבה בעבר — נתחיל מסיכום קצר של מה שאני רואה מהנתונים.";
-    }
-
-    state.stage = "post_strava_summary";
+    // === מקרה 2: כבר יש חיבור סטרבה → עוברים לסיכום הנתונים מסטרבה ===
+    state = await this._bootstrapStateFromStrava(userId);
     await this._saveState(userId, state);
-
-    if (!state.data.snapshotAvailable) {
-      return (
-        "כדי שאוכל לנתח את הרכיבות שלך — צריך להתחבר לסטרבה.\n" +
-        "לחץ על הקישור הבא כדי להתחבר:"
-      );
-    }
-
-    return "מצוין, נתחיל מסיכום קצר של הנתונים שלך מסטרבה ואז נשלים פרטים אישיים.";
+    return await this._stagePostStravaSummary(userId, state);
   }
+
 
   _formatTrainingSummary(ts) {
     if (!ts || !ts.rides_count || ts.rides_count <= 0) {
