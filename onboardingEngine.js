@@ -451,11 +451,12 @@ export class OnboardingEngine {
     }
 
     // fallback – אם משום מה personalStep לא ידוע
+    // fallback – תמיד נכנסים ל־FTP intro בלי הודעת מעבר
     state.data.personalStep = "done";
     state.stage = "ftp_intro";
     await this._saveState(userId, state);
-    return "נמשיך ל-FTP — הסמן המרכזי לעומס ולרמת הקושי באימונים.";
-  }
+    return await this._stageFtpIntro(userId, state);
+
 
   // ===== FTP =====
 
