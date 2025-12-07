@@ -112,24 +112,26 @@ export class OnboardingEngine {
     return { stage: null, data: {} };
   }
 
-  async _saveState(userId, state) {
+    async _saveState(userId, state) {
     const cleanState = {
       stage: state.stage,
       data: state.data || {},
     };
 
-    // שומר בזיכרון *תמיד*, גם אם ה-DB נופל
+    // שומר בזיכרון פנימי *תמיד* כדי לא להיות תלוי רק ב-DB
     this._memStates.set(userId, cleanState);
 
     if (!this.db || typeof this.db.saveOnboardingState !== "function") return;
 
     try {
-      await this.db.saveOnboardingState(userId, cleanState.stage, cleanState.data);
+      // התאמה מלאה ל-dbSqlite.js: שולחים אובייקט אחד, לא שלושה פרמטרים
+      await this.db.saveOnboardingState(userId, cleanState);
     } catch (e) {
       console.error("OnboardingEngine._saveState DB error:", e);
       // לא זורק שגיאה החוצה – נשארים עם הזיכרון הפנימי
     }
   }
+
 
   async _bootstrapStateFromStrava(userId) {
     let snapshot = null;
