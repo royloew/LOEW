@@ -617,6 +617,8 @@ export class OnboardingEngine {
 
   // ===== HR =====
 
+    // ===== HR =====
+
   async _stageHrCollect(userId, text, state) {
     const t = (text || "").trim();
     state.data.hr = state.data.hr || {};
@@ -724,7 +726,8 @@ export class OnboardingEngine {
         await this._updateTrainingParamsFromState(userId, state);
         await this._saveState(userId, state);
 
-        return "נעבור עכשיו למשך האימונים שלך – כמה זמן אתה בדרך כלל רוכב?";
+        // במקום ההודעה "נעבור עכשיו למשך האימונים שלך..." – קופצים ישר לשלב משך אימון
+        return await this._stageTrainingTime(userId, "", state);
       }
 
       if (t === "אישור" && hrThresholdCandidate != null) {
@@ -736,7 +739,7 @@ export class OnboardingEngine {
         await this._updateTrainingParamsFromState(userId, state);
         await this._saveState(userId, state);
 
-        return "נעבור עכשיו למשך האימונים שלך – כמה זמן אתה בדרך כלל רוכב?";
+        return await this._stageTrainingTime(userId, "", state);
       }
 
       let parsed = null;
@@ -770,15 +773,17 @@ export class OnboardingEngine {
       await this._updateTrainingParamsFromState(userId, state);
       await this._saveState(userId, state);
 
-      return "נעבור עכשיו למשך האימונים שלך – כמה זמן אתה בדרך כלל רוכב?";
+      return await this._stageTrainingTime(userId, "", state);
     }
 
-    // fallback – ממשיכים הלאה למשך אימון
+    // fallback – כבר יש לנו HR, ממשיכים ישירות למשך אימון
     state.stage = "training_time";
     state.data.trainingTimeStep = "fromStrava";
     await this._saveState(userId, state);
-    return "נעבור עכשיו למשך האימונים שלך – כמה זמן אתה בדרך כלל רוכב?";
+
+    return await this._stageTrainingTime(userId, "", state);
   }
+
 
   // ===== TRAINING TIME =====
 
