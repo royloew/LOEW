@@ -171,6 +171,23 @@
                 header + itemsHtml
               );
 
+            // אם זו רשימת FTP – הופכים את שמות המודלים ללינקים
+            if (isFtp) {
+              itemsHtml = itemsHtml
+                .replace(
+                  /(>)(FTP 20min[^:<]*)(:)/g,
+                  '$1<a href="#" class="ftp-help" data-method="ftp20">$2</a>$3'
+                )
+                .replace(
+                  /(>)(FTP from 3min[^:<]*)(:)/g,
+                  '$1<a href="#" class="ftp-help" data-method="ftpFrom3min">$2</a>$3'
+                )
+                .replace(
+                  /(>)(FTP from CP[^:<]*)(:)/g,
+                  '$1<a href="#" class="ftp-help" data-method="ftpFromCP">$2</a>$3'
+                );
+            }
+
             // רק הכותרת בבולד
             let finalHtml = `<strong>${header}</strong>`;
 
@@ -195,6 +212,33 @@
         messagesDiv.appendChild(bubble);
         scrollToBottom();
       }
+
+      // הסברים לשיטות FTP – מוצגים בבועה מקומית
+      function showFtpHelp(method) {
+        const explanations = {
+          ftp20:
+            "FTP 20min (95%) – לוקחים את המאמצים הטובים ביותר שלך ל-20 דקות ב-90 הימים האחרונים, ומחשבים את הממוצע הטוב ביותר. את הערך הזה מכפילים ב-0.95 כדי להעריך FTP של שעה.",
+          ftpFrom3min:
+            "FTP מ-3 דקות – מודל שמבוסס על הכוח המקסימלי שלך בחלון של 3 דקות. משם משתמשים בנוסחה פיזיולוגית שמעריכה את הכוח שאתה מסוגל להחזיק למשך שעה (FTP). המודל רגיש מאוד ליכולת ספרינט ארוכה.",
+          ftpFromCP:
+            "FTP CP (Critical Power) – מודל שמבוסס על כמה חלונות זמן (למשל 3 ו-20 דקות) כדי להפריד בין 'יכולת קצרה' לבין 'יכולת אירובית ארוכה'. מהמודל הזה נגזר גם FTP וגם פרופיל עייפות.",
+        };
+
+        const text =
+          explanations[method] ||
+          "כרגע אין עדיין הסבר מפורט לשיטה הזו, אבל המודל משתמש בביצועים הטובים ביותר שלך כדי להעריך FTP בצורה חכמה.";
+        addMessage(text, "assistant");
+      }
+
+      // האזנה לקליקים על לינקים של מודלי FTP
+      messagesDiv.addEventListener("click", (e) => {
+        const link = e.target.closest(".ftp-help");
+        if (!link) return;
+
+        e.preventDefault();
+        const method = link.dataset.method;
+        showFtpHelp(method);
+      });
 
       async function sendMessage() {
         const txt = input.value.trim();
