@@ -231,7 +231,44 @@ app.post("/api/loew/last-workout-analysis", async (req, res) => {
       );
     }
 
-    const message = parts.join(" ");
+    const sep = "\n";
+let message = [
+  `סיכום אימון אחרון – ${dateStr}`,
+  ``,
+  `⏱ משך: ${Math.round(summary.durationMin)} דק'`,
+  `📍 מרחק: ${summary.distanceKm.toFixed(1)} ק״מ`,
+  summary.elevationGainM > 0 ? `🏔 טיפוס: ${summary.elevationGainM} מ'` : null,
+  ``,
+  summary.avgPower != null
+    ? `⚡ וואטים ממוצעים: ${Math.round(summary.avgPower)}W`
+    : null,
+  summary.ftpUsed
+    ? `IF: ${summary.intensityFtp} – עצימות אימונית ביחס ל-FTP`
+    : null,
+  summary.avgHr != null
+    ? `❤️ דופק ממוצע: ${Math.round(summary.avgHr)} bpm`
+    : null,
+  ``,
+  // חלונות חזקים
+  summary.windows?.w1200?.avg
+    ? `🔥 20 דק׳: ${Math.round(summary.windows.w1200.avg)}W`
+    : summary.windows?.w300?.avg
+    ? `🔥 5 דק׳: ${Math.round(summary.windows.w300.avg)}W`
+    : null,
+  ``,
+  // DECPL
+  summary.segments?.decouplingPct != null
+    ? `📉 Decoupling: ${summary.segments.decouplingPct.toFixed(1)}%`
+    : null,
+  summary.segments?.decouplingPct != null
+    ? `= עלייה ביחס בין דופק לוואטים במהלך האימון — סימן לעייפות או עומס מצטבר`
+    : null,
+  ``,
+  `🧭 מסקנה: אימון אירובי יציב שמתאים לבסיס. אם ה-Decoupling גבוה גם באימונים הבאים – מומלץ התאוששות קלה לפני עומס נוסף.`
+]
+  .filter(Boolean)
+  .join(sep);
+
 
     return res.json({
       ok: true,
