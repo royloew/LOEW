@@ -35,7 +35,7 @@
       .bubble-text {
         text-align: right;
         direction: rtl;
-        unicode-bidi: plaintext; /* שיפור יישור כשיש עברית + אנגלית */
+        unicode-bidi: plaintext;
         white-space: pre-wrap;
         line-height: 1.5;
       }
@@ -88,16 +88,16 @@
       }
 
       ul {
-        padding-right: 22px; /* ריווח יפה מצד ימין לרשימות בעברית */
+        padding-right: 22px;
         margin-top: 6px;
         margin-bottom: 6px;
       }
 
       li {
-        margin-bottom: 4px; /* רווח קטן בין שורות */
+        margin-bottom: 4px;
       }
 
-      /* רשימות FTP באנגלית – ריווח מצד שמאל ובולט בצד שמאל */
+      /* רשימות FTP באנגלית – בולטים בצד שמאל */
       ul.ftp-list {
         padding-right: 0;
         padding-left: 22px;
@@ -107,7 +107,6 @@
 
   <body>
     <div id="chat-container">
-      <!-- מתחילים בלי בועות – הכל מגיע מהשרת -->
       <div id="messages"></div>
 
       <div id="input-area">
@@ -125,13 +124,11 @@
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
       }
 
-      // הופך טקסט ללינק (Strava auth + URLs רגילים)
       function linkify(text) {
         return text.replace(
           /(https?:\/\/[^\s]+|\/auth\/strava\?userId=[^\s]+)/g,
           (match) => {
             if (match.includes("/auth/strava?userId=")) {
-              // כיתוב ברור לחיבור סטרבה
               return `<a href="${match}" target="_blank">חבר אותי לסטרבה</a>`;
             }
             return `<a href="${match}" target="_blank">${match}</a>`;
@@ -139,7 +136,6 @@
         );
       }
 
-      // פונקציית ההוספה היחידה! (בלי כפילויות)
       function addMessage(text, sender = "assistant") {
         const bubble = document.createElement("div");
         bubble.className = "bubble " + sender;
@@ -149,11 +145,11 @@
 
         let html = linkify(text);
 
-        // --- לוגיקה לרשימות עם בולטים ("•") ---
+        // זיהוי רשימות עם "•"
         if (html.includes("\n•")) {
           const lines = html.split("\n");
-          const header = lines[0]; // שורה ראשונה – הכותרת
-          const rest = lines.slice(1); // שאר השורות – בולטים
+          const header = lines[0];
+          const rest = lines.slice(1);
 
           let itemsHtml = "";
           for (const line of rest) {
@@ -171,35 +167,14 @@
                 header + itemsHtml
               );
 
-            // אם זו רשימת FTP – הופכים את שמות המודלים ללינקים
-            if (isFtp) {
-              itemsHtml = itemsHtml
-                .replace(
-                  /(>)(FTP 20min[^:<]*)(:)/g,
-                  '$1<a href="#" class="ftp-help" data-method="ftp20">$2</a>$3'
-                )
-                .replace(
-                  /(>)(FTP from 3min[^:<]*)(:)/g,
-                  '$1<a href="#" class="ftp-help" data-method="ftpFrom3min">$2</a>$3'
-                )
-                .replace(
-                  /(>)(FTP from CP[^:<]*)(:)/g,
-                  '$1<a href="#" class="ftp-help" data-method="ftpFromCP">$2</a>$3'
-                );
-            }
-
-            // רק הכותרת בבולד
             let finalHtml = `<strong>${header}</strong>`;
 
             if (isFtp) {
-              // רשימת FTP – LTR, בולטים בצד שמאל
               finalHtml += `<ul dir="ltr" class="ftp-list">${itemsHtml}</ul>`;
               textDiv.style.direction = "ltr";
               textDiv.style.textAlign = "left";
             } else {
-              // שאר הרשימות – RTL (עברית)
               finalHtml += `<ul dir="rtl">${itemsHtml}</ul>`;
-              // נשאיר direction ברירת מחדל (RTL מה-CSS)
             }
 
             html = finalHtml;
@@ -213,64 +188,105 @@
         scrollToBottom();
       }
 
-      // הסברים לשיטות FTP – מוצגים בבועה מקומית
-      function showFtpHelp(method) {
-        const explanations = {
-          ftp20:
-            "FTP 20min (95%) – לוקחים את המאמצים הטובים ביותר שלך ל-20 דקות ב-90 הימים האחרונים, ומחשבים את הממוצע הטוב ביותר. את הערך הזה מכפילים ב-0.95 כדי להעריך FTP של שעה.",
-          ftpFrom3min:
-            "FTP מ-3 דקות – מודל שמבוסס על הכוח המקסימלי שלך בחלון של 3 דקות. משם משתמשים בנוסחה פיזיולוגית שמעריכה את הכוח שאתה מסוגל להחזיק למשך שעה (FTP). המודל רגיש מאוד ליכולת ספרינט ארוכה.",
-          ftpFromCP:
-            "FTP CP (Critical Power) – מודל שמבוסס על כמה חלונות זמן (למשל 3 ו-20 דקות) כדי להפריד בין 'יכולת קצרה' לבין 'יכולת אירובית ארוכה'. מהמודל הזה נגזר גם FTP וגם פרופיל עייפות.",
-        };
-
-        const text =
-          explanations[method] ||
-          "כרגע אין עדיין הסבר מפורט לשיטה הזו, אבל המודל משתמש בביצועים הטובים ביותר שלך כדי להעריך FTP בצורה חכמה.";
-        addMessage(text, "assistant");
+      function getUserId() {
+        const params = new URLSearchParams(window.location.search);
+        return params.get("userId") || "default";
       }
 
-      // האזנה לקליקים על לינקים של מודלי FTP
-      messagesDiv.addEventListener("click", (e) => {
-        const link = e.target.closest(".ftp-help");
-        if (!link) return;
+      function extractIsoDate(txt) {
+        const m = txt.match(/(\d{4}-\d{2}-\d{2})/);
+        return m ? m[1] : null;
+      }
 
-        e.preventDefault();
-        const method = link.dataset.method;
-        showFtpHelp(method);
-      });
+      function isLastWorkoutRequest(txt) {
+        return /אימון האחרון/.test(txt) || /ה[א]?ימון האחרון/.test(txt);
+      }
+
+      function isWorkoutByDateRequest(txt) {
+        return /אימון/.test(txt) && /\d{4}-\d{2}-\d{2}/.test(txt);
+      }
+
+      async function callLastWorkoutAnalysis(userId) {
+        const res = await fetch("/api/loew/last-workout-analysis", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId }),
+        });
+        const data = await res.json();
+        handleApiReply(data);
+      }
+
+      async function callWorkoutAnalysisByDate(userId, isoDate) {
+        const res = await fetch("/api/loew/workout-analysis-by-date", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId, date: isoDate }),
+        });
+        const data = await res.json();
+        handleApiReply(data);
+      }
+
+      function handleApiReply(data) {
+        // endpoints החדשים מחזירים "message"
+        if (data && data.message && !data.reply) {
+          addMessage(String(data.message), "assistant");
+          return;
+        }
+
+        // הצ'אט הרגיל מחזיר "reply"
+        if (data && data.reply) {
+          const parts = String(data.reply).split("\n\n");
+          for (const part of parts) {
+            const trimmed = part.trim();
+            if (trimmed) addMessage(trimmed, "assistant");
+          }
+          return;
+        }
+
+        // fallback כללי
+        addMessage("משהו לא עבד כמו שצריך, נסה שוב עוד פעם.", "assistant");
+      }
 
       async function sendMessage() {
         const txt = input.value.trim();
         if (!txt) return;
 
         addMessage(txt, "user");
-
         input.value = "";
         scrollToBottom();
 
-        const userId =
-          new URLSearchParams(window.location.search).get("userId") ||
-          "default";
+        const userId = getUserId();
 
-        const res = await fetch("/api/loew/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            userId,
-            message: txt,
-          }),
-        });
-
-        const data = await res.json();
-
-        if (data.reply) {
-          // פיצול להודעות נפרדות על בסיס שורות ריקות
-          const parts = String(data.reply).split("\n\n");
-          for (const part of parts) {
-            const trimmed = part.trim();
-            if (trimmed) addMessage(trimmed, "assistant");
+        try {
+          // 1) ניתוח אימון אחרון
+          if (isLastWorkoutRequest(txt)) {
+            await callLastWorkoutAnalysis(userId);
+            return;
           }
+
+          // 2) ניתוח אימון לפי תאריך
+          if (isWorkoutByDateRequest(txt)) {
+            const isoDate = extractIsoDate(txt);
+            if (isoDate) {
+              await callWorkoutAnalysisByDate(userId, isoDate);
+              return;
+            }
+          }
+
+          // 3) ברירת מחדל – צ'אט רגיל
+          const res = await fetch("/api/loew/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              userId,
+              message: txt,
+            }),
+          });
+          const data = await res.json();
+          handleApiReply(data);
+        } catch (err) {
+          console.error("sendMessage error:", err);
+          addMessage("הייתה תקלה טכנית קטנה. נסה שוב עוד רגע.", "assistant");
         }
       }
 
@@ -279,30 +295,32 @@
         if (e.key === "Enter") sendMessage();
       };
 
-      // ---- AUTO-START ----
-      // שולח "היי" אוטומטית בצ'אט חדש – הכל יגיע מהשרת
+      // AUTO-START – שולח "היי" אוטומטי כדי להתחיל אונבורדינג
       window.onload = () => {
         const params = new URLSearchParams(window.location.search);
         const auto = params.get("auto");
+        if (auto) return;
 
-        if (!auto) {
-          const userId = params.get("userId") || "default";
-          fetch("/api/loew/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ userId, message: "היי" }),
-          })
-            .then((r) => r.json())
-            .then((d) => {
-              if (d.reply) {
-                const parts = String(d.reply).split("\n\n");
-                for (const part of parts) {
-                  const trimmed = part.trim();
-                  if (trimmed) addMessage(trimmed, "assistant");
-                }
+        const userId = getUserId();
+
+        fetch("/api/loew/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId, message: "היי" }),
+        })
+          .then((r) => r.json())
+          .then((data) => {
+            if (data && data.reply) {
+              const parts = String(data.reply).split("\n\n");
+              for (const part of parts) {
+                const trimmed = part.trim();
+                if (trimmed) addMessage(trimmed, "assistant");
               }
-            });
-        }
+            }
+          })
+          .catch((err) => {
+            console.error("auto-start error:", err);
+          });
       };
     </script>
   </body>
