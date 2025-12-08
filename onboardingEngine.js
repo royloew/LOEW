@@ -546,8 +546,8 @@ export class OnboardingEngine {
       );
     }
 
-    const header1 = "בדקתי את הרכיבות שלך מהתקופה האחרונה.";
-    const header2 = "בניתי כמה מודלים ל-FTP:";
+    const header1 = "ניתחתי את הרכיבות שלך מה 60 יום האחרונים";
+    const header2 = "FTP Models";
 
     return (
       header1 +
