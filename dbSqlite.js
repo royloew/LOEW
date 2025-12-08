@@ -1253,6 +1253,307 @@ export async function createDbImpl() {
     };
   }
 
+
+  // ===== WORKOUT ANALYSIS (LAST / BY DATE) =====
+
+  function computeAvgAndMax(series) {
+    if (!Array.isArray(series) || !series.length) {
+      return { avg: null, max: null, min: null };
+    }
+    let sum = 0;
+    let count = 0;
+    let max = -Infinity;
+    let min = Infinity;
+    for (const raw of series) {
+      const v = Number(raw);
+      if (!Number.isFinite(v)) continue;
+      sum += v;
+      count += 1;
+      if (v > max) max = v;
+      if (v < min) min = v;
+    }
+    if (!count) {
+      return { avg: null, max: null, min: null };
+    }
+    return {
+      avg: sum / count,
+      max,
+      min,
+    };
+  }
+
+  function computeTwoHalvesDrift(series) {
+    if (!Array.isArray(series) || series.length < 4) {
+      return {
+        firstAvg: null,
+        secondAvg: null,
+        driftPct: null,
+      };
+    }
+    const mid = Math.floor(series.length / 2);
+    const first = series.slice(0, mid);
+    const second = series.slice(mid);
+
+    const s1 = computeAvgAndMax(first);
+    const s2 = computeAvgAndMax(second);
+
+    if (s1.avg == null || s2.avg == null || s1.avg === 0) {
+      return {
+        firstAvg: s1.avg,
+        secondAvg: s2.avg,
+        driftPct: null,
+      };
+    }
+
+    const driftPct = ((s2.avg - s1.avg) / s1.avg) * 100;
+
+    return {
+      firstAvg: s1.avg,
+      secondAvg: s2.avg,
+      driftPct,
+    };
+  }
+
+  function computeBestWindowFromSeries(series, durationSec, windowSec) {
+    if (!Array.isArray(series) || !series.length) return null;
+    if (!durationSec || durationSec <= 0) return null;
+
+    const totalSamples = series.length;
+    const approxSampleSec = durationSec / totalSamples;
+    if (!Number.isFinite(approxSampleSec) || approxSampleSec <= 0) {
+      return null;
+    }
+
+    const windowSamples = Math.round(windowSec / approxSampleSec);
+    if (!Number.isFinite(windowSamples) || windowSamples < 1) return null;
+    if (windowSamples > totalSamples) return null;
+
+    let bestAvg = -Infinity;
+    let bestStart = 0;
+
+    // sliding window
+    let windowSum = 0;
+    for (let i = 0; i < totalSamples; i++) {
+      const v = Number(series[i]);
+      if (Number.isFinite(v)) {
+        windowSum += v;
+      }
+      if (i >= windowSamples) {
+        const old = Number(series[i - windowSamples]);
+        if (Number.isFinite(old)) {
+          windowSum -= old;
+        }
+      }
+      if (i >= windowSamples - 1) {
+        const avg = windowSum / windowSamples;
+        if (avg > bestAvg) {
+          bestAvg = avg;
+          bestStart = i - windowSamples + 1;
+        }
+      }
+    }
+
+    if (!Number.isFinite(bestAvg) || bestAvg <= 0) {
+      return null;
+    }
+
+    return {
+      avg: bestAvg,
+      startIndex: bestStart,
+      endIndex: bestStart + windowSamples - 1,
+    };
+  }
+
+  async function getWorkoutAnalysisCore(userId, { isoDate = null } = {}) {
+    let activityRow = null;
+
+    if (isoDate) {
+      activityRow = await get(
+        `
+        SELECT *
+        FROM strava_activities
+        WHERE user_id = ?
+          AND date(start_date, 'unixepoch') = ?
+        ORDER BY start_date ASC
+        LIMIT 1
+        `,
+        [userId, isoDate]
+      );
+    } else {
+      activityRow = await get(
+        `
+        SELECT *
+        FROM strava_activities
+        WHERE user_id = ?
+        ORDER BY start_date DESC
+        LIMIT 1
+        `,
+        [userId]
+      );
+    }
+
+    if (!activityRow) {
+      return null;
+    }
+
+    const activityId = activityRow.id;
+
+    const streamRows = await all(
+      `
+      SELECT stream_type, data
+      FROM strava_streams
+      WHERE user_id = ?
+        AND activity_id = ?
+      `,
+      [userId, activityId]
+    );
+
+    const streams = {};
+    for (const row of streamRows) {
+      const arr = parseJsonArray(row.data);
+      if (arr && Array.isArray(arr) && arr.length) {
+        streams[row.stream_type] = arr.map((v) => Number(v) || 0);
+      }
+    }
+
+    const durationSec =
+      Number(activityRow.moving_time || activityRow.elapsed_time || 0) || 0;
+    const distanceKm = (Number(activityRow.distance || 0) || 0) / 1000;
+    const elevationGainM =
+      Number(activityRow.total_elevation_gain || 0) || 0;
+
+    const wattsSeries = streams.watts || streams.power || null;
+    const hrSeries =
+      streams.heartrate || streams.heart_rate || streams.hr || null;
+
+    const wattsStats = wattsSeries
+      ? computeAvgAndMax(wattsSeries)
+      : { avg: null, max: null };
+    const hrStats = hrSeries
+      ? computeAvgAndMax(hrSeries)
+      : { avg: null, max: null };
+
+    const avgPowerFromActivity =
+      typeof activityRow.avg_power === "number"
+        ? activityRow.avg_power
+        : null;
+    const maxPowerFromActivity =
+      typeof activityRow.max_power === "number"
+        ? activityRow.max_power
+        : null;
+    const avgHrFromActivity =
+      typeof activityRow.avg_hr === "number" ? activityRow.avg_hr : null;
+    const maxHrFromActivity =
+      typeof activityRow.max_hr === "number" ? activityRow.max_hr : null;
+
+    const avgPower =
+      avgPowerFromActivity != null ? avgPowerFromActivity : wattsStats.avg;
+    const maxPower =
+      maxPowerFromActivity != null ? maxPowerFromActivity : wattsStats.max;
+    const avgHr = avgHrFromActivity != null ? avgHrFromActivity : hrStats.avg;
+    const maxHr = maxHrFromActivity != null ? maxHrFromActivity : hrStats.max;
+
+    const params = await getTrainingParams(userId);
+    const ftpCandidate =
+      (params && params.ftp) ||
+      (params && params.ftpRecommended) ||
+      null;
+
+    let intensityFtp = null;
+    if (ftpCandidate && avgPower) {
+      intensityFtp = Number((avgPower / ftpCandidate).toFixed(2));
+    }
+
+    // drift / decoupling between halves
+    const powerHalves = wattsSeries
+      ? computeTwoHalvesDrift(wattsSeries)
+      : {
+          firstAvg: null,
+          secondAvg: null,
+          driftPct: null,
+        };
+    const hrHalves = hrSeries
+      ? computeTwoHalvesDrift(hrSeries)
+      : {
+          firstAvg: null,
+          secondAvg: null,
+          driftPct: null,
+        };
+
+    let decouplingPct = null;
+    if (
+      powerHalves.driftPct != null &&
+      hrHalves.driftPct != null
+    ) {
+      decouplingPct = hrHalves.driftPct - powerHalves.driftPct;
+    }
+
+    const best60 = wattsSeries
+      ? computeBestWindowFromSeries(wattsSeries, durationSec, 60)
+      : null;
+    const best300 = wattsSeries
+      ? computeBestWindowFromSeries(wattsSeries, durationSec, 300)
+      : null;
+    const best1200 = wattsSeries
+      ? computeBestWindowFromSeries(wattsSeries, durationSec, 1200)
+      : null;
+
+    function enrichWindow(win) {
+      if (!win || !ftpCandidate) return win;
+      return {
+        ...win,
+        relToFtp: ftpCandidate
+          ? Number(((win.avg / ftpCandidate) * 100).toFixed(1))
+          : null,
+      };
+    }
+
+    const windows = {
+      w60: enrichWindow(best60),
+      w300: enrichWindow(best300),
+      w1200: enrichWindow(best1200),
+    };
+
+    const startDateSec = Number(activityRow.start_date || 0) || 0;
+    const startDateIso = startDateSec
+      ? new Date(startDateSec * 1000).toISOString()
+      : null;
+
+    const summary = {
+      durationSec,
+      durationMin: durationSec ? durationSec / 60 : null,
+      distanceKm: Number(distanceKm.toFixed(1)),
+      elevationGainM: Math.round(elevationGainM),
+      avgPower: avgPower != null ? Number(avgPower.toFixed(1)) : null,
+      maxPower: maxPower != null ? Math.round(maxPower) : null,
+      avgHr: avgHr != null ? Number(avgHr.toFixed(1)) : null,
+      maxHr: maxHr != null ? Math.round(maxHr) : null,
+      ftpUsed: ftpCandidate,
+      intensityFtp,
+      startDateIso,
+      segments: {
+        power: powerHalves,
+        hr: hrHalves,
+        decouplingPct,
+      },
+      windows,
+    };
+
+    return {
+      activity: activityRow,
+      summary,
+      streams,
+    };
+  }
+
+  async function getLastWorkoutAnalysis(userId) {
+    return await getWorkoutAnalysisCore(userId, { isoDate: null });
+  }
+
+  async function getWorkoutAnalysisByDate(userId, isoDate) {
+    if (!isoDate) return null;
+    return await getWorkoutAnalysisCore(userId, { isoDate });
+  }
   return {
     ensureUser,
     getOnboardingState,
@@ -1267,5 +1568,7 @@ export async function createDbImpl() {
     ingestAndComputeFromStrava,
     getStravaOnboardingSnapshot,
     saveAthleteProfile,
+    getLastWorkoutAnalysis,
+    getWorkoutAnalysisByDate,
   };
 }

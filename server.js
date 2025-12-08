@@ -129,6 +129,250 @@ app.post("/api/loew/chat", async (req, res) => {
   }
 });
 
+
+// ===== WORKOUT ANALYSIS APIS =====
+
+app.post("/api/loew/last-workout-analysis", async (req, res) => {
+  try {
+    const userId = getUserIdFromBody(req);
+
+    const analysis = await dbImpl.getLastWorkoutAnalysis(userId);
+    if (!analysis) {
+      return res.json({
+        ok: true,
+        hasWorkout: false,
+        message: "לא מצאתי אימון אחרון מסטרבה עבור המשתמש הזה.",
+      });
+    }
+
+    const { summary } = analysis;
+    const parts = [];
+
+    const dateStr = summary.startDateIso
+      ? summary.startDateIso.slice(0, 10)
+      : "תאריך לא ידוע";
+
+    parts.push(`האימון האחרון שלך היה ב-${dateStr}.`);
+
+    if (summary.distanceKm != null && summary.durationMin != null) {
+      parts.push(
+        `רכבת ${summary.distanceKm.toFixed(
+          1
+        )} ק\"מ במשך כ-${Math.round(summary.durationMin)} דקות.`
+      );
+    } else if (summary.durationMin != null) {
+      parts.push(`משך האימון היה כ-${Math.round(summary.durationMin)} דקות.`);
+    }
+
+    if (summary.elevationGainM != null && summary.elevationGainM > 0) {
+      parts.push(`צברת בערך ${summary.elevationGainM} מטר טיפוס.`);
+    }
+
+    if (summary.avgPower != null && summary.ftpUsed) {
+      const rel = ((summary.avgPower / summary.ftpUsed) * 100).toFixed(1);
+      parts.push(
+        `הוואטים הממוצעים היו ${Math.round(
+          summary.avgPower
+        )}W (~${rel}% מה-FTP שלך).`
+      );
+    } else if (summary.avgPower != null) {
+      parts.push(
+        `הוואטים הממוצעים באימון היו בערך ${Math.round(
+          summary.avgPower
+        )}W.`
+      );
+    }
+
+    if (summary.avgHr != null) {
+      parts.push(
+        `הדופק הממוצע היה סביב ${Math.round(summary.avgHr)} פעימות לדקה.`
+      );
+    }
+
+    if (summary.intensityFtp != null) {
+      parts.push(
+        `האימון כולו היה בעצימות IF ≈ ${summary.intensityFtp} ביחס ל-FTP.`
+      );
+    }
+
+    if (
+      summary.segments &&
+      summary.segments.decouplingPct != null &&
+      Number.isFinite(summary.segments.decouplingPct)
+    ) {
+      const dec = summary.segments.decouplingPct;
+      const decAbs = Math.abs(dec).toFixed(1);
+      if (decAbs >= 3) {
+        const direction =
+          dec > 0
+            ? "הדופק עלה יותר מהוואטים (decoupling חיובי)"
+            : "הדופק עלה פחות מהוואטים (decoupling שלילי)";
+        parts.push(
+          `היה decoupling של כ-${decAbs}% בין דופק לוואטים – ${direction}, מה שנותן תחושה על העומס המצטבר באימון.`
+        );
+      }
+    }
+
+    if (summary.windows && summary.windows.w1200 && summary.windows.w1200.avg) {
+      const w = summary.windows.w1200;
+      const rel = w.relToFtp != null ? ` (~${w.relToFtp}% מה-FTP)` : "";
+      parts.push(
+        `ה-20 הדקות החזקות באימון היו סביב ${Math.round(
+          w.avg
+        )}W${rel}.`
+      );
+    } else if (summary.windows && summary.windows.w300 && summary.windows.w300.avg) {
+      const w = summary.windows.w300;
+      const rel = w.relToFtp != null ? ` (~${w.relToFtp}% מה-FTP)` : "";
+      parts.push(
+        `ה-5 הדקות החזקות באימון היו סביב ${Math.round(
+          w.avg
+        )}W${rel}.`
+      );
+    }
+
+    const message = parts.join(" ");
+
+    return res.json({
+      ok: true,
+      hasWorkout: true,
+      message,
+      analysis,
+    });
+  } catch (err) {
+    console.error("/api/loew/last-workout-analysis error:", err);
+    return res.status(500).json({
+      ok: false,
+      error: "last_workout_failed",
+    });
+  }
+});
+
+app.post("/api/loew/workout-analysis-by-date", async (req, res) => {
+  try {
+    const userId = getUserIdFromBody(req);
+    const isoDate =
+      (req.body && typeof req.body.date === "string"
+        ? req.body.date.trim()
+        : "") || null;
+
+    if (!isoDate) {
+      return res.json({
+        ok: false,
+        error: "missing_date",
+        message: 'צריך לשלוח שדה "date" בפורמט YYYY-MM-DD בגוף הבקשה.',
+      });
+    }
+
+    const analysis = await dbImpl.getWorkoutAnalysisByDate(userId, isoDate);
+    if (!analysis) {
+      return res.json({
+        ok: true,
+        hasWorkout: false,
+        message: `לא מצאתי אימון בתאריך ${isoDate} עבור המשתמש הזה.`,
+      });
+    }
+
+    const { summary } = analysis;
+    const parts = [];
+
+    parts.push(`האימון בתאריך ${isoDate}:`);
+
+    if (summary.distanceKm != null && summary.durationMin != null) {
+      parts.push(
+        `רכבת ${summary.distanceKm.toFixed(
+          1
+        )} ק\"מ במשך כ-${Math.round(summary.durationMin)} דקות.`
+      );
+    } else if (summary.durationMin != null) {
+      parts.push(`משך האימון היה כ-${Math.round(summary.durationMin)} דקות.`);
+    }
+
+    if (summary.elevationGainM != null && summary.elevationGainM > 0) {
+      parts.push(`צברת בערך ${summary.elevationGainM} מטר טיפוס.`);
+    }
+
+    if (summary.avgPower != null && summary.ftpUsed) {
+      const rel = ((summary.avgPower / summary.ftpUsed) * 100).toFixed(1);
+      parts.push(
+        `הוואטים הממוצעים היו ${Math.round(
+          summary.avgPower
+        )}W (~${rel}% מה-FTP שלך).`
+      );
+    } else if (summary.avgPower != null) {
+      parts.push(
+        `הוואטים הממוצעים באימון היו בערך ${Math.round(
+          summary.avgPower
+        )}W.`
+      );
+    }
+
+    if (summary.avgHr != null) {
+      parts.push(
+        `הדופק הממוצע היה סביב ${Math.round(summary.avgHr)} פעימות לדקה.`
+      );
+    }
+
+    if (summary.intensityFtp != null) {
+      parts.push(
+        `האימון כולו היה בעצימות IF ≈ ${summary.intensityFtp} ביחס ל-FTP.`
+      );
+    }
+
+    if (
+      summary.segments &&
+      summary.segments.decouplingPct != null &&
+      Number.isFinite(summary.segments.decouplingPct)
+    ) {
+      const dec = summary.segments.decouplingPct;
+      const decAbs = Math.abs(dec).toFixed(1);
+      if (decAbs >= 3) {
+        const direction =
+          dec > 0
+            ? "הדופק עלה יותר מהוואטים (decoupling חיובי)"
+            : "הדופק עלה פחות מהוואטים (decoupling שלילי)";
+        parts.push(
+          `היה decoupling של כ-${decAbs}% בין דופק לוואטים – ${direction}.`
+        );
+      }
+    }
+
+    if (summary.windows && summary.windows.w1200 && summary.windows.w1200.avg) {
+      const w = summary.windows.w1200;
+      const rel = w.relToFtp != null ? ` (~${w.relToFtp}% מה-FTP)` : "";
+      parts.push(
+        `ה-20 הדקות החזקות באימון היו סביב ${Math.round(
+          w.avg
+        )}W${rel}.`
+      );
+    } else if (summary.windows && summary.windows.w300 && summary.windows.w300.avg) {
+      const w = summary.windows.w300;
+      const rel = w.relToFtp != null ? ` (~${w.relToFtp}% מה-FTP)` : "";
+      parts.push(
+        `ה-5 הדקות החזקות באימון היו סביב ${Math.round(
+          w.avg
+        )}W${rel}.`
+      );
+    }
+
+    const message = parts.join(" ");
+
+    return res.json({
+      ok: true,
+      hasWorkout: true,
+      message,
+      analysis,
+    });
+  } catch (err) {
+    console.error("/api/loew/workout-analysis-by-date error:", err);
+    return res.status(500).json({
+      ok: false,
+      error: "workout_by_date_failed",
+    });
+  }
+});
+
+
 // ===== STRAVA AUTH FLOW =====
 
 // שלב 1 – שליחת המשתמש למסך ההרשאה של סטרבה
