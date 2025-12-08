@@ -140,21 +140,61 @@
         const textDiv = document.createElement("div");
         textDiv.className = "bubble-text";
         // אם יש בולטים, נהפוך אותם לרשימה מוסדרת שמיושרת נכון ב-RTL
-        let html = linkify(text)
-          .replace(/\n•\s*(.+)/g, "<li>$1</li>");  // כל "• ..." יהפוך ל <li>
+        function addMessage(text, sender = "assistant") {
+  const bubble = document.createElement("div");
+  bubble.className = "bubble " + sender;
 
-        if (html.includes("<li>")) {
-          html = html.replace(/^(.*?):/, "<strong>$1:</strong>"); // כותרת שמנה
-          html = html.replace(/(<li>[\s\S]*<\/li>)/, "<ul dir='rtl'>$1</ul>");
-        }
+  const textDiv = document.createElement("div");
+  textDiv.className = "bubble-text";
 
-        textDiv.innerHTML = html;
+  let html = linkify(text);
 
-        // אם יש רשימה של FTP באנגלית – נהפוך אותה ל-LTR
-      if (html.includes("<li>") && html.match(/FTP|W|model|median|Critical/i)) {
+  // --- לוגיקה חדשה לרשימות עם בולטים ("•") ---
+  if (html.includes("\n•")) {
+    const lines = html.split("\n");
+    const header = lines[0];          // שורה ראשונה – הכותרת
+    const rest = lines.slice(1);      // שאר השורות – בולטים
+
+    let itemsHtml = "";
+    for (const line of rest) {
+      const m = line.match(/^•\s*(.+)$/);
+      if (m) {
+        itemsHtml += `<li>${m[1]}</li>`;
+      } else if (line.trim() !== "") {
+        itemsHtml += `<li>${line.trim()}</li>`;
+      }
+    }
+
+    if (itemsHtml) {
+      const isFtp =
+        /FTP Models|FTP 20min|FTP from 3min|Critical Power|Recommended FTP/i.test(
+          header + itemsHtml
+        );
+
+      // רק הכותרת בבולד
+      let finalHtml = `<strong>${header}</strong>`;
+
+      // ל־FTP – רשימה LTR עם בולטים בצד שמאל
+      if (isFtp) {
+        finalHtml += `<ul dir="ltr" class="ftp-list">${itemsHtml}</ul>`;
         textDiv.style.direction = "ltr";
         textDiv.style.textAlign = "left";
+      } else {
+        // שאר הרשימות (עברית) – RTL כרגיל
+        finalHtml += `<ul dir="rtl">${itemsHtml}</ul>`;
       }
+
+      html = finalHtml;
+    }
+  }
+
+  textDiv.innerHTML = html;
+
+  bubble.appendChild(textDiv);
+  messagesDiv.appendChild(bubble);
+  scrollToBottom();
+}
+
 
 
 
