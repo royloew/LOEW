@@ -1,24 +1,24 @@
 import sqlite3 from "sqlite3";
-import path from "path";
 import fs from "fs";
+import path from "path";
 
 sqlite3.verbose();
 
-// בחירת מיקום ה־DB בצורה עמידה:
+// בחירת מיקום ה־DB בצורה עמידה
 function resolveDbFile() {
-  // 1) אם יש נתיב מפורש מה-ENV – נשתמש בו
+  // 1) אם הוגדר נתיב מפורש ב-ENV, נשתמש בו
   if (process.env.LOEW_DB_FILE) {
     return process.env.LOEW_DB_FILE;
   }
 
-  // 2) ניסיון להשתמש בדיסק הקבוע של Render (/var/data)
+  // 2) מנסים להשתמש בדיסק הקבוע של Render (/var/data)
   const renderDir = "/var/data";
   try {
     fs.mkdirSync(renderDir, { recursive: true });
     fs.accessSync(renderDir, fs.constants.W_OK);
     return path.join(renderDir, "loew.db");
-  } catch {
-    // 3) fallback ללוקאלי / קונטיינר ללא דיסק קבוע
+  } catch (e) {
+    // 3) fallback לנתיב מקומי (לוקאלי/סביבה ללא דיסק קבוע)
     return path.join(process.cwd(), "loew.db");
   }
 }
@@ -280,7 +280,6 @@ export async function createDbImpl() {
     return { stage: row.stage || null, data };
   }
 
-  // >>> זה החלק הקריטי שתואם ל־OnboardingEngine <<<
   async function saveOnboardingState(userId, state) {
     const now = Math.floor(Date.now() / 1000);
     const dataJson = JSON.stringify(state.data || {});
@@ -1473,7 +1472,7 @@ export async function createDbImpl() {
       intensityFtp = Number((avgPower / ftpCandidate).toFixed(2));
     }
 
-    // drift / decoupling between halves
+    // drift / decoupling בין החצי הראשון לחצי השני
     const powerHalves = wattsSeries
       ? computeTwoHalvesDrift(wattsSeries)
       : {
@@ -1567,7 +1566,7 @@ export async function createDbImpl() {
   return {
     ensureUser,
     getOnboardingState,
-    saveOnboardingState, // חשוב: חתימה חדשה שתואמת ל־OnboardingEngine
+    saveOnboardingState,
     getTrainingParams,
     saveTrainingParams,
     getMetricsWindowDays,
