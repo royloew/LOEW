@@ -1,18 +1,29 @@
 import sqlite3 from "sqlite3";
+import path from "path";
+import fs from "fs";
 
 sqlite3.verbose();
 
-// בחירת מיקום ה־DB
-let DB_FILE;
-if (process.env.LOEW_DB_FILE) {
-  DB_FILE = process.env.LOEW_DB_FILE;
-} else if (process.env.RENDER === "true") {
-  // ברנדר מומלץ לחבר דיסק קבוע (למשל /var/data)
-  DB_FILE = "/var/data/loew.db";
-} else {
-  // לוקאלי
-  DB_FILE = "./loew.db";
+// בחירת מיקום ה־DB בצורה עמידה:
+function resolveDbFile() {
+  // 1) אם יש נתיב מפורש מה-ENV – נשתמש בו
+  if (process.env.LOEW_DB_FILE) {
+    return process.env.LOEW_DB_FILE;
+  }
+
+  // 2) ניסיון להשתמש בדיסק הקבוע של Render (/var/data)
+  const renderDir = "/var/data";
+  try {
+    fs.mkdirSync(renderDir, { recursive: true });
+    fs.accessSync(renderDir, fs.constants.W_OK);
+    return path.join(renderDir, "loew.db");
+  } catch {
+    // 3) fallback ללוקאלי / קונטיינר ללא דיסק קבוע
+    return path.join(process.cwd(), "loew.db");
+  }
 }
+
+const DB_FILE = resolveDbFile();
 
 console.log("[DB] Trying to open SQLite file at:", DB_FILE);
 
@@ -271,29 +282,28 @@ export async function createDbImpl() {
 
   // >>> זה החלק הקריטי שתואם ל־OnboardingEngine <<<
   async function saveOnboardingState(userId, state) {
-  const now = Math.floor(Date.now() / 1000);
-  const dataJson = JSON.stringify(state.data || {});
-  const existing = await get(
-    `SELECT user_id FROM onboarding_states WHERE user_id = ?`,
-    [userId]
-  );
+    const now = Math.floor(Date.now() / 1000);
+    const dataJson = JSON.stringify(state.data || {});
+    const existing = await get(
+      `SELECT user_id FROM onboarding_states WHERE user_id = ?`,
+      [userId]
+    );
 
-  if (!existing) {
-    await run(
-      `INSERT INTO onboarding_states (user_id, stage, data_json, updated_at)
-       VALUES (?, ?, ?, ?)`,
-      [userId, state.stage, dataJson, now]
-    );
-  } else {
-    await run(
-      `UPDATE onboarding_states
-         SET stage = ?, data_json = ?, updated_at = ?
-       WHERE user_id = ?`,
-      [state.stage, dataJson, now, userId]
-    );
+    if (!existing) {
+      await run(
+        `INSERT INTO onboarding_states (user_id, stage, data_json, updated_at)
+         VALUES (?, ?, ?, ?)`,
+        [userId, state.stage, dataJson, now]
+      );
+    } else {
+      await run(
+        `UPDATE onboarding_states
+           SET stage = ?, data_json = ?, updated_at = ?
+         WHERE user_id = ?`,
+        [state.stage, dataJson, now, userId]
+      );
+    }
   }
-}
-
 
   // ===== TRAINING PARAMS & METRICS WINDOW =====
 
@@ -1253,7 +1263,6 @@ export async function createDbImpl() {
     };
   }
 
-
   // ===== WORKOUT ANALYSIS (LAST / BY DATE) =====
 
   function computeAvgAndMax(series) {
@@ -1554,6 +1563,7 @@ export async function createDbImpl() {
     if (!isoDate) return null;
     return await getWorkoutAnalysisCore(userId, { isoDate });
   }
+
   return {
     ensureUser,
     getOnboardingState,

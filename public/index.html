@@ -41,7 +41,7 @@
       }
 
       .assistant {
-        background: white;
+        background: #ffffff;
         border: 1px solid #ccc;
         color: #222;
         margin-left: auto;
@@ -120,10 +120,22 @@
       const input = document.getElementById("user-input");
       const sendBtn = document.getElementById("send-btn");
 
+      const ftpExplanations = {
+        ftp20:
+          "FTP 20min – מבוסס על 20 דקות מקסימליות, כפול 95%. זה מודל קלאסי שמניח שאפשר להחזיק בערך 95% מהמאמץ של 20 דקות במשך שעה שלמה.",
+        ftpFrom3min:
+          "FTP from 3min – מודל שמסתכל על המאמצים הכי חזקים שלך סביב 3 דקות, ובונה מהם הערכה ליכולת האירובית הארוכה. מתאים במיוחד לרוכבים שמתפוצצים חזק במאמץ קצר יחסית.",
+        ftpFromCP:
+          "Critical Power model – מודל חישוב שמנסה למצוא נקודת שיווי משקל בין מאמצים קצרים וארוכים (למשל 3 דקות ו-20 דקות) ומגדיר ממנה כוח קבוע תיאורטי שאפשר להחזיק לאורך זמן.",
+        ftpRecommended:
+          "Recommended FTP – ה-FTP המומלץ שלי עבורך כרגע, שנבחר כחציון בין המודלים הסבירים (20 דקות, 3 דקות, Critical Power ועוד), כדי להיות ערך מאוזן ולא חד-פעמי.",
+      };
+
       function scrollToBottom() {
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
       }
 
+      // הופך טקסט ללינק (Strava auth, URLs)
       function linkify(text) {
         return text.replace(
           /(https?:\/\/[^\s]+|\/auth\/strava\?userId=[^\s]+)/g,
@@ -136,6 +148,57 @@
         );
       }
 
+      function buildFtpListHtml(header, lines) {
+        let itemsHtml = "";
+
+        for (const line of lines) {
+          const m = line.match(/^•\s*(.+)$/);
+          if (!m) {
+            const trimmed = line.trim();
+            if (trimmed) {
+              itemsHtml += `<li>${trimmed}</li>`;
+            }
+            continue;
+          }
+
+          let text = m[1]; // למשל: "FTP 20min (95%): 234 W"
+          let key = null;
+
+          if (/^FTP 20 ?min/i.test(text)) {
+            key = "ftp20";
+          } else if (/^FTP from 3 ?min/i.test(text)) {
+            key = "ftpFrom3min";
+          } else if (/^Critical Power model/i.test(text)) {
+            key = "ftpFromCP";
+          } else if (/^Recommended FTP/i.test(text)) {
+            key = "ftpRecommended";
+          }
+
+          if (key) {
+            const colonIdx = text.indexOf(":");
+            let name = text;
+            let rest = "";
+            if (colonIdx >= 0) {
+              name = text.slice(0, colonIdx);
+              rest = text.slice(colonIdx + 1); // כולל הערך עצמו
+            }
+
+            const safeName = name.trim();
+            const safeRest = rest ? ":" + rest : "";
+
+            itemsHtml += `<li><a href="#" class="ftp-help" data-ftp="${key}">${safeName}</a>${safeRest}</li>`;
+          } else {
+            itemsHtml += `<li>${text}</li>`;
+          }
+        }
+
+        if (!itemsHtml) return null;
+
+        let finalHtml = `<strong>${header}</strong>`;
+        finalHtml += `<ul dir="ltr" class="ftp-list">${itemsHtml}</ul>`;
+        return finalHtml;
+      }
+
       function addMessage(text, sender = "assistant") {
         const bubble = document.createElement("div");
         bubble.className = "bubble " + sender;
@@ -145,48 +208,59 @@
 
         let html = linkify(text);
 
-        // זיהוי רשימות עם "•"
+        // טיפול מיוחד בהודעת FTP Models עם בולטים
         if (html.includes("\n•")) {
           const lines = html.split("\n");
           const header = lines[0];
           const rest = lines.slice(1);
 
-          let itemsHtml = "";
-          for (const line of rest) {
-            const m = line.match(/^•\s*(.+)$/);
-            if (m) {
-              itemsHtml += `<li>${m[1]}</li>`;
-            } else if (line.trim() !== "") {
-              itemsHtml += `<li>${line.trim()}</li>`;
-            }
-          }
+          const isFtpList =
+            /FTP Models|FTP 20min|FTP from 3min|Critical Power|Recommended FTP/i.test(
+              header + rest.join(" ")
+            );
 
-          if (itemsHtml) {
-            const isFtp =
-              /FTP Models|FTP 20min|FTP from 3min|Critical Power|Recommended FTP/i.test(
-                header + itemsHtml
-              );
-
-            let finalHtml = `<strong>${header}</strong>`;
-
-            if (isFtp) {
-              finalHtml += `<ul dir="ltr" class="ftp-list">${itemsHtml}</ul>`;
+          if (isFtpList) {
+            const ftpHtml = buildFtpListHtml(header, rest);
+            if (ftpHtml) {
+              html = ftpHtml;
               textDiv.style.direction = "ltr";
               textDiv.style.textAlign = "left";
-            } else {
-              finalHtml += `<ul dir="rtl">${itemsHtml}</ul>`;
             }
-
-            html = finalHtml;
+          } else {
+            // רשימה רגילה – עדיין RTL
+            let itemsHtml = "";
+            for (const line of rest) {
+              const m = line.match(/^•\s*(.+)$/);
+              if (m) {
+                itemsHtml += `<li>${m[1]}</li>`;
+              } else if (line.trim() !== "") {
+                itemsHtml += `<li>${line.trim()}</li>`;
+              }
+            }
+            if (itemsHtml) {
+              html = `<strong>${header}</strong><ul dir="rtl">${itemsHtml}</ul>`;
+            }
           }
         }
 
         textDiv.innerHTML = html;
-
         bubble.appendChild(textDiv);
         messagesDiv.appendChild(bubble);
         scrollToBottom();
       }
+
+      // האזנה ללחיצה על קישורי FTP Models
+      messagesDiv.addEventListener("click", (e) => {
+        const link = e.target.closest("a.ftp-help");
+        if (!link) return;
+        e.preventDefault();
+        const key = link.getAttribute("data-ftp");
+        if (!key) return;
+        const exp = ftpExplanations[key];
+        if (exp) {
+          addMessage(exp, "assistant");
+        }
+      });
 
       function getUserId() {
         const params = new URLSearchParams(window.location.search);
@@ -199,7 +273,7 @@
       }
 
       function isLastWorkoutRequest(txt) {
-        return /אימון האחרון/.test(txt) || /ה[א]?ימון האחרון/.test(txt);
+        return /אימון האחרון/.test(txt);
       }
 
       function isWorkoutByDateRequest(txt) {
