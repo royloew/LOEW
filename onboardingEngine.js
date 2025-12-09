@@ -8,78 +8,25 @@ export class OnboardingEngine {
     this._memStates = new Map();
   }
 
-  async handleMessage(userId, textRaw) {
+    async handleMessage(userId, textRaw) {
     const text = (textRaw || "").trim();
 
     let state = await this._loadState(userId);
 
-    // אם כבר סיימנו אונבורדינג – לא חוזרים פנימה
+    // אם כבר סיימנו אונבורדינג – לא חוזרים פנימה,
+    // אבל כן מאפשרים לעדכן משקל / FTP / דופק / מטרה בכל רגע.
     if (state && state.stage === "done") {
+      const reply = await this._handlePostOnboardingUpdate(
+        userId,
+        text,
+        state
+      );
       return {
-        reply:
-          "האונבורדינג כבר הושלם. אם תרצה לעדכן משקל, FTP, דופק או מטרה — תגיד לי מה לעדכן.",
+        reply,
         onboarding: false,
       };
     }
 
-    // אין state שמור – בוטסטרפ מסטרבה
-    if (!state || !state.stage) {
-      state = await this._bootstrapStateFromStrava(userId);
-      await this._saveState(userId, state);
-    }
-
-    let reply = "";
-
-    switch (state.stage) {
-      case "intro":
-        reply = await this._stageIntro(userId, text, state);
-        break;
-
-      case "post_strava_summary":
-        // שלב זה נשמר רק למקרה עתידי; כרגע אנחנו תמיד עוברים ישר ל-personal_details
-        reply = await this._stagePostStravaSummary(userId, state);
-        break;
-
-      case "personal_details":
-        reply = await this._stagePersonalDetails(userId, text, state);
-        break;
-
-      case "ftp_intro":
-        reply = await this._stageFtpIntro(userId, state);
-        break;
-
-      case "ftp_choice":
-        reply = await this._stageFtpChoice(userId, text, state);
-        break;
-
-      case "hr_collect":
-        reply = await this._stageHrCollect(userId, text, state);
-        break;
-
-      case "training_time":
-        reply = await this._stageTrainingTime(userId, text, state);
-        break;
-
-      case "goal_collect":
-        reply = await this._stageGoalCollect(userId, text, state);
-        break;
-
-      default:
-        // חשוב: לא מאפסים state ולא חוזרים שוב לסיכום סטרבה,
-        // כדי שלא יווצר לופ במשקל/סיכום.
-        console.warn(
-          "OnboardingEngine.handleMessage: unknown stage",
-          state.stage
-        );
-        return {
-          reply:
-            "משהו לא היה ברור בתהליך האונבורדינג. תנסה לענות שוב בתשובה קצרה ופשוטה (מספר או מילה אחת), ונמשיך מאותו שלב.",
-          onboarding: true,
-        };
-    }
-
-    return { reply, onboarding: true };
-  }
 
   // ===== DB + MEMORY HELPERS =====
 
@@ -201,6 +148,198 @@ export class OnboardingEngine {
         e
       );
     }
+  }
+  // ===== POST-ONBOARDING UPDATES =====
+
+  async _handlePostOnboardingUpdate(userId, text, state) {
+    const t = (text || "").trim();
+
+    // אם המשתמש לא כתב כלום – נחזיר הסבר מה אפשר לעדכן
+    if (!t) {
+      return (
+        "האונבורדינג כבר הושלם.\n" +
+        "אתה יכול בכל רגע לעדכן משקל, FTP, דופק מקסימלי, דופק סף ומטרה.\n" +
+        'דוגמאות: "המשקל שלי עכשיו 72", "FTP 250", "דופק מקסימלי 178", "דופק סף 160", "המטרה שלי עכשיו היא גרן פונדו אילת".\n' +
+        'אפשר גם לכתוב "תראה לי את הפרופיל שלי".'
+      );
+    }
+
+    // 1) סיכום פרופיל
+    if (
+      /הפרופיל שלי|מה ההגדרות שלי|סיכום נתונים|סיכום פרופיל/.test(t)
+    ) {
+      return this._buildCurrentProfileSummaryFromState(state);
+    }
+
+    // מבטיחים שיש אובייקטים פנימיים
+    state.data = state.data || {};
+    state.data.personal = state.data.personal || {};
+    state.data.hr = state.data.hr || {};
+
+    // 2) עדכון משקל
+    const weightMatch = t.match(
+      /(משקל|שוקל|קילו|ק\"ג|ק״ג)[^0-9]*([0-9]{2,3}(?:[.,][0-9])?)/
+    );
+    if (weightMatch) {
+      const raw = weightMatch[2].replace(",", ".");
+      const num = parseFloat(raw);
+      if (Number.isFinite(num) && num > 30 && num < 200) {
+        const weight = Math.round(num * 10) / 10;
+        state.data.personal.weight = weight;
+        await this._saveState(userId, state);
+
+        const summary = this._buildCurrentProfileSummaryFromState(state);
+        return `עדכנתי משקל ל-${weight} ק״ג.\n\n${summary}`;
+      }
+      return "לא הצלחתי להבין את המשקל שכתבת. תכתוב מספר בק\"ג (למשל 72.5).";
+    }
+
+    // 3) עדכון FTP
+    // דוגמאות: "FTP 250", "עדכן FTP ל 245"
+    const ftpMatch = t.match(/ftp[^0-9]*([0-9]{2,3})/i);
+    if (ftpMatch) {
+      const ftp = parseInt(ftpMatch[1], 10);
+      if (!Number.isFinite(ftp) || ftp < 80 || ftp > 500) {
+        return "כדי שאוכל לעבוד עם FTP מדויק – תכתוב מספר בוואטים (למשל 240).";
+      }
+
+      state.data.ftpFinal = ftp;
+      state.data.ftpModels = state.data.ftpModels || {};
+      state.data.ftpModels.ftpUserSelected = {
+        key: "ftpUserSelected",
+        value: ftp,
+        label: "FTP chosen by user (post-onboarding)",
+      };
+
+      await this._updateTrainingParamsFromState(userId, state);
+      await this._saveState(userId, state);
+
+      const summary = this._buildCurrentProfileSummaryFromState(state);
+      return `עדכנתי FTP ל-${ftp}W.\n\n${summary}`;
+    }
+
+    // 4) עדכון דופק מקסימלי
+    const hrMaxMatch = t.match(
+      /(דופק\s*מקס(?:ימלי)?|מקסימום)[^0-9]*([0-9]{2,3})/
+    );
+    if (hrMaxMatch) {
+      const hrMax = parseInt(hrMaxMatch[2], 10);
+      if (!Number.isFinite(hrMax) || hrMax < 100 || hrMax > 230) {
+        return "תכתוב דופק מקסימלי במספרים בין 120 ל-220 (למשל 175).";
+      }
+
+      state.data.hr.hrMaxUser = hrMax;
+      state.data.hr.hrMaxFinal = hrMax;
+
+      await this._updateTrainingParamsFromState(userId, state);
+      await this._saveState(userId, state);
+
+      const summary = this._buildCurrentProfileSummaryFromState(state);
+      return `עדכנתי דופק מקסימלי ל-${hrMax} bpm.\n\n${summary}`;
+    }
+
+    // 5) עדכון דופק סף
+    const hrThMatch = t.match(/דופק\s*סף[^0-9]*([0-9]{2,3})/);
+    if (hrThMatch) {
+      const hrTh = parseInt(hrThMatch[1], 10);
+      if (!Number.isFinite(hrTh) || hrTh < 80 || hrTh > 220) {
+        return "תכתוב דופק סף במספרים בין 120 ל-200 (למשל 160).";
+      }
+
+      state.data.hr.hrThresholdUser = hrTh;
+      state.data.hr.hrThresholdFinal = hrTh;
+
+      await this._updateTrainingParamsFromState(userId, state);
+      await this._saveState(userId, state);
+
+      const summary = this._buildCurrentProfileSummaryFromState(state);
+      return `עדכנתי דופק סף ל-${hrTh} bpm.\n\n${summary}`;
+    }
+
+    // 6) עדכון מטרה
+    // דוגמאות: "המטרה שלי עכשיו היא ...", "המטרה העיקרית: ..."
+    const goalMatch = t.match(
+      /המטרה(?: העיקרית)?(?: שלי)?(?: עכשיו)?[:\- ]*(.+)/
+    );
+    if (goalMatch && goalMatch[1]) {
+      const goalText = goalMatch[1].trim();
+      if (goalText) {
+        state.data.goal = goalText;
+        await this._saveState(userId, state);
+
+        const summary = this._buildCurrentProfileSummaryFromState(state);
+        return `עדכנתי מטרה חדשה:\n"${goalText}".\n\n${summary}`;
+      }
+    }
+
+    // 7) לא זוהתה פקודה – תשובת ברירת מחדל
+    return (
+      "האונבורדינג כבר הושלם.\n" +
+      "אתה יכול לעדכן בכל רגע משקל, FTP, דופק מקסימלי, דופק סף ומטרה.\n" +
+      'דוגמאות: "המשקל שלי עכשיו 72", "FTP 250", "דופק מקסימלי 178", "דופק סף 160", "המטרה שלי עכשיו היא גרן פונדו אילת".\n' +
+      'כדי לראות את כל ההגדרות – תכתוב "הפרופיל שלי".'
+    );
+  }
+
+  _buildCurrentProfileSummaryFromState(state) {
+    state = state || {};
+    const data = state.data || {};
+    const personal = data.personal || {};
+    const hr = data.hr || {};
+    const tt = data.trainingTime || {};
+
+    const lines = [];
+    lines.push("זה הפרופיל הנוכחי שלך:");
+
+    if (personal.weight != null) {
+      lines.push(`• משקל: ${personal.weight} ק״ג`);
+    }
+    if (personal.height != null) {
+      lines.push(`• גובה: ${personal.height} ס״מ`);
+    }
+    if (personal.age != null) {
+      lines.push(`• גיל: ${personal.age}`);
+    }
+
+    if (data.ftpFinal != null) {
+      lines.push(`• FTP: ${data.ftpFinal}W`);
+    }
+
+    if (hr.hrMaxFinal != null) {
+      lines.push(`• דופק מקסימלי: ${hr.hrMaxFinal} bpm`);
+    } else if (hr.hrMax != null) {
+      lines.push(`• דופק מקסימלי (מהמודלים): ${hr.hrMax} bpm`);
+    }
+
+    if (hr.hrThresholdFinal != null) {
+      lines.push(`• דופק סף: ${hr.hrThresholdFinal} bpm`);
+    } else if (hr.hrThreshold != null) {
+      lines.push(`• דופק סף (מהמודלים): ${hr.hrThreshold} bpm`);
+    }
+
+    if (
+      tt.minMinutes != null &&
+      tt.avgMinutes != null &&
+      tt.maxMinutes != null
+    ) {
+      lines.push(
+        `• משכי אימון טיפוסיים: קצר ${tt.minMinutes} דק׳ / ממוצע ${tt.avgMinutes} דק׳ / ארוך ${tt.maxMinutes} דק׳`
+      );
+    }
+
+    if (data.goal) {
+      lines.push(`• מטרה: ${data.goal}`);
+    }
+
+    if (lines.length === 1) {
+      // רק הכותרת – אין נתונים
+      return (
+        "כרגע אין לי כמעט נתונים בפרופיל שלך.\n" +
+        "אפשר להתחיל מלהגדיר משקל, FTP, דופק ומטרה (לדוגמה: \"המשקל שלי עכשיו 72\", \"FTP 240\", \"דופק מקסימלי 176\", \"המטרה שלי עכשיו היא גרן פונדו אילת\")."
+      );
+    }
+
+    return lines.join("\n");
   }
 
   async _ensureStravaMetricsInState(userId, state) {
@@ -394,7 +533,7 @@ export class OnboardingEngine {
         if (weightFromStrava != null) {
           return (
             "לא הצלחתי להבין את המשקל שכתבת.\n" +
-            `בסטרבה מופיע ${weightFromStrra} ק\"ג.\n` +
+            `בסטרבה מופיע ${weightFromStrava} ק\"ג.\n` +
             "תכתוב משקל מספרי בק\"ג (למשל 72.5), או תכתוב 'אישור' אם אתה רוצה להשאיר כמו שמופיע."
           );
         }
