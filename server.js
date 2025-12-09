@@ -11,6 +11,10 @@ import { OnboardingEngine } from "./onboardingEngine.js";
 
 import fs from "fs";
 
+
+const dbPromise = createDbImpl();
+
+
 // קונפיגורציית DB דרך Environment Variables
 // חשוב: ב-Render להגדיר LOEW_DB_FILE=/opt/render/project/src/loew.db
 const DB_FILE = process.env.LOEW_DB_FILE || "/tmp/loew.db";
@@ -126,6 +130,31 @@ app.post("/api/loew/chat", async (req, res) => {
       ok: false,
       error: "chat_failed",
     });
+  }
+});
+
+app.post("/api/loew/strava-sync", async (req, res) => {
+  try {
+    const { userId } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ error: "userId is required" });
+    }
+
+    const db = await dbPromise;
+
+    console.log("[STRAVA] Manual sync requested for", userId);
+
+    // זה עושה ingest מלא + חישובי FTP/HR ומחזיר snapshot עדכני
+    const snapshot = await db.ingestAndComputeFromStrava(userId);
+
+    return res.json({
+      ok: true,
+      snapshot,
+    });
+  } catch (err) {
+    console.error("[STRAVA] /api/loew/strava-sync error", err);
+    return res.status(500).json({ error: "Strava sync failed" });
   }
 });
 
