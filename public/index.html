@@ -21,10 +21,10 @@
         padding: 20px;
       }
 
-      /* פס עליון עם כפתור סנכרון */
+      /* פס עליון (ללא כפתור) */
       #top-bar {
         display: flex;
-        justify-content: space-between;
+        justify-content: flex-start;
         align-items: center;
         margin-bottom: 12px;
         gap: 10px;
@@ -33,21 +33,6 @@
       #top-bar-title {
         font-size: 18px;
         font-weight: bold;
-      }
-
-      .sync-button {
-        padding: 8px 14px;
-        font-size: 14px;
-        border-radius: 8px;
-        border: none;
-        cursor: pointer;
-        background: #00b894;
-        color: #ffffff;
-        white-space: nowrap;
-      }
-
-      .sync-button:hover {
-        opacity: 0.9;
       }
 
       .bubble {
@@ -136,12 +121,8 @@
 
   <body>
     <div id="chat-container">
-      <!-- פס עליון חדש עם כפתור סנכרון -->
       <div id="top-bar">
         <div id="top-bar-title">LOEW – המאמן האישי שלך</div>
-        <button id="strava-sync-btn" class="sync-button">
-          עדכן נתונים מסטרבה
-        </button>
       </div>
 
       <div id="messages"></div>
@@ -156,7 +137,6 @@
       const messagesDiv = document.getElementById("messages");
       const input = document.getElementById("user-input");
       const sendBtn = document.getElementById("send-btn");
-      const stravaSyncBtn = document.getElementById("strava-sync-btn");
 
       const ftpExplanations = {
         ftp20:
@@ -330,6 +310,13 @@
         return /אימון/.test(txt) && /\d{4}-\d{2}-\d{2}/.test(txt);
       }
 
+      // 🔹 זיהוי פקודת "סנכרון / עדכון מסטרבה"
+      function isStravaSyncRequest(txt) {
+        return /סנכרון מסטרבה|עדכון מסטרבה|עדכן.*סטרבה|תעדכן.*סטרבה/.test(
+          txt
+        );
+      }
+
       async function callLastWorkoutAnalysis(userId) {
         const res = await fetch("/api/loew/last-workout-analysis", {
           method: "POST",
@@ -348,6 +335,89 @@
         });
         const data = await res.json();
         handleApiReply(data);
+      }
+
+      // 🔹 קריאת סנכרון סטרבה ידני (פקודה בצ'אט)
+      async function callStravaSync(userId) {
+        addMessage("מייבא נתונים מסטרבה...", "assistant");
+
+        try {
+          const res = await fetch("/api/loew/strava-sync", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ userId }),
+          });
+
+          const data = await res.json();
+
+          if (!res.ok || !data.ok) {
+            throw new Error(data.error || "Strava sync failed");
+          }
+
+          const snapshot = data.snapshot || {};
+          const ts = snapshot.trainingSummary;
+          const volume = snapshot.volume;
+          const ftpModels = snapshot.ftpModels || {};
+          const hr = snapshot.hr || {};
+          const windowDays = snapshot.metricsWindowDays || 60;
+
+          let text = "סיימתי לעדכן את הנתונים מסטרבה.\n";
+
+          if (ts && ts.rides_count) {
+            const hours = (ts.totalMovingTimeSec / 3600).toFixed(1);
+            const km = ts.totalDistanceKm.toFixed(1);
+            const elev = Math.round(ts.totalElevationGainM || 0);
+            text += `ב-${windowDays} הימים האחרונים יש לך ${ts.rides_count} רכיבות, `;
+            text += `${hours} שעות ו-${km} ק״מ עם ${elev} מטר טיפוס.\n`;
+          }
+
+          if (volume && volume.weeksCount) {
+            text += `בממוצע שבועי: ${volume.weeklyHoursAvg.toFixed(
+              1
+            )} שעות ו-${volume.weeklyRidesAvg.toFixed(
+              1
+            )} רכיבות לשבוע.\n`;
+          }
+
+          if (ftpModels.ftpRecommended) {
+            text += `FTP מומלץ כרגע: ${ftpModels.ftpRecommended.value}W (Recommended FTP).\n`;
+          }
+
+          if (
+            ftpModels.ftp20 ||
+            ftpModels.ftpFrom3min ||
+            ftpModels.ftpFromCP
+          ) {
+            text += "מודלים נוספים:\n";
+            if (ftpModels.ftp20) {
+              text += `• FTP 20min (95%): ${ftpModels.ftp20.value}W\n`;
+            }
+            if (ftpModels.ftpFrom3min) {
+              text += `• FTP from 3min model: ${ftpModels.ftpFrom3min.value}W\n`;
+            }
+            if (ftpModels.ftpFromCP) {
+              text += `• Critical Power model: ${ftpModels.ftpFromCP.value}W\n`;
+            }
+          }
+
+          if (hr.hrMax || hr.hrThreshold) {
+            text += "דופק:\n";
+            if (hr.hrMax) {
+              text += `• דופק מקסימלי משוער: ${hr.hrMax} bpm\n`;
+            }
+            if (hr.hrThreshold) {
+              text += `• דופק סף משוער: ${hr.hrThreshold} bpm\n`;
+            }
+          }
+
+          addMessage(text, "assistant");
+        } catch (err) {
+          console.error(err);
+          addMessage(
+            "הייתה בעיה בעדכון מסטרבה. נסה שוב מאוחר יותר.",
+            "assistant"
+          );
+        }
       }
 
       function handleApiReply(data) {
@@ -371,92 +441,6 @@
         addMessage("משהו לא עבד כמו שצריך, נסה שוב עוד פעם.", "assistant");
       }
 
-      // ⭐ כפתור "עדכן נתונים מסטרבה"
-      if (stravaSyncBtn) {
-        stravaSyncBtn.addEventListener("click", async () => {
-          const userId = getUserId();
-          addMessage("מייבא נתונים מסטרבה...", "assistant");
-
-          try {
-            const res = await fetch("/api/loew/strava-sync", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ userId }),
-            });
-
-            const data = await res.json();
-
-            if (!res.ok || !data.ok) {
-              throw new Error(data.error || "Strava sync failed");
-            }
-
-            const snapshot = data.snapshot || {};
-            const ts = snapshot.trainingSummary;
-            const volume = snapshot.volume;
-            const ftpModels = snapshot.ftpModels || {};
-            const hr = snapshot.hr || {};
-            const windowDays = snapshot.metricsWindowDays || 60;
-
-            let text = "סיימתי לעדכן את הנתונים מסטרבה.\n";
-
-            if (ts && ts.rides_count) {
-              const hours = (ts.totalMovingTimeSec / 3600).toFixed(1);
-              const km = ts.totalDistanceKm.toFixed(1);
-              const elev = Math.round(ts.totalElevationGainM || 0);
-              text += `ב-${windowDays} הימים האחרונים יש לך ${ts.rides_count} רכיבות, `;
-              text += `${hours} שעות ו-${km} ק״מ עם ${elev} מטר טיפוס.\n`;
-            }
-
-            if (volume && volume.weeksCount) {
-              text += `בממוצע שבועי: ${volume.weeklyHoursAvg.toFixed(
-                1
-              )} שעות ו-${volume.weeklyRidesAvg.toFixed(
-                1
-              )} רכיבות לשבוע.\n`;
-            }
-
-            if (ftpModels.ftpRecommended) {
-              text += `FTP מומלץ כרגע: ${ftpModels.ftpRecommended.value}W (Recommended FTP).\n`;
-            }
-
-            if (
-              ftpModels.ftp20 ||
-              ftpModels.ftpFrom3min ||
-              ftpModels.ftpFromCP
-            ) {
-              text += "מודלים נוספים:\n";
-              if (ftpModels.ftp20) {
-                text += `• FTP 20min (95%): ${ftpModels.ftp20.value}W\n`;
-              }
-              if (ftpModels.ftpFrom3min) {
-                text += `• FTP from 3min model: ${ftpModels.ftpFrom3min.value}W\n`;
-              }
-              if (ftpModels.ftpFromCP) {
-                text += `• Critical Power model: ${ftpModels.ftpFromCP.value}W\n`;
-              }
-            }
-
-            if (hr.hrMax || hr.hrThreshold) {
-              text += "דופק:\n";
-              if (hr.hrMax) {
-                text += `• דופק מקסימלי משוער: ${hr.hrMax} bpm\n`;
-              }
-              if (hr.hrThreshold) {
-                text += `• דופק סף משוער: ${hr.hrThreshold} bpm\n`;
-              }
-            }
-
-            addMessage(text, "assistant");
-          } catch (err) {
-            console.error(err);
-            addMessage(
-              "הייתה בעיה בעדכון מסטרבה. נסה שוב מאוחר יותר.",
-              "assistant"
-            );
-          }
-        });
-      }
-
       async function sendMessage() {
         const txt = input.value.trim();
         if (!txt) return;
@@ -468,6 +452,12 @@
         const userId = getUserId();
 
         try {
+          // 0) סנכרון מסטרבה לפי פקודה
+          if (isStravaSyncRequest(txt)) {
+            await callStravaSync(userId);
+            return;
+          }
+
           // 1) ניתוח אימון אחרון
           if (isLastWorkoutRequest(txt)) {
             await callLastWorkoutAnalysis(userId);
