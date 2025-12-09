@@ -1,31 +1,32 @@
 import sqlite3 from "sqlite3";
-import fs from "fs";
 import path from "path";
 
 sqlite3.verbose();
 
-// בחירת מיקום ה־DB בצורה עמידה
+// בחירת מיקום ה־DB בצורה עמידה וברורה
 function resolveDbFile() {
   // 1) אם הוגדר נתיב מפורש ב-ENV, נשתמש בו
   if (process.env.LOEW_DB_FILE) {
+    console.log("[DB] Using DB path from LOEW_DB_FILE:", process.env.LOEW_DB_FILE);
     return process.env.LOEW_DB_FILE;
   }
 
-  // 2) מנסים להשתמש בדיסק הקבוע של Render (/var/data)
-  const renderDir = "/var/data";
-  try {
-    fs.mkdirSync(renderDir, { recursive: true });
-    fs.accessSync(renderDir, fs.constants.W_OK);
-    return path.join(renderDir, "loew.db");
-  } catch (e) {
-    // 3) fallback לנתיב מקומי (לוקאלי/סביבה ללא דיסק קבוע)
-    return path.join(process.cwd(), "loew.db");
+  // 2) בפרודקשן (Render) — משתמשים בדיסק הקבוע /var/data
+  if (process.env.NODE_ENV === "production") {
+    const diskPath = "/var/data/loew.db";
+    console.log("[DB] NODE_ENV=production, using Render disk path:", diskPath);
+    return diskPath;
   }
+
+  // 3) לוקאל — קובץ loew.db בתיקיית הפרויקט
+  const localPath = path.join(process.cwd(), "loew.db");
+  console.log("[DB] Using local dev DB path:", localPath);
+  return localPath;
 }
 
 const DB_FILE = resolveDbFile();
 
-console.log("[DB] Trying to open SQLite file at:", DB_FILE);
+console.log("[DB] Final SQLite file path:", DB_FILE);
 
 const DEFAULT_METRICS_WINDOW_DAYS = 60;
 
