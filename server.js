@@ -132,6 +132,8 @@ app.post("/api/loew/chat", async (req, res) => {
 
 // ===== WORKOUT ANALYSIS APIS =====
 
+// ===== WORKOUT ANALYSIS APIS =====
+
 app.post("/api/loew/last-workout-analysis", async (req, res) => {
   try {
     const userId = getUserIdFromBody(req);
@@ -146,92 +148,158 @@ app.post("/api/loew/last-workout-analysis", async (req, res) => {
     }
 
     const { summary } = analysis;
-    const parts = [];
-
     const dateStr = summary.startDateIso
       ? summary.startDateIso.slice(0, 10)
       : "תאריך לא ידוע";
 
-    parts.push(`האימון האחרון שלך היה ב-${dateStr}.`);
+    const lines = [];
 
-    if (summary.distanceKm != null && summary.durationMin != null) {
-      parts.push(
-        `רכבת ${summary.distanceKm.toFixed(
-          1
-        )} ק\"מ במשך כ-${Math.round(summary.durationMin)} דקות.`
-      );
-    } else if (summary.durationMin != null) {
-      parts.push(`משך האימון היה כ-${Math.round(summary.durationMin)} דקות.`);
+    // כותרת
+    lines.push(`סיכום אימון אחרון – ${dateStr}`);
+    lines.push("");
+
+    // נתוני בסיס
+    if (summary.durationMin != null) {
+      lines.push(`⏱ משך: ${Math.round(summary.durationMin)} דק'`);
     }
-
+    if (summary.distanceKm != null) {
+      lines.push(`📍 מרחק: ${summary.distanceKm.toFixed(1)} ק״מ`);
+    }
     if (summary.elevationGainM != null && summary.elevationGainM > 0) {
-      parts.push(`צברת בערך ${summary.elevationGainM} מטר טיפוס.`);
+      lines.push(`🏔 טיפוס: ${summary.elevationGainM} מ'`);
     }
 
-    if (summary.avgPower != null && summary.ftpUsed) {
-      const rel = ((summary.avgPower / summary.ftpUsed) * 100).toFixed(1);
-      parts.push(
-        `הוואטים הממוצעים היו ${Math.round(
-          summary.avgPower
-        )}W (~${rel}% מה-FTP שלך).`
-      );
-    } else if (summary.avgPower != null) {
-      parts.push(
-        `הוואטים הממוצעים באימון היו בערך ${Math.round(
-          summary.avgPower
-        )}W.`
-      );
-    }
+    lines.push("");
 
-    if (summary.avgHr != null) {
-      parts.push(
-        `הדופק הממוצע היה סביב ${Math.round(summary.avgHr)} פעימות לדקה.`
-      );
-    }
-
-    if (summary.intensityFtp != null) {
-      parts.push(
-        `האימון כולו היה בעצימות IF ≈ ${summary.intensityFtp} ביחס ל-FTP.`
-      );
-    }
-
-    if (
-      summary.segments &&
-      summary.segments.decouplingPct != null &&
-      Number.isFinite(summary.segments.decouplingPct)
-    ) {
-      const dec = summary.segments.decouplingPct;
-      const decAbs = Math.abs(dec).toFixed(1);
-      if (decAbs >= 3) {
-        const direction =
-          dec > 0
-            ? "הדופק עלה יותר מהוואטים (decoupling חיובי)"
-            : "הדופק עלה פחות מהוואטים (decoupling שלילי)";
-        parts.push(
-          `היה decoupling של כ-${decAbs}% בין דופק לוואטים – ${direction}, מה שנותן תחושה על העומס המצטבר באימון.`
+    // עצימות בסיסית
+    if (summary.avgPower != null) {
+      if (summary.ftpUsed) {
+        const rel = ((summary.avgPower / summary.ftpUsed) * 100).toFixed(1);
+        lines.push(
+          `⚡ וואטים ממוצעים: ${Math.round(
+            summary.avgPower
+          )}W (~${rel}% מה-FTP שלך)`
+        );
+      } else {
+        lines.push(
+          `⚡ וואטים ממוצעים: ${Math.round(summary.avgPower)}W`
         );
       }
     }
 
-    if (summary.windows && summary.windows.w1200 && summary.windows.w1200.avg) {
-      const w = summary.windows.w1200;
-      const rel = w.relToFtp != null ? ` (~${w.relToFtp}% מה-FTP)` : "";
-      parts.push(
-        `ה-20 הדקות החזקות באימון היו סביב ${Math.round(
-          w.avg
-        )}W${rel}.`
-      );
-    } else if (summary.windows && summary.windows.w300 && summary.windows.w300.avg) {
-      const w = summary.windows.w300;
-      const rel = w.relToFtp != null ? ` (~${w.relToFtp}% מה-FTP)` : "";
-      parts.push(
-        `ה-5 הדקות החזקות באימון היו סביב ${Math.round(
-          w.avg
-        )}W${rel}.`
+    if (summary.avgHr != null) {
+      lines.push(
+        `❤️ דופק ממוצע: ${Math.round(summary.avgHr)} bpm`
       );
     }
 
-    const sep = "\n";
+    if (summary.intensityFtp != null) {
+      lines.push(`IF: ${summary.intensityFtp} – עצימות אימונית ביחס ל-FTP`);
+    }
+
+    lines.push("");
+
+    // חלונות חזקים (20 דק' או 5 דק')
+    const w1200 = summary.windows && summary.windows.w1200;
+    const w300 = summary.windows && summary.windows.w300;
+
+    if (w1200 && w1200.avg) {
+      const rel = w1200.relToFtp != null ? ` (~${w1200.relToFtp}% FTP)` : "";
+      lines.push(
+        `🔥 20 דק׳ חזקות: ${Math.round(w1200.avg)}W${rel}`
+      );
+    } else if (w300 && w300.avg) {
+      const rel = w300.relToFtp != null ? ` (~${w300.relToFtp}% FTP)` : "";
+      lines.push(
+        `🔥 5 דק׳ חזקות: ${Math.round(w300.avg)}W${rel}`
+      );
+    }
+
+    lines.push("");
+
+    // Decoupling + הסבר קצר
+    const dec = summary.segments && summary.segments.decouplingPct;
+    if (dec != null && Number.isFinite(dec)) {
+      const decFixed = dec.toFixed(1);
+      lines.push(`📉 Decoupling: ${decFixed}%`);
+      lines.push(
+        `= שינוי ביחס בין דופק לוואטים לאורך האימון (ככל שהמספר גבוה יותר – יש יותר שחיקה/עייפות).`
+      );
+
+      // פרשנות קצרה לפי רמה
+      if (Math.abs(dec) < 5) {
+        lines.push(
+          `הפעם ה-Decoupling נמוך יחסית – הגוף שמר על יציבות יפה לאורך האימון.`
+        );
+      } else if (Math.abs(dec) < 10) {
+        lines.push(
+          `ה-Decoupling בינוני – יש סימנים קלים לעייפות, אבל עדיין בגבולות סבירים.`
+        );
+      } else {
+        lines.push(
+          `ה-Decoupling גבוה – הגוף התעייף משמעותית לאורך האימון, זה סימן לעומס מצטבר או צורך בהתאוששות טובה.`
+        );
+      }
+    }
+
+    lines.push("");
+
+    // הערכה על התאוששות ומצב הכושר לפי IF + Decoupling
+    const ifVal = summary.intensityFtp;
+    let recoveryNote = "";
+    let fitnessNote = "";
+
+    if (ifVal != null) {
+      if (ifVal < 0.7) {
+        fitnessNote =
+          "מבחינת עצימות זה יותר אימון בסיס אירובי/התאוששות – טוב לשמירה על כושר בלי להעמיס יותר מדי.";
+      } else if (ifVal < 0.85) {
+        fitnessNote =
+          "האימון היה בעצימות אירובית מתונה – מתאים לבניית סיבולת ויכולת בסיסית לאורך זמן.";
+      } else {
+        fitnessNote =
+          "האימון היה עצים יחסית – זה אימון שמדגדג את ה-Threshold ויכול לתרום לשיפור FTP, אבל גם דורש התאוששות טובה.";
+      }
+    }
+
+    if (dec != null && Number.isFinite(dec)) {
+      if (Math.abs(dec) > 10) {
+        recoveryNote =
+          "בהתחשב ב-Decoupling הגבוה, כדאי לתת לגוף התאוששות (שינה, תזונה, אימון קל) לפני עוד אימון עצים.";
+      } else if (Math.abs(dec) < 5 && ifVal && ifVal >= 0.7) {
+        recoveryNote =
+          "למרות העצימות, הגוף שמר על יציבות יפה – זה סימן טוב לכושר יציב וליכולת להתמודד עם האימון.";
+      } else {
+        recoveryNote =
+          "מבחינת התאוששות – אין סימן חריג, אבל שווה לעקוב אחרי התחושה ביום-יומיים הקרובים.";
+      }
+    }
+
+    if (fitnessNote) {
+      lines.push(`🧭 מצב כושר: ${fitnessNote}`);
+    }
+    if (recoveryNote) {
+      lines.push(`🛌 התאוששות: ${recoveryNote}`);
+    }
+
+    const message = lines.join("\n");
+
+    return res.json({
+      ok: true,
+      hasWorkout: true,
+      message,
+      analysis,
+    });
+  } catch (err) {
+    console.error("/api/loew/last-workout-analysis error:", err);
+    return res.status(500).json({
+      ok: false,
+      error: "last_workout_failed",
+    });
+  }
+});
+
+
 let message = [
   `סיכום אימון אחרון – ${dateStr}`,
   ``,
@@ -311,88 +379,136 @@ app.post("/api/loew/workout-analysis-by-date", async (req, res) => {
     }
 
     const { summary } = analysis;
-    const parts = [];
+    const lines = [];
 
-    parts.push(`האימון בתאריך ${isoDate}:`);
+    // כותרת
+    lines.push(`סיכום אימון מתאריך ${isoDate}`);
+    lines.push("");
 
-    if (summary.distanceKm != null && summary.durationMin != null) {
-      parts.push(
-        `רכבת ${summary.distanceKm.toFixed(
-          1
-        )} ק\"מ במשך כ-${Math.round(summary.durationMin)} דקות.`
-      );
-    } else if (summary.durationMin != null) {
-      parts.push(`משך האימון היה כ-${Math.round(summary.durationMin)} דקות.`);
+    // נתוני בסיס
+    if (summary.durationMin != null) {
+      lines.push(`⏱ משך: ${Math.round(summary.durationMin)} דק'`);
     }
-
+    if (summary.distanceKm != null) {
+      lines.push(`📍 מרחק: ${summary.distanceKm.toFixed(1)} ק״מ`);
+    }
     if (summary.elevationGainM != null && summary.elevationGainM > 0) {
-      parts.push(`צברת בערך ${summary.elevationGainM} מטר טיפוס.`);
+      lines.push(`🏔 טיפוס: ${summary.elevationGainM} מ'`);
     }
 
-    if (summary.avgPower != null && summary.ftpUsed) {
-      const rel = ((summary.avgPower / summary.ftpUsed) * 100).toFixed(1);
-      parts.push(
-        `הוואטים הממוצעים היו ${Math.round(
-          summary.avgPower
-        )}W (~${rel}% מה-FTP שלך).`
-      );
-    } else if (summary.avgPower != null) {
-      parts.push(
-        `הוואטים הממוצעים באימון היו בערך ${Math.round(
-          summary.avgPower
-        )}W.`
-      );
-    }
+    lines.push("");
 
-    if (summary.avgHr != null) {
-      parts.push(
-        `הדופק הממוצע היה סביב ${Math.round(summary.avgHr)} פעימות לדקה.`
-      );
-    }
-
-    if (summary.intensityFtp != null) {
-      parts.push(
-        `האימון כולו היה בעצימות IF ≈ ${summary.intensityFtp} ביחס ל-FTP.`
-      );
-    }
-
-    if (
-      summary.segments &&
-      summary.segments.decouplingPct != null &&
-      Number.isFinite(summary.segments.decouplingPct)
-    ) {
-      const dec = summary.segments.decouplingPct;
-      const decAbs = Math.abs(dec).toFixed(1);
-      if (decAbs >= 3) {
-        const direction =
-          dec > 0
-            ? "הדופק עלה יותר מהוואטים (decoupling חיובי)"
-            : "הדופק עלה פחות מהוואטים (decoupling שלילי)";
-        parts.push(
-          `היה decoupling של כ-${decAbs}% בין דופק לוואטים – ${direction}.`
+    // עצימות בסיסית
+    if (summary.avgPower != null) {
+      if (summary.ftpUsed) {
+        const rel = ((summary.avgPower / summary.ftpUsed) * 100).toFixed(1);
+        lines.push(
+          `⚡ וואטים ממוצעים: ${Math.round(
+            summary.avgPower
+          )}W (~${rel}% מה-FTP שלך)`
+        );
+      } else {
+        lines.push(
+          `⚡ וואטים ממוצעים: ${Math.round(summary.avgPower)}W`
         );
       }
     }
 
-    if (summary.windows && summary.windows.w1200 && summary.windows.w1200.avg) {
-      const w = summary.windows.w1200;
-      const rel = w.relToFtp != null ? ` (~${w.relToFtp}% מה-FTP)` : "";
-      parts.push(
-        `ה-20 הדקות החזקות באימון היו סביב ${Math.round(
-          w.avg
-        )}W${rel}.`
-      );
-    } else if (summary.windows && summary.windows.w300 && summary.windows.w300.avg) {
-      const w = summary.windows.w300;
-      const rel = w.relToFtp != null ? ` (~${w.relToFtp}% מה-FTP)` : "";
-      parts.push(
-        `ה-5 הדקות החזקות באימון היו סביב ${Math.round(
-          w.avg
-        )}W${rel}.`
+    if (summary.avgHr != null) {
+      lines.push(
+        `❤️ דופק ממוצע: ${Math.round(summary.avgHr)} bpm`
       );
     }
 
-    const message = parts.join(" ");
+    if (summary.intensityFtp != null) {
+      lines.push(`IF: ${summary.intensityFtp} – עצימות אימונית ביחס ל-FTP`);
+    }
+
+    lines.push("");
+
+    // חלונות חזקים
+    const w1200 = summary.windows && summary.windows.w1200;
+    const w300 = summary.windows && summary.windows.w300;
+
+    if (w1200 && w1200.avg) {
+      const rel = w1200.relToFtp != null ? ` (~${w1200.relToFtp}% FTP)` : "";
+      lines.push(
+        `🔥 20 דק׳ חזקות: ${Math.round(w1200.avg)}W${rel}`
+      );
+    } else if (w300 && w300.avg) {
+      const rel = w300.relToFtp != null ? ` (~${w300.relToFtp}% FTP)` : "";
+      lines.push(
+        `🔥 5 דק׳ חזקות: ${Math.round(w300.avg)}W${rel}`
+      );
+    }
+
+    lines.push("");
+
+    // Decoupling + הסבר קצר
+    const dec = summary.segments && summary.segments.decouplingPct;
+    if (dec != null && Number.isFinite(dec)) {
+      const decFixed = dec.toFixed(1);
+      lines.push(`📉 Decoupling: ${decFixed}%`);
+      lines.push(
+        `= שינוי ביחס בין דופק לוואטים לאורך האימון (ככל שהמספר גבוה יותר – יש יותר שחיקה/עייפות).`
+      );
+
+      if (Math.abs(dec) < 5) {
+        lines.push(
+          `באותו יום ה-Decoupling היה נמוך – הגוף שמר על יציבות יפה לאורך האימון.`
+        );
+      } else if (Math.abs(dec) < 10) {
+        lines.push(
+          `באותו אימון ה-Decoupling היה בינוני – יש סימנים קלים לעייפות, אבל בגבולות סבירים.`
+        );
+      } else {
+        lines.push(
+          `באותו אימון ה-Decoupling היה גבוה – סימן לעומס מצטבר או לכך שהגוף היה עייף יחסית באותו יום.`
+        );
+      }
+    }
+
+    lines.push("");
+
+    // הערכה על התאוששות ומצב כושר באותו אימון
+    const ifVal = summary.intensityFtp;
+    let recoveryNote = "";
+    let fitnessNote = "";
+
+    if (ifVal != null) {
+      if (ifVal < 0.7) {
+        fitnessNote =
+          "מבחינת עצימות זה נראה כמו אימון בסיס אירובי/התאוששות – יום שמחזק את הבסיס בלי להעמיס יותר מדי.";
+      } else if (ifVal < 0.85) {
+        fitnessNote =
+          "זה היה אימון סיבולת מתון – מתאים לבניית כושר ארוך טווח ויכולת אירובית יציבה.";
+      } else {
+        fitnessNote =
+          "זה היה אימון עצים יחסית – הוא תורם לשיפור ביצועים, אבל גם דורש התאוששות טובה אחריו.";
+      }
+    }
+
+    if (dec != null && Number.isFinite(dec)) {
+      if (Math.abs(dec) > 10) {
+        recoveryNote =
+          "בהתחשב ב-Decoupling הגבוה באותו יום, סביר שהגוף היה עמוס – התאוששות טובה אחרי האימון הזה הייתה חשובה.";
+      } else if (Math.abs(dec) < 5 && ifVal && ifVal >= 0.7) {
+        recoveryNote =
+          "למרות העצימות, היציבות בין דופק לוואטים הייתה טובה – זה סימן חיובי ליכולת ולהתאוששות שלך באותה תקופה.";
+      } else {
+        recoveryNote =
+          "אין סימן קיצוני לעומס, אבל כדאי תמיד לשים לב לתחושה הכללית סביב האימון הזה (שינה, רגליים, אנרגיה).";
+      }
+    }
+
+    if (fitnessNote) {
+      lines.push(`🧭 מצב כושר באותו אימון: ${fitnessNote}`);
+    }
+    if (recoveryNote) {
+      lines.push(`🛌 התאוששות: ${recoveryNote}`);
+    }
+
+    const message = lines.join("\n");
 
     return res.json({
       ok: true,
@@ -408,6 +524,7 @@ app.post("/api/loew/workout-analysis-by-date", async (req, res) => {
     });
   }
 });
+
 
 
 // ===== STRAVA AUTH FLOW =====
