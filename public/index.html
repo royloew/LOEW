@@ -272,9 +272,27 @@
         return m ? m[1] : null;
       }
 
-      function isLastWorkoutRequest(txt) {
-        return /אימון האחרון/.test(txt);
+    function isLastWorkoutRequest(txt) {
+      // נזהה כל מקרה שיש בו גם "אימון" וגם "אחרון"
+      // במיוחד בביטויים כמו:
+      // "ניתוח אימון אחרון", "ניתוח האימון האחרון", "אימון אחרון שלי", "האימון האחרון" וכו'.
+      const hasWorkoutWord = /אימון/.test(txt);
+      const hasLastWord = /האחרון|אחרון/.test(txt);
+      const hasAnalysisWord = /ניתוח|סיכום/.test(txt);
+
+      // אם יש גם "ניתוח/סיכום" וגם "אימון" וגם "אחרון" → חד־משמעית בקשה לניתוח אימון אחרון
+      if (hasAnalysisWord && hasWorkoutWord && hasLastWord) {
+        return true;
       }
+
+      // גם צורות פשוטות יותר – "האימון האחרון", "אימון אחרון"
+      if (hasWorkoutWord && hasLastWord) {
+        return true;
+      }
+
+      return false;
+    }
+
 
       function isWorkoutByDateRequest(txt) {
         return /אימון/.test(txt) && /\d{4}-\d{2}-\d{2}/.test(txt);
