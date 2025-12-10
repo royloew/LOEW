@@ -276,8 +276,19 @@ export class OnboardingEngine {
 
   // ===== STAGE: INTRO =====
 
+    // ===== STAGE: INTRO =====
+
   async _stageIntro(userId, text, state) {
-    if (!text) {
+    state.data = state.data || {};
+
+    const firstVisit = !state.data.introShown;
+    const t = (text || "").trim();
+
+    // פעם ראשונה תמיד נציג את הודעת הפתיחה, בלי קשר למה הגיע מהצ'אט ("היי" אוטומטי וכו')
+    if (firstVisit) {
+      state.data.introShown = true;
+      await this._saveState(userId, state);
+
       return {
         reply:
           "נעים מאוד, אני LOEW — המאמן האישי שלך.\n" +
@@ -288,6 +299,18 @@ export class OnboardingEngine {
       };
     }
 
+    // מפה זו כבר לא הפעם הראשונה ב-intro:
+    // אם אין טקסט – אפשר בעדינות להזכיר מה צריך לעשות
+    if (!t) {
+      return {
+        reply:
+          "כדי להמשיך, תאשר את החיבור לסטרבה מהלינק למעלה.\n" +
+          "אחרי החיבור אייבא את הרכיבות האחרונות שלך ונמשיך לנתונים האישיים.",
+        onboarding: true,
+      };
+    }
+
+    // אם יש טקסט (פעם שנייה ואילך) – עוברים לשלב הבא: strava_wait
     state.stage = "strava_wait";
     await this._saveState(userId, state);
 
@@ -298,6 +321,7 @@ export class OnboardingEngine {
       onboarding: true,
     };
   }
+
 
   // ===== STAGE: STRAVA WAIT =====
 
