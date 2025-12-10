@@ -320,11 +320,23 @@ export class OnboardingEngine {
 
   // ===== STAGE: STRAVA SUMMARY =====
 
+    // ===== STAGE: STRAVA SUMMARY =====
+
+    // ===== STAGE: STRAVA SUMMARY =====
+
   async _stageStravaSummary(userId, text, state) {
     state = await this._ensureStravaMetricsInState(userId, state);
     const ts = state.data.trainingSummary;
     const volume = state.data.volume;
 
+    // נשלוף גם את המשקל מסטרבה (אם קיים ב-personal)
+    const personal = state.data.personal || {};
+    const weightFromStrava =
+      personal && personal.weightFromStrava != null
+        ? personal.weightFromStrava
+        : null;
+
+    // יש מספיק רכיבות לסיכום
     if (ts && ts.rides_count > 0) {
       const hours = (ts.totalMovingTimeSec / 3600).toFixed(1);
       const km = ts.totalDistanceKm.toFixed(1);
@@ -349,29 +361,55 @@ export class OnboardingEngine {
           `(על בסיס ${volume.weeksCount} שבועות אחרונים).`;
       }
 
+      // מגדירים שהשלב הבא הוא נתונים אישיים → משקל
       state.stage = "personal_details";
+      state.data.personal = personal;
+      state.data.personalStep = "weight";
       await this._saveState(userId, state);
 
+      // בניית הטקסט להודעה אחת: סיכום סטרבה + שאלה על משקל
+      let reply =
+        "סיימתי לייבא נתונים מסטרבה ✅\n\n" +
+        profileLine +
+        volLine +
+        "\n\n" +
+        "עכשיו נעבור לנתונים האישיים שלך.\n" +
+        "נתחיל ממשקל — זה עוזר לי לחשב עומס ואימונים בצורה מדויקת יותר.\n\n";
+
+      if (weightFromStrava != null) {
+        reply +=
+          `בסטרבה מופיע ${weightFromStrava} ק\"ג.\n` +
+          'אם זה נכון, תכתוב "אישור".\n' +
+          "אם תרצה לעדכן – תכתוב את המשקל הנוכחי שלך (למשל 72.5).";
+      } else {
+        reply += 'כמה אתה שוקל כרגע בק"ג (למשל 72.5)?';
+      }
+
       return {
-        reply:
-          "סיימתי לייבא נתונים מסטרבה ✅\n\n" +
-          profileLine +
-          volLine +
-          "\n\nעכשיו נעבור לנתונים האישיים שלך — משקל, גובה וגיל.",
+        reply,
         onboarding: true,
       };
     }
 
+    // אין מספיק נתונים לסיכום נפח – עדיין מקפיצים ישר לשאלת משקל
     state.stage = "personal_details";
+    state.data.personal = state.data.personal || {};
+    state.data.personalStep = "weight";
     await this._saveState(userId, state);
 
+    let reply =
+      "לא מצאתי מספיק רכיבות מ-90 הימים האחרונים כדי להציג סיכום נפח.\n" +
+      "בוא נעבור לנתונים האישיים שלך.\n\n" +
+      "נתחיל ממשקל — זה עוזר לי לחשב עומס ואימונים בצורה מדויקת יותר.\n\n" +
+      'כמה אתה שוקל כרגע בק"ג (למשל 72.5)?';
+
     return {
-      reply:
-        "לא מצאתי מספיק רכיבות מ-90 הימים האחרונים כדי להציג סיכום נפח.\n" +
-        "בוא נעבור לנתונים האישיים שלך.",
+      reply,
       onboarding: true,
     };
   }
+
+
 
   // ===== PERSONAL DETAILS =====
 
