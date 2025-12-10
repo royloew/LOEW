@@ -279,48 +279,25 @@ export class OnboardingEngine {
     // ===== STAGE: INTRO =====
 
   async _stageIntro(userId, text, state) {
-    state.data = state.data || {};
-
-    const firstVisit = !state.data.introShown;
-    const t = (text || "").trim();
-
-    // פעם ראשונה תמיד נציג את הודעת הפתיחה, בלי קשר למה הגיע מהצ'אט ("היי" אוטומטי וכו')
-    if (firstVisit) {
-      state.data.introShown = true;
-      await this._saveState(userId, state);
-
-      return {
-        reply:
-          "נעים מאוד, אני LOEW — המאמן האישי שלך.\n" +
-          "אני מבסס את כל ההמלצות על ידע מקצועי, מתודולוגיות אימון מהטופ העולמי וניתוח פרסונלי של הנתונים שלך — כולל שינה, תחושה, עומס, בריאות, תזונה וכל מה שמשפיע על הביצועים שלך.\n" +
-          "כדי להתחיל, אני צריך להתחבר ל-Strava שלך ולנתח את הרכיבות האחרונות.\n" +
-          "כשתאשר את החיבור, אייבא את הנתונים ואציג לך סיכום קצר של נפח האימונים שלך.",
-        onboarding: true,
-      };
-    }
-
-    // מפה זו כבר לא הפעם הראשונה ב-intro:
-    // אם אין טקסט – אפשר בעדינות להזכיר מה צריך לעשות
-    if (!t) {
-      return {
-        reply:
-          "כדי להמשיך, תאשר את החיבור לסטרבה מהלינק למעלה.\n" +
-          "אחרי החיבור אייבא את הרכיבות האחרונות שלך ונמשיך לנתונים האישיים.",
-        onboarding: true,
-      };
-    }
-
-    // אם יש טקסט (פעם שנייה ואילך) – עוברים לשלב הבא: strava_wait
-    state.stage = "strava_wait";
-    await this._saveState(userId, state);
-
+  if (!text) {
     return {
       reply:
-        "מעולה. ברגע שתאשר את החיבור לסטרבה, אייבא את הרכיבות שלך ואציג לך סיכום קצר.\n" +
-        "אחרי זה נעבור לנתונים האישיים, FTP, דופק, משכי אימון ומטרה.",
+        "נעים מאוד, אני LOEW — המאמן האישי שלך.\n" +
+        "...",
       onboarding: true,
     };
   }
+
+  state.stage = "strava_wait";
+  await this._saveState(userId, state);
+
+  return {
+    reply:
+      "מעולה. ברגע שתאשר את החיבור לסטרבה, ...",
+    onboarding: true,
+  };
+}
+
 
 
   // ===== STAGE: STRAVA WAIT =====
