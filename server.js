@@ -123,7 +123,9 @@ app.post("/api/loew/chat", async (req, res) => {
       ok: true,
       reply: result.reply,
       onboarding: !!result.onboarding,
+      followups: result.followups || undefined, // ← חדש
     });
+    
   } catch (err) {
     console.error("/api/loew/chat error:", err);
     return res.json({

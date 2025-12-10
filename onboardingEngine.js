@@ -360,51 +360,62 @@ export class OnboardingEngine {
       }
 
       // מגדירים שהשלב הבא הוא נתונים אישיים → משקל
+            // מגדירים שהשלב הבא הוא נתונים אישיים → משקל
       state.stage = "personal_details";
       state.data.personal = personal;
       state.data.personalStep = "weight";
       await this._saveState(userId, state);
 
-      // בניית הטקסט להודעה אחת: סיכום סטרבה + שאלה על משקל
-      let reply =
+      // בועה 1: סיכום סטרבה
+      const summaryText =
         "סיימתי לייבא נתונים מסטרבה ✅\n\n" +
         profileLine +
         volLine +
         "\n\n" +
-        "עכשיו נעבור לנתונים האישיים שלך.\n" +
+        "עכשיו נעבור לנתונים האישיים שלך.";
+
+      // בועה 2: שאלת משקל
+      let weightQuestion =
         "נתחיל ממשקל — זה עוזר לי לחשב עומס ואימונים בצורה מדויקת יותר.\n\n";
 
       if (weightFromStrava != null) {
-        reply +=
+        weightQuestion +=
           `בסטרבה מופיע ${weightFromStrava} ק\"ג.\n` +
           'אם זה נכון, תכתוב "אישור".\n' +
           "אם תרצה לעדכן – תכתוב את המשקל הנוכחי שלך (למשל 72.5).";
       } else {
-        reply += 'כמה אתה שוקל כרגע בק"ג (למשל 72.5)?';
+        weightQuestion += 'כמה אתה שוקל כרגע בק"ג (למשל 72.5)?';
       }
 
       return {
-        reply,
+        reply: summaryText,
+        followups: [weightQuestion],
         onboarding: true,
       };
+
     }
 
     // אין מספיק נתונים לסיכום נפח – עדיין מקפיצים ישר לשאלת משקל
+        // אין מספיק נתונים לסיכום נפח – עדיין נעבור לנתונים אישיים
     state.stage = "personal_details";
     state.data.personal = state.data.personal || {};
     state.data.personalStep = "weight";
     await this._saveState(userId, state);
 
-    let reply =
+    const summaryText =
       "לא מצאתי מספיק רכיבות מ-90 הימים האחרונים כדי להציג סיכום נפח.\n" +
-      "בוא נעבור לנתונים האישיים שלך.\n\n" +
+      "בוא נעבור לנתונים האישיים שלך.";
+
+    const weightQuestion =
       "נתחיל ממשקל — זה עוזר לי לחשב עומס ואימונים בצורה מדויקת יותר.\n\n" +
       'כמה אתה שוקל כרגע בק"ג (למשל 72.5)?';
 
     return {
-      reply,
+      reply: summaryText,
+      followups: [weightQuestion],
       onboarding: true,
     };
+
   }
 
   // ===== PERSONAL DETAILS =====
