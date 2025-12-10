@@ -1263,6 +1263,14 @@ export async function createDbImpl() {
     };
   }
 
+    // ===== Snapshot כללי (onboarding + עדכון מסטרבה) =====
+  async function getStravaSnapshot(userId) {
+    // כרגע פשוט משתמשים באותה לוגיקה של האונבורדינג,
+    // כולל personal.weightFromStrava
+    return await getStravaOnboardingSnapshot(userId);
+  }
+
+
   // ===== WORKOUT ANALYSIS (LAST / BY DATE) =====
 
   function computeAvgAndMax(series) {
@@ -1576,7 +1584,12 @@ export async function createDbImpl() {
     saveStravaTokens,
     clearStravaData,
     ingestAndComputeFromStrava,
+
+    // NEW: משמש את ה-onboardingEngine לצורך טעינת הנתונים
+    getStravaSnapshot,
+    // נשאיר גם את זה לשימוש ישיר אם צריך
     getStravaOnboardingSnapshot,
+
     saveAthleteProfile,
     getLastWorkoutAnalysis,
     getWorkoutAnalysisByDate,
