@@ -972,9 +972,12 @@ export class OnboardingEngine {
 
   // ===== GOAL COLLECT =====
 
+   // ===== GOAL COLLECT =====
+
   async _stageGoalCollect(userId, text, state) {
     const t = (text || "").trim();
 
+    // אם המשתמש עוד לא ענה – רק שואלים מה המטרה
     if (!t) {
       return {
         reply: "מה המטרה המרכזית שלך לתקופה הקרובה?",
@@ -982,14 +985,80 @@ export class OnboardingEngine {
       };
     }
 
+    // שומרים מטרה ומסמנים שסיימנו אונבורדינג
     state.data.goal = t;
     state.stage = "done";
     await this._saveState(userId, state);
 
-    // הודעת סיום אונבורדינג – משתמש חדש
+    // אוספים את כל הנתונים לפרופיל
+    const personal = state.data.personal || {};
+    const hr = state.data.hr || {};
+    const tt = state.data.trainingTime || {};
+
+    const weight = personal.weight;
+    const height = personal.height;
+    const age = personal.age;
+
+    const ftp = state.data.ftpFinal;
+    const hrMax = hr.hrMaxFinal ?? hr.hrMax;
+    const hrThreshold = hr.hrThresholdFinal ?? hr.hrThreshold;
+
+    const minMin = tt.minMinutes;
+    const avgMin = tt.avgMinutes;
+    const maxMin = tt.maxMinutes;
+
+    const goal = state.data.goal;
+
+    const lines = [];
+    lines.push("סיכום פרופיל הרוכב שלך:\n");
+
+    if (typeof weight === "number") {
+      lines.push(`• משקל: ${weight} ק\"ג`);
+    }
+    if (typeof height === "number") {
+      lines.push(`• גובה: ${height} ס\"מ`);
+    }
+    if (typeof age === "number") {
+      lines.push(`• גיל: ${age}`);
+    }
+
+    if (typeof ftp === "number") {
+      lines.push(`• FTP: ${ftp}W`);
+    }
+
+    if (typeof hrMax === "number") {
+      lines.push(`• דופק מקסימלי: ${hrMax} bpm`);
+    }
+    if (typeof hrThreshold === "number") {
+      lines.push(`• דופק סף: ${hrThreshold} bpm`);
+    }
+
+    if (
+      typeof minMin === "number" &&
+      typeof avgMin === "number" &&
+      typeof maxMin === "number"
+    ) {
+      lines.push(
+        `• משכי אימון טיפוסיים: קצר ${minMin} דק׳ / ממוצע ${avgMin} דק׳ / ארוך ${maxMin} דק׳`
+      );
+    }
+
+    if (goal) {
+      lines.push(`• מטרה מרכזית: ${goal}`);
+    }
+
+    // אם חסר משהו (למשל לא ענו על הכול) – עדיין מציגים מה שיש
+    const profileText = lines.join("\n");
+
+    // אחרי הפרופיל – מציגים גם את תפריט ההמשך הרגיל
+    const fullReply =
+      profileText + "\n\n" + this._postOnboardingMenu();
+
     return {
-      reply: this._postOnboardingMenu(),
-      onboarding: true,
+      reply: fullReply,
+      onboarding: true, // זו עדיין הודעת הסיום של האונבורדינג
     };
   }
+}
+
 }
