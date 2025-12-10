@@ -633,18 +633,24 @@ export class OnboardingEngine {
       };
     }
 
-    state.data.ftpFinal = parsed;
+        state.data.ftpFinal = parsed;
     state.stage = "hr_intro";
     await this._updateTrainingParamsFromState(userId, state);
     await this._saveState(userId, state);
 
+    // מיד אחרי עדכון FTP – מציגים את שלב הדופק
+    const hrIntro = await this._stageHrIntro(userId, "", state);
+
+    const prefix =
+      `מעולה, נגדיר כרגע FTP של ${parsed}W.\n\n` +
+      "עכשיו נעבור לדופק — דופק מקסימלי ודופק סף.\n\n";
+
     return {
-      reply:
-        `מעולה, נגדיר כרגע FTP של ${parsed}W.\n\n` +
-        "עכשיו נעבור לדופק — דופק מקסימלי ודופק סף.",
+      reply: prefix + (hrIntro && hrIntro.reply ? hrIntro.reply : ""),
       onboarding: true,
     };
   }
+
 
   // ===== HR STAGES =====
 
