@@ -586,7 +586,7 @@ app.get("/exchange_token", async (req, res) => {
       const metrics = await dbImpl.ingestAndComputeFromStrava(userId);
       console.log("[STRAVA] Ingest done for", userId, "metrics:", metrics);
 
-      // 🔥 עדכון מצב אונבורדינג ל-post_strava_summary עם הנתונים מה-DB
+      // 🔥 עדכון מצב אונבורדינג ל-strava_summary עם הנתונים מה-DB
       if (
         metrics &&
         typeof dbImpl.getOnboardingState === "function" &&
@@ -612,7 +612,7 @@ app.get("/exchange_token", async (req, res) => {
 
           if (!state || !state.data) {
             state = {
-              stage: "post_strava_summary",
+              stage: "strava_summary",
               data: {
                 personal: {},
                 ftp: null,
@@ -626,7 +626,7 @@ app.get("/exchange_token", async (req, res) => {
               },
             };
           } else {
-            state.stage = "post_strava_summary";
+            state.stage = "strava_summary";
             state.data = state.data || {};
             state.data.stravaConnected = true;
           }
@@ -671,7 +671,7 @@ app.get("/exchange_token", async (req, res) => {
 
           await dbImpl.saveOnboardingState(userId, state);
           console.log(
-            "[STRAVA] Onboarding state updated to post_strava_summary for",
+            "[STRAVA] Onboarding state updated to strava_summary for",
             userId
           );
         } catch (e) {
