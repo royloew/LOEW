@@ -117,15 +117,126 @@ app.post("/api/loew/chat", async (req, res) => {
 
     await dbImpl.ensureUser(userId);
 
+    // זיהוי בקשה לניתוח האימון האחרון
+    const lower = message.toLowerCase();
+    const isHebrewLastWorkout =
+      lower.includes("אימון אחרון") &&
+      (lower.includes("נתח") || lower.includes("ניתוח"));
+    const isEnglishLastWorkout =
+      lower.includes("last workout") &&
+      (lower.includes("analyze") || lower.includes("analysis"));
+
+    if (isHebrewLastWorkout || isEnglishLastWorkout) {
+      try {
+        const analysis = await dbImpl.getLastWorkoutAnalysis(userId);
+        if (!analysis || !analysis.summary) {
+          return res.json({
+            ok: true,
+            reply:
+              "לא מצאתי אימון אחרון מסטרבה עבור המשתמש הזה.\n" +
+              "תוודא שחיברת את סטרבה ויש לפחות אימון אחד עם נתוני וואטים.",
+            onboarding: false,
+          });
+        }
+
+        const summary = analysis.summary;
+        const dateStr = summary.startDateIso
+          ? summary.startDateIso.slice(0, 10)
+          : "תאריך לא ידוע";
+
+        const lines = [];
+
+        // כותרת
+        lines.push(`ניתוח האימון האחרון שלך (${dateStr}):`);
+        lines.push("");
+
+        // נתוני בסיס
+        if (summary.durationMin != null) {
+          lines.push(`⏱ משך: ${Math.round(summary.durationMin)} דק׳`);
+        }
+        if (summary.distanceKm != null) {
+          lines.push(`📍 מרחק: ${summary.distanceKm.toFixed(1)} ק״מ`);
+        }
+        if (summary.elevationGainM != null && summary.elevationGainM > 0) {
+          lines.push(`🏔 טיפוס מצטבר: ${summary.elevationGainM} מ׳`);
+        }
+
+        lines.push("");
+
+        // הספק ודופק
+        if (summary.avgPower != null) {
+          if (summary.ftpUsed) {
+            const rel = ((summary.avgPower / summary.ftpUsed) * 100).toFixed(1);
+            lines.push(
+              `⚡ וואטים ממוצעים: ${Math.round(
+                summary.avgPower
+              )}W (~${rel}% מה-FTP שלך)`
+            );
+          } else {
+            lines.push(
+              `⚡ וואטים ממוצעים: ${Math.round(summary.avgPower)}W`
+            );
+          }
+        }
+
+        if (summary.avgHr != null) {
+          lines.push(`❤️ דופק ממוצע: ${Math.round(summary.avgHr)} bpm`);
+        }
+
+        lines.push("");
+
+        // Decoupling (HR drift)
+        const dec =
+          summary.segments && summary.segments.decouplingPct != null
+            ? summary.segments.decouplingPct
+            : null;
+
+        if (dec != null && Number.isFinite(dec)) {
+          const decFixed = dec.toFixed(1);
+          lines.push(`📉 Decoupling: ${decFixed}%`);
+          lines.push(
+            "= שינוי ביחס בין דופק לוואטים לאורך האימון (ככל שהמספר גבוה יותר – יש יותר שחיקה/עייפות)."
+          );
+
+          if (Math.abs(dec) < 5) {
+            lines.push(
+              "ה-Decoupling נמוך – הגוף שמר על יציבות יפה לאורך האימון."
+            );
+          } else if (Math.abs(dec) < 10) {
+            lines.push(
+              "ה-Decoupling בינוני – יש סימנים לעייפות, אבל עדיין בטווח הגיוני."
+            );
+          } else {
+            lines.push(
+              "ה-Decoupling גבוה – סימן לעומס מצטבר או לכך שהגוף הגיע עייף לאימון."
+            );
+          }
+        }
+
+        const replyText = lines.join("\n");
+
+        return res.json({
+          ok: true,
+          reply: replyText,
+          onboarding: false,
+        });
+      } catch (err) {
+        console.error("chat last-workout analysis error:", err);
+        return res.json({
+          ok: false,
+          error: "chat_last_workout_failed",
+        });
+      }
+    }
+
+    // ברירת מחדל – מעבירים ל-onboarding / צ'אט הרגיל
     const result = await onboarding.handleMessage(userId, message);
 
     return res.json({
       ok: true,
       reply: result.reply,
       onboarding: !!result.onboarding,
-      followups: result.followups || undefined, // ← חדש
     });
-    
   } catch (err) {
     console.error("/api/loew/chat error:", err);
     return res.json({
@@ -134,6 +245,7 @@ app.post("/api/loew/chat", async (req, res) => {
     });
   }
 });
+
 
 app.post("/api/loew/strava-sync", async (req, res) => {
   try {
