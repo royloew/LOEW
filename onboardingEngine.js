@@ -514,6 +514,7 @@ export class OnboardingEngine {
     }
 
     // גיל
+        // גיל
     if (step === "age") {
       if (!t) {
         return {
@@ -532,18 +533,25 @@ export class OnboardingEngine {
         };
       }
 
+      // שומרים גיל ומסמנים שסיימנו נתונים אישיים
       state.data.personal.age = age;
       state.data.personalStep = "done";
       state.stage = "ftp_models";
       await this._saveState(userId, state);
 
+      // מיד אחרי הגיל – מציגים את מודלי ה-FTP
+      const ftpIntro = await this._stageFtpModels(userId, "", state);
+
+      const prefix =
+        `מעולה, עדכנתי גיל ${age}.\n\n` +
+        "עכשיו נעבור לשלב FTP — הסמן המרכזי לעומס ולרמת הקושי באימונים שלך.\n\n";
+
       return {
-        reply:
-          `מעולה, עדכנתי גיל ${age}.\n\n` +
-          "עכשיו נעבור לשלב FTP — הסמן המרכזי לעומס ולרמת הקושי באימונים שלך.",
+        reply: prefix + (ftpIntro && ftpIntro.reply ? ftpIntro.reply : ""),
         onboarding: true,
       };
     }
+
 
     return {
       reply: "משהו לא היה ברור בנתונים האישיים, ננסה שוב.",
