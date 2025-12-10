@@ -276,29 +276,27 @@ export class OnboardingEngine {
 
   // ===== STAGE: INTRO =====
 
-    // ===== STAGE: INTRO =====
+  // ===== STAGE: INTRO =====
 
   async _stageIntro(userId, text, state) {
-  if (!text) {
+    if (!text) {
+      return {
+        reply:
+          "נעים מאוד, אני LOEW — המאמן האישי שלך.\n" +
+          "...",
+        onboarding: true,
+      };
+    }
+
+    state.stage = "strava_wait";
+    await this._saveState(userId, state);
+
     return {
       reply:
-        "נעים מאוד, אני LOEW — המאמן האישי שלך.\n" +
-        "...",
+        "מעולה. ברגע שתאשר את החיבור לסטרבה, ...",
       onboarding: true,
     };
   }
-
-  state.stage = "strava_wait";
-  await this._saveState(userId, state);
-
-  return {
-    reply:
-      "מעולה. ברגע שתאשר את החיבור לסטרבה, ...",
-    onboarding: true,
-  };
-}
-
-
 
   // ===== STAGE: STRAVA WAIT =====
 
@@ -320,9 +318,9 @@ export class OnboardingEngine {
 
   // ===== STAGE: STRAVA SUMMARY =====
 
-    // ===== STAGE: STRAVA SUMMARY =====
+  // ===== STAGE: STRAVA SUMMARY =====
 
-    // ===== STAGE: STRAVA SUMMARY =====
+  // ===== STAGE: STRAVA SUMMARY =====
 
   async _stageStravaSummary(userId, text, state) {
     state = await this._ensureStravaMetricsInState(userId, state);
@@ -409,7 +407,7 @@ export class OnboardingEngine {
     };
   }
 
-
+  // ===== PERSONAL DETAILS =====
 
   // ===== PERSONAL DETAILS =====
 
@@ -433,7 +431,7 @@ export class OnboardingEngine {
         let line = "";
         if (weightFromStrava != null) {
           line =
-            `בסטרבה מופיע ${weightFromStrava} ק\"ג.\n` +
+            `בסטרבה מופיע ${weightFromStrava} ק"ג.\n` +
             'אם זה נכון, תכתוב "אישור".\n' +
             "אם תרצה לעדכן – תכתוב את המשקל הנוכחי שלך (למשל 72.5).";
         } else {
@@ -455,9 +453,7 @@ export class OnboardingEngine {
         await this._saveState(userId, state);
 
         return {
-          reply:
-            `מעולה, אשתמש במשקל ${weightFromStrava} ק\"ג.\n\n` +
-            'מה הגובה שלך בס"מ?',
+          reply: 'מה הגובה שלך בס"מ?',
           onboarding: true,
         };
       }
@@ -477,9 +473,7 @@ export class OnboardingEngine {
       await this._saveState(userId, state);
 
       return {
-        reply:
-          `תודה, עדכנתי משקל ${state.data.personal.weight} ק\"ג.\n\n` +
-          'מה הגובה שלך בס"מ?',
+        reply: 'מה הגובה שלך בס"מ?',
         onboarding: true,
       };
     }
@@ -508,13 +502,12 @@ export class OnboardingEngine {
       await this._saveState(userId, state);
 
       return {
-        reply: `מעולה, עדכנתי גובה ${h} ס\"מ.\n\nבן כמה אתה?`,
+        reply: "בן כמה אתה?",
         onboarding: true,
       };
     }
 
     // גיל
-        // גיל
     if (step === "age") {
       if (!t) {
         return {
@@ -533,25 +526,17 @@ export class OnboardingEngine {
         };
       }
 
-      // שומרים גיל ומסמנים שסיימנו נתונים אישיים
       state.data.personal.age = age;
       state.data.personalStep = "done";
       state.stage = "ftp_models";
       await this._saveState(userId, state);
 
-      // מיד אחרי הגיל – מציגים את מודלי ה-FTP
-      const ftpIntro = await this._stageFtpModels(userId, "", state);
-
-      const prefix =
-        `מעולה, עדכנתי גיל ${age}.\n\n` +
-        "עכשיו נעבור לשלב FTP — הסמן המרכזי לעומס ולרמת הקושי באימונים שלך.\n\n";
-
       return {
-        reply: prefix + (ftpIntro && ftpIntro.reply ? ftpIntro.reply : ""),
+        reply:
+          "עכשיו נעבור לשלב FTP — הסמן המרכזי לעומס ולרמת הקושי באימונים שלך.",
         onboarding: true,
       };
     }
-
 
     return {
       reply: "משהו לא היה ברור בנתונים האישיים, ננסה שוב.",
@@ -633,7 +618,7 @@ export class OnboardingEngine {
       };
     }
 
-        state.data.ftpFinal = parsed;
+    state.data.ftpFinal = parsed;
     state.stage = "hr_intro";
     await this._updateTrainingParamsFromState(userId, state);
     await this._saveState(userId, state);
@@ -642,7 +627,7 @@ export class OnboardingEngine {
     const hrIntro = await this._stageHrIntro(userId, "", state);
 
     const prefix =
-      `מעולה, נגדיר כרגע FTP של ${parsed}W.\n\n` +
+      `נגדיר כרגע FTP של ${parsed}W.\n\n` +
       "עכשיו נעבור לדופק — דופק מקסימלי ודופק סף.\n\n";
 
     return {
@@ -650,7 +635,6 @@ export class OnboardingEngine {
       onboarding: true,
     };
   }
-
 
   // ===== HR STAGES =====
 
@@ -696,6 +680,7 @@ export class OnboardingEngine {
     const hrThresholdCandidate =
       typeof hr.hrThreshold === "number" ? hr.hrThreshold : null;
 
+    // שלב 1: דופק מקסימלי
     if (step === "hrMax") {
       if (!t) {
         if (hrMaxCandidate != null) {
@@ -720,12 +705,8 @@ export class OnboardingEngine {
         state.data.hrStep = "hrThreshold";
         await this._saveState(userId, state);
 
-        return {
-          reply:
-            `מעולה, נשתמש בדופק מקסימלי ${hrMaxCandidate} bpm.\n\n` +
-            "עכשיו נעבור לדופק סף — אם אתה יודע אותו, תכתוב לי (למשל 160). אם אתה לא יודע, תכתוב 'לא יודע'.",
-          onboarding: true,
-        };
+        // בלי הודעת "מעולה..." – עוברים ישר לשלב דופק סף
+        return await this._stageHrCollect(userId, "", state);
       }
 
       const parsed = parseInt(t, 10);
@@ -743,15 +724,31 @@ export class OnboardingEngine {
       state.data.hrStep = "hrThreshold";
       await this._saveState(userId, state);
 
-      return {
-        reply:
-          `תודה, עדכנתי דופק מקסימלי ${parsed} bpm.\n\n` +
-          "עכשיו נעבור לדופק סף — אם אתה יודע אותו, תכתוב לי (למשל 160). אם אתה לא יודע, תכתוב 'לא יודע'.",
-        onboarding: true,
-      };
+      // בלי "תודה, עדכנתי..." – עוברים ישר לדופק סף
+      return await this._stageHrCollect(userId, "", state);
     }
 
+    // שלב 2: דופק סף
     if (step === "hrThreshold") {
+      if (!t) {
+        if (hrThresholdCandidate != null) {
+          return {
+            reply:
+              `בסטרבה אני רואה דופק סף של בערך ${hrThresholdCandidate} bpm.\n` +
+              'אם זה נשמע לך נכון, תכתוב "אישור".\n' +
+              "אם לא — תכתוב את דופק הסף שלך (למשל 160), או 'לא יודע' אם אתה לא בטוח.",
+            onboarding: true,
+          };
+        }
+
+        return {
+          reply:
+            "אם אתה יודע מהו דופק הסף שלך, תכתוב אותו במספרים (למשל 160).\n" +
+            "אם אתה לא יודע, תכתוב 'לא יודע'.",
+          onboarding: true,
+        };
+      }
+
       if (t === "לא יודע" || t === "לא יודעת") {
         state.data.hr.hrThresholdUser = null;
         if (hrThresholdCandidate != null) {
