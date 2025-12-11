@@ -110,7 +110,7 @@ async function init() {
     );
   `);
 
-    // goals – מטרה מרכזית לכל משתמש
+  // goals – מטרה מרכזית לכל משתמש
   await run(`
     CREATE TABLE IF NOT EXISTS goals (
       user_id    TEXT PRIMARY KEY,
@@ -118,6 +118,7 @@ async function init() {
       updated_at INTEGER
     );
   `);
+
 
 
   // הרחבות בטיחות (ל־DB ישן יותר)
@@ -299,7 +300,24 @@ export async function createDbImpl() {
       [userId]
     );
 
-      // ===== GOALS =====
+    if (!existing) {
+      await run(
+        `INSERT INTO onboarding_states (user_id, stage, data_json, updated_at)
+         VALUES (?, ?, ?, ?)`,
+        [userId, state.stage, dataJson, now]
+      );
+    } else {
+      await run(
+        `UPDATE onboarding_states
+           SET stage = ?, data_json = ?, updated_at = ?
+         WHERE user_id = ?`,
+        [state.stage, dataJson, now, userId]
+      );
+    }
+  }
+
+
+  // ===== GOALS =====
 
   async function updateGoal(userId, goalText) {
     await ensureUser(userId);
@@ -321,23 +339,6 @@ export async function createDbImpl() {
       [userId]
     );
     return row ? row.goal_text : null;
-  }
-
-
-    if (!existing) {
-      await run(
-        `INSERT INTO onboarding_states (user_id, stage, data_json, updated_at)
-         VALUES (?, ?, ?, ?)`,
-        [userId, state.stage, dataJson, now]
-      );
-    } else {
-      await run(
-        `UPDATE onboarding_states
-           SET stage = ?, data_json = ?, updated_at = ?
-         WHERE user_id = ?`,
-        [state.stage, dataJson, now, userId]
-      );
-    }
   }
 
   // ===== TRAINING PARAMS & METRICS WINDOW =====
@@ -1607,7 +1608,7 @@ export async function createDbImpl() {
     return await getWorkoutAnalysisCore(userId, { isoDate });
   }
 
-    return {
+  return {
     ensureUser,
 
     // אונבורדינג
@@ -1630,8 +1631,9 @@ export async function createDbImpl() {
     clearStravaData,
     ingestAndComputeFromStrava,
 
-    // snapshots
+    // NEW: משמש את ה-onboardingEngine לצורך טעינת הנתונים
     getStravaSnapshot,
+    // נשאיר גם את זה לשימוש ישיר אם צריך
     getStravaOnboardingSnapshot,
 
     // פרופיל ואימונים

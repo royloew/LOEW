@@ -1083,6 +1083,18 @@ export class OnboardingEngine {
     };
   }
 
+  async updateGoal(userId, goalText) {
+  const sql = `
+    INSERT INTO goals (user_id, goal_text, updated_at)
+    VALUES (?, ?, strftime('%s','now'))
+    ON CONFLICT(user_id)
+    DO UPDATE SET goal_text=excluded.goal_text,
+                  updated_at=strftime('%s','now')
+  `;
+  await this.db.run(sql, [userId, goalText]);
+}
+
+
   // helper פנימי ל-DB
   async _getDb() {
     if (!this.db) {
