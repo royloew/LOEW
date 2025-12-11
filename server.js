@@ -230,13 +230,16 @@ app.post("/api/loew/chat", async (req, res) => {
     }
 
     // ברירת מחדל – מעבירים ל-onboarding / צ'אט הרגיל
-    const result = await onboarding.handleMessage(userId, message);
+  // ברירת מחדל – מעבירים ל-onboarding / צ'אט הרגיל
+const result = await onboarding.handleMessage(userId, message);
 
-    return res.json({
-      ok: true,
-      reply: result.reply,
-      onboarding: !!result.onboarding,
-    });
+return res.json({
+  ok: true,
+  reply: result.reply,
+  onboarding: !!result.onboarding,
+  followups: result.followups || [],   // 👈 זה השורה החדשה
+});
+
   } catch (err) {
     console.error("/api/loew/chat error:", err);
     return res.json({
