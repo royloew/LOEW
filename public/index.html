@@ -736,7 +736,7 @@ async function sendMessage() {
       });
 
       // ===== INIT =====
-      (async function init() {
+          (async function init() {
         const snapshot = await fetchSnapshotOnce();
 
         // 1. חזרנו מ-Strava עם ?strava=connected
@@ -748,9 +748,7 @@ async function sendMessage() {
           );
 
           try {
-            // שולח הודעה אוטומטית ל-LOEW כדי שייתן:
-            // 1. סיכום נתונים + פרופיל רוכב קצר
-            // 2. המשך אונבורדינג (השלמת נתונים חסרים וכו')
+            // נותנים לשרת להחליט איך להמשיך (סיכום סטרבה + משקל וכו')
             const data = await callChatAPI("היי");
             handleChatReply(data);
           } catch (err) {
@@ -765,35 +763,11 @@ async function sendMessage() {
           return;
         }
 
-        // 2. אין סטרבה – מסך פתיחה שדוחף לחיבור לסטרבה
+        // 2. אין סטרבה – מסך פתיחה שדוחף לחיבור לסטרבה (משתמש חדש)
         if (!hasStrava) {
           const authRel = "/auth/strava?userId=" + encodeURIComponent(USER_ID);
           const authHref = STRAVA_DOMAIN + authRel;
 
-          // 3. יש סטרבה – פתיחה "נקייה" (אם האונבורדינג כבר הושלם LOEW יזהה בצד שרת)
-    addMessage(
-      "bot",
-      "היי " +
-        USER_ID +
-        " 👋\n" +
-        "במה אני יכול לעזור לך?\n" +
-        "דוגמאות לשאלות שאתה יכול לשאול אותי:\n\n" +
-        "טיפול בנתונים:\n" +
-        "• \"עדכן מסטרבה\"\n" +
-        "• \"הפרופיל שלי\"\n\n" +
-        "עדכון הנתונים שלי:\n" +
-        "• \"המשקל שלי עכשיו 72\"\n" +
-        "• \"FTP 250\"\n" +
-        "• \"דופק מקסימלי 178\"\n" +
-        "• \"דופק סף 160\"\n\n" +
-        "ניתוח נתונים:\n" +
-        "• \"נתח את האימון האחרון שלי\"\n" +
-        "• \"נתח לי אימון מתאריך yyyy-mm-dd\"",
-      "chat"
-    );
-
-
-          // נוסח עם URL – renderTextWithLinks יהפוך אותו ל"חבר אותי לסטרבה" עם הדומיין החדש
           addMessage(
             "bot",
             "אם יש לך סטרבה ותרצה שאנתח את האימונים שלך, אתה יכול להתחבר דרך הקישור הבא (לחיץ):\n" +
@@ -807,18 +781,22 @@ async function sendMessage() {
           return;
         }
 
-        // 3. יש סטרבה – פתיחה "נקייה" (אם האונבורדינג כבר הושלם LOEW יזהה בצד שרת)
-        addMessage(
-          "bot",
-          "היי " +
-            USER_ID +
-            " 👋\nיש לי נתונים מסטרבה עבורך. אתה יכול לשאול:\n" +
-            "• מה האימון שלי למחר?\n" +
-            "• תנתח לי את האימון האחרון.\n" +
-            "• תראה לי את העומס השבועי או הניתוחים המתקדמים.",
-          "chat"
-        );
+        // 3. יש סטרבה – נותנים לשרת להחליט:
+        //    אם האונבורדינג באמצע → ממשיכים מאותו שלב
+        //    אם האונבורדינג הסתיים (stage="done") → מחזיר את תפריט השאלות
+        try {
+          const data = await callChatAPI("היי");
+          handleChatReply(data);
+        } catch (err) {
+          console.error("init chat error:", err);
+          addMessage(
+            "bot",
+            "היי " + USER_ID + " 👋\nבמה אני יכול לעזור לך היום?",
+            "chat"
+          );
+        }
       })();
+
     </script>
   </body>
 </html>
