@@ -535,6 +535,79 @@
         }
       }
 
+
+      function isLastWorkoutRequest(txt) {
+        const t = txt.trim();
+        return (
+          t === "נתח את האימון האחרון שלי" ||
+          t === "נתח לי את האימון האחרון" ||
+          t === "האימון האחרון שלי"
+        );
+      }
+
+      function isWorkoutByDateRequest(txt) {
+        return /נתח לי אימון מתאריך/i.test(txt);
+      }
+
+async function callLastWorkoutAnalysis() {
+  addMessage("bot", "בודק את האימון האחרון שלך…", "chat");
+
+  const res = await fetch("/api/loew/last-workout-analysis", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId: USER_ID }),
+  });
+
+  const data = await res.json();
+
+  if (!data.ok) {
+    addMessage(
+      "bot",
+      "הייתה בעיה בניתוח האימון האחרון: " + (data.error || ""),
+      "chat"
+    );
+    return;
+  }
+
+  addMessage("bot", data.message || "לא קיבלתי סיכום אימון.", "chat");
+}
+
+async function callWorkoutAnalysisByDate(text) {
+  // מחלץ תאריך בפורמט YYYY-MM-DD מתוך הטקסט
+  const match = text.match(/\d{4}-\d{2}-\d{2}/);
+  if (!match) {
+    addMessage(
+      "bot",
+      'כדי לנתח אימון לפי תאריך, תכתוב למשל: "נתח לי אימון מתאריך 2025-01-15".',
+      "chat"
+    );
+    return;
+  }
+
+  const isoDate = match[0];
+
+  addMessage("bot", `בודק את האימון מתאריך ${isoDate}…`, "chat");
+
+  const res = await fetch("/api/loew/workout-analysis-by-date", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId: USER_ID, date: isoDate }),
+  });
+
+  const data = await res.json();
+
+  if (!data.ok) {
+    addMessage(
+      "bot",
+      "הייתה בעיה בניתוח האימון: " + (data.error || ""),
+      "chat"
+    );
+    return;
+  }
+
+  addMessage("bot", data.message || "לא קיבלתי סיכום אימון.", "chat");
+}
+
       // ===== SEND MESSAGE =====
 
       async function sendMessage() {
@@ -573,6 +646,71 @@
             await callStravaSync();
             return;
           }
+
+          // ===== SEND MESSAGE =====
+
+async function sendMessage() {
+  const text = inputEl.value.trim();
+  if (!text) return;
+
+  addMessage("me", text, "chat");
+  inputEl.value = "";
+  inputEl.focus();
+  sendBtn.disabled = true;
+
+  const normalized = text
+    .trim()
+    .toLowerCase()
+    .replace(/[.!?…]/g, "");
+
+  // טריגר לחיבור סטרבה כשכותבים "כן" ואין סטרבה
+  if (
+    !hasStrava &&
+    (normalized === "כן" || normalized === "yes" || normalized === "y")
+  ) {
+    const authHref =
+      STRAVA_DOMAIN + "/auth/strava?userId=" + encodeURIComponent(USER_ID);
+    window.location.href = authHref;
+    setTimeout(() => {
+      sendBtn.disabled = false;
+    }, 1500);
+    return;
+  }
+
+  try {
+    // פקודת "עדכן מסטרבה"
+    if (isStravaSyncRequest(text)) {
+      await callStravaSync();
+      return;
+    }
+
+    // ניתוח אימון אחרון
+    if (isLastWorkoutRequest(text)) {
+      await callLastWorkoutAnalysis();
+      return;
+    }
+
+    // ניתוח אימון לפי תאריך
+    if (isWorkoutByDateRequest(text)) {
+      await callWorkoutAnalysisByDate(text);
+      return;
+    }
+
+    // צ'אט רגיל (אונבורדינג / פוסט-אונבורדינג)
+    const data = await callChatAPI(text);
+    handleChatReply(data);
+  } catch (err) {
+    console.error(err);
+    addMessage(
+      "bot",
+      "שגיאה בתקשורת עם השרת: " + (err.message || ""),
+      "chat"
+    );
+  } finally {
+    sendBtn.disabled = false;
+  }
+}
+
 
           // צ'אט רגיל
           const data = await callChatAPI(text);
@@ -632,14 +770,28 @@
           const authRel = "/auth/strava?userId=" + encodeURIComponent(USER_ID);
           const authHref = STRAVA_DOMAIN + authRel;
 
-          addMessage(
-            "bot",
-            "היי, אני LOEW.\n" +
-              'נראה שעבור המשתמש "' +
-              USER_ID +
-              '" עוד לא מחובר חשבון Strava.',
-            "onboarding"
-          );
+          // 3. יש סטרבה – פתיחה "נקייה" (אם האונבורדינג כבר הושלם LOEW יזהה בצד שרת)
+    addMessage(
+      "bot",
+      "היי " +
+        USER_ID +
+        " 👋\n" +
+        "במה אני יכול לעזור לך?\n" +
+        "דוגמאות לשאלות שאתה יכול לשאול אותי:\n\n" +
+        "טיפול בנתונים:\n" +
+        "• \"עדכן מסטרבה\"\n" +
+        "• \"הפרופיל שלי\"\n\n" +
+        "עדכון הנתונים שלי:\n" +
+        "• \"המשקל שלי עכשיו 72\"\n" +
+        "• \"FTP 250\"\n" +
+        "• \"דופק מקסימלי 178\"\n" +
+        "• \"דופק סף 160\"\n\n" +
+        "ניתוח נתונים:\n" +
+        "• \"נתח את האימון האחרון שלי\"\n" +
+        "• \"נתח לי אימון מתאריך yyyy-mm-dd\"",
+      "chat"
+    );
+
 
           // נוסח עם URL – renderTextWithLinks יהפוך אותו ל"חבר אותי לסטרבה" עם הדומיין החדש
           addMessage(

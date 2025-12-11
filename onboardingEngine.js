@@ -985,91 +985,80 @@ export class OnboardingEngine {
 
    // ===== GOAL COLLECT =====
 
-  async _stageGoalCollect(userId, text, state) {
-  const t = (text || "").trim();
+// בתוך המחלקה OnboardingEngine
+async _stageGoalCollect(userId, text, state) {
+  const goalText = text.trim();
 
-  if (!t) {
-    return {
-      reply: "מה המטרה המרכזית שלך לתקופה הקרובה?",
-      onboarding: true,
-    };
-  }
+  const db = await this._getDb();
+  await db.updateGoal(userId, goalText);
 
-  // שומרים מטרה ומסמנים שסיימנו אונבורדינג
-  state.data.goal = t;
-  state.stage = "done";
-  await this._saveState(userId, state);
-
+  const ts = state.data.trainingSummary;
+  const volume = state.data.volume;
+  const ftpModels = state.data.ftpModels || {};
   const personal = state.data.personal || {};
   const hr = state.data.hr || {};
-  const tt = state.data.trainingTime || {};
 
-  const weight = personal.weight;
-  const height = personal.height;
-  const age = personal.age;
-
-  const ftp = state.data.ftpFinal;
-  const hrMax = hr.hrMaxFinal ?? hr.hrMax;
-  const hrThreshold = hr.hrThresholdFinal ?? hr.hrThreshold;
-
-  const minMin = tt.minMinutes;
-  const avgMin = tt.avgMinutes;
-  const maxMin = tt.maxMinutes;
-
-  const goal = state.data.goal;
+  const trainingTime = state.data.trainingTime || {};
 
   const lines = [];
-  lines.push("סיכום פרופיל הרוכב שלך:\n");
 
-  if (typeof weight === "number") {
-    lines.push(`• משקל: ${weight} ק\"ג`);
-  }
-  if (typeof height === "number") {
-    lines.push(`• גובה: ${height} ס\"מ`);
-  }
-  if (typeof age === "number") {
-    lines.push(`• גיל: ${age}`);
-  }
+  lines.push("סיכום פרופיל הרוכב שלך:");
+  lines.push("");
 
-  if (typeof ftp === "number") {
-    lines.push(`• FTP: ${ftp}W`);
-  }
+  if (personal.age) lines.push(`• גיל: ${personal.age}`);
+  if (personal.weightKg) lines.push(`• משקל: ${personal.weightKg} ק״ג`);
+  if (personal.heightCm) lines.push(`• גובה: ${personal.heightCm} ס״מ`);
 
-  if (typeof hrMax === "number") {
-    lines.push(`• דופק מקסימלי: ${hrMax} bpm`);
-  }
-  if (typeof hrThreshold === "number") {
-    lines.push(`• דופק סף: ${hrThreshold} bpm`);
-  }
+  lines.push("");
 
-  if (
-    typeof minMin === "number" &&
-    typeof avgMin === "number" &&
-    typeof maxMin === "number"
-  ) {
+  if (ftpModels.ftpRecommended) {
     lines.push(
-      `• משכי אימון טיפוסיים: קצר ${minMin} דק׳ / ממוצע ${avgMin} דק׳ / ארוך ${maxMin} דק׳`
+      `• FTP מומלץ: ${ftpModels.ftpRecommended.value}W (Recommended FTP)`
     );
   }
 
-  if (goal) {
-    lines.push(`• מטרה מרכזית: ${goal}`);
+  if (hr.hrMax || hr.hrThreshold) {
+    lines.push("• דופק:");
+    if (hr.hrMax) {
+      lines.push(`  - דופק מקסימלי משוער: ${hr.hrMax} bpm`);
+    }
+    if (hr.hrThreshold) {
+      lines.push(`  - דופק סף משוער: ${hr.hrThreshold} bpm`);
+    }
   }
+
+  lines.push("");
+
+  if (trainingTime.minMinutes || trainingTime.avgMinutes || trainingTime.maxMinutes) {
+    lines.push("• זמני אימון טיפוסיים:");
+    if (trainingTime.minMinutes) {
+      lines.push(`  - קצר: ~${trainingTime.minMinutes} דק׳`);
+    }
+    if (trainingTime.avgMinutes) {
+      lines.push(`  - ממוצע: ~${trainingTime.avgMinutes} דק׳`);
+    }
+    if (trainingTime.maxMinutes) {
+      lines.push(`  - ארוך: ~${trainingTime.maxMinutes} דק׳`);
+    }
+  }
+
+  lines.push("");
+  lines.push(`מטרה שהגדרת: "${goalText}"`);
 
   const profileText = lines.join("\n");
 
+  state.stage = "done";
+  await this._saveState(userId, state);
+
   return {
-    onboarding: true,
-
-    // ← בועה ראשונה: רק סיכום
     reply: profileText,
-
-    // ← בועה שנייה: הודעה נפרדת
+    onboarding: false,
     followups: [
-      "האונבורדינג שלך הושלם בהצלחה!\n\n" + this._postOnboardingMenu()
-    ]
+      "האונבורדינג שלך הושלם בהצלחה!\n\n" + this._postOnboardingMenu(),
+    ],
   };
 }
+
 
 }
 
