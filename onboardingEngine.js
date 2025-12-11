@@ -313,76 +313,76 @@ export class OnboardingEngine {
 
   // ===== STAGE: STRAVA SUMMARY =====
 
+   // ===== STAGE: STRAVA SUMMARY =====
+
   async _stageStravaSummary(userId, text, state) {
     state = await this._ensureStravaMetricsInState(userId, state);
     const ts = state.data.trainingSummary;
     const volume = state.data.volume;
 
-    // personal data from Strava (weight etc.)
+    // personal + weight from Strava (אם קיים)
     const personal = state.data.personal || {};
     const weightFromStrava =
       personal && personal.weightFromStrava != null
         ? personal.weightFromStrava
         : null;
 
-    // יש מספיק רכיבות לסיכום
+    // helper קטן לפורמט מספרים עם פסיקים
+    const fmtNumber = (n, digits = null) => {
+      if (n == null || !Number.isFinite(n)) return "";
+      const val = digits != null ? Number(n.toFixed(digits)) : n;
+      return val.toLocaleString("he-IL");
+    };
+
+    // יש מספיק רכיבות – מציגים סיכום נפח
     if (ts && ts.rides_count > 0) {
-      const hoursRaw = ts.totalMovingTimeSec / 3600;
-      const kmRaw = ts.totalDistanceKm;
-      const elevationRaw = ts.totalElevationGainM;
+      const hours = ts.totalMovingTimeSec / 3600;
+      const hoursStr = fmtNumber(hours, 1);
+      const kmStr = fmtNumber(ts.totalDistanceKm, 1);
+      const elevationStr = fmtNumber(Math.round(ts.totalElevationGainM), 0);
       const avgMin = Math.round(ts.avgDurationSec / 60);
       const offPct =
         ts.offroadPct != null ? Math.round(ts.offroadPct * 100) : null;
 
-      const hours = this._formatNumber(hoursRaw, 1);
-      const km = this._formatNumber(kmRaw, 1);
-      const elevation = this._formatNumber(elevationRaw, 0);
-      const ridesCount = this._formatNumber(ts.rides_count, 0);
-
-      const lines = [];
-
-      lines.push("סיימתי לייבא נתונים מסטרבה ✅");
-      lines.push("");
-      lines.push("סיכום 90 הימים האחרונים:");
-      lines.push(`• מספר רכיבות: ${ridesCount}`);
-      lines.push(`• זמן רכיבה מצטבר: ~${hours} שעות`);
-      lines.push(`• מרחק מצטבר: ${km} ק\"מ`);
-      lines.push(`• טיפוס מצטבר: ${elevation} מ׳`);
-      lines.push(`• משך רכיבה ממוצע: ~${avgMin} דקות`);
+      let profileLine = `ב-90 הימים האחרונים רכבת ${fmtNumber(
+        ts.rides_count
+      )} פעמים, `;
+      profileLine += `סה"כ ~${hoursStr} שעות ו-${kmStr} ק"מ עם ${elevationStr} מטר טיפוס. `;
+      profileLine += `משך רכיבה ממוצע ~${avgMin} דקות.`;
       if (offPct != null) {
-        lines.push(`• שטח (off-road): ~${offPct}% מהרכיבות`);
+        profileLine += ` כ-${offPct}% מהרכיבות היו שטח (off-road).`;
       }
 
+      let volLine = "";
       if (volume && volume.weeksCount > 0) {
-        const wHours = this._formatNumber(volume.weeklyHoursAvg, 1);
-        const wRides = this._formatNumber(volume.weeklyRidesAvg, 1);
-        const weeksCount = this._formatNumber(volume.weeksCount, 0);
-        lines.push("");
-        lines.push("סיכום שבועי:");
-        lines.push(`• שעות בשבוע (ממוצע): ~${wHours} שעות`);
-        lines.push(`• רכיבות בשבוע (ממוצע): ~${wRides} רכיבות`);
-        lines.push(`• מספר שבועות שנבדקו: ${weeksCount}`);
+        const wHours = fmtNumber(volume.weeklyHoursAvg, 1);
+        const wRides = fmtNumber(volume.weeklyRidesAvg, 1);
+        volLine =
+          `\n\nבממוצע שבועי זה יוצא ~${wHours} שעות ו-${wRides} רכיבות לשבוע ` +
+          `(על בסיס ${fmtNumber(volume.weeksCount)} שבועות אחרונים).`;
       }
 
-      lines.push("");
-      lines.push("עכשיו נעבור לנתונים האישיים שלך.");
-
-      const summaryText = lines.join("\n");
-
-      // השלב הבא: נתונים אישיים → משקל
+      // מגדירים שהשלב הבא הוא נתונים אישיים → משקל
       state.stage = "personal_details";
       state.data.personal = personal;
       state.data.personalStep = "weight";
       await this._saveState(userId, state);
 
-      // בועה 2 – שאלת משקל
+      // בועה 1: סיכום סטרבה
+      const summaryText =
+        "סיימתי לייבא נתונים מסטרבה ✅\n\n" +
+        profileLine +
+        volLine +
+        "\n\n" +
+        "עכשיו נעבור לנתונים האישיים שלך.";
+
+      // בועה 2: שאלת משקל
       let weightQuestion =
         "נתחיל ממשקל — זה עוזר לי לחשב עומס ואימונים בצורה מדויקת יותר.\n\n";
 
       if (weightFromStrava != null) {
-        const wStr = this._formatNumber(weightFromStrava, 1);
         weightQuestion +=
-          `בסטרבה מופיע ${wStr} ק\"ג.\n` +
+          `בסטרבה מופיע ${weightFromStrava} ק\"ג.\n` +
           'אם זה נכון, תכתוב "אישור".\n' +
           "אם תרצה לעדכן – תכתוב את המשקל הנוכחי שלך (למשל 72.5).";
       } else {
@@ -391,31 +391,34 @@ export class OnboardingEngine {
 
       return {
         reply: summaryText,
-        followups: [weightQuestion],
+        followups: [
+          {
+            reply: weightQuestion,
+            onboarding: true,
+          },
+        ],
         onboarding: true,
       };
     }
 
-    // אין מספיק נתונים לסיכום נפח – עדיין נעבור לנתונים אישיים + משקל
+    // אין מספיק נתוני נפח – מדלגים ישר לשאלת משקל
     state.stage = "personal_details";
     state.data.personal = state.data.personal || {};
     state.data.personalStep = "weight";
     await this._saveState(userId, state);
 
-    const summaryText =
+    const reply =
       "לא מצאתי מספיק רכיבות מ-90 הימים האחרונים כדי להציג סיכום נפח.\n" +
-      "בוא נעבור לנתונים האישיים שלך.";
-
-    const weightQuestion =
+      "בוא נעבור לנתונים האישיים שלך.\n\n" +
       "נתחיל ממשקל — זה עוזר לי לחשב עומס ואימונים בצורה מדויקת יותר.\n\n" +
       'כמה אתה שוקל כרגע בק"ג (למשל 72.5)?';
 
     return {
-      reply: summaryText,
-      followups: [weightQuestion],
+      reply,
       onboarding: true,
     };
   }
+
 
   // ===== PERSONAL DETAILS =====
 
