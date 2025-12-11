@@ -422,7 +422,7 @@
         return res.json();
       }
 
-      function handleChatReply(data) {
+    function handleChatReply(data) {
         if (!data.ok && data.error) {
           addMessage("bot", "שגיאה מהשרת: " + data.error, "chat");
           return;
@@ -430,14 +430,13 @@
 
         const mode = data.onboarding ? "onboarding" : "chat";
 
-        // הבועה הראשית
         if (data.reply) {
           addMessage("bot", data.reply, mode);
         } else {
           addMessage("bot", "לא קיבלתי תשובה מ-LOEW.", mode);
         }
 
-        // בועות המשך (followups)
+        // בועות המשך (followups) במידה והשרת מחזיר הודעות נוספות
         if (Array.isArray(data.followups)) {
           data.followups.forEach((txt) => {
             if (txt && typeof txt === "string" && txt.trim()) {
@@ -446,6 +445,7 @@
           });
         }
       }
+
 
       // ===== STRAVA SYNC (פקודת "עדכן מסטרבה") =====
 

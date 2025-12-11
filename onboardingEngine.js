@@ -185,9 +185,7 @@ export class OnboardingEngine {
 
       const newParams = {
         ...existing,
-        // FTP שהמשתמש אישר – זה הערך שהמאמן צריך לעבוד איתו
         ftp: ftpFinal != null ? ftpFinal : existing.ftp ?? null,
-        // HR סופי מהאונבורדינג גובר על מודל אוטומטי
         hrMax:
           hrMaxFinal != null ? hrMaxFinal : existing.hrMax ?? null,
         hrThreshold:
@@ -320,6 +318,7 @@ export class OnboardingEngine {
     const ts = state.data.trainingSummary;
     const volume = state.data.volume;
 
+    // personal data from Strava (weight etc.)
     const personal = state.data.personal || {};
     const weightFromStrava =
       personal && personal.weightFromStrava != null
@@ -328,21 +327,26 @@ export class OnboardingEngine {
 
     // יש מספיק רכיבות לסיכום
     if (ts && ts.rides_count > 0) {
-      const hours = (ts.totalMovingTimeSec / 3600).toFixed(1);
-      const km = ts.totalDistanceKm.toFixed(1);
-      const elevation = Math.round(ts.totalElevationGainM || 0);
+      const hoursRaw = ts.totalMovingTimeSec / 3600;
+      const kmRaw = ts.totalDistanceKm;
+      const elevationRaw = ts.totalElevationGainM;
       const avgMin = Math.round(ts.avgDurationSec / 60);
       const offPct =
-        ts.offroadPct != null ? Math.round(ts.offroadPct) : null;
+        ts.offroadPct != null ? Math.round(ts.offroadPct * 100) : null;
+
+      const hours = this._formatNumber(hoursRaw, 1);
+      const km = this._formatNumber(kmRaw, 1);
+      const elevation = this._formatNumber(elevationRaw, 0);
+      const ridesCount = this._formatNumber(ts.rides_count, 0);
 
       const lines = [];
 
       lines.push("סיימתי לייבא נתונים מסטרבה ✅");
       lines.push("");
       lines.push("סיכום 90 הימים האחרונים:");
-      lines.push(`• מספר רכיבות: ${ts.rides_count}`);
+      lines.push(`• מספר רכיבות: ${ridesCount}`);
       lines.push(`• זמן רכיבה מצטבר: ~${hours} שעות`);
-      lines.push(`• מרחק מצטבר: ${km} ק״מ`);
+      lines.push(`• מרחק מצטבר: ${km} ק\"מ`);
       lines.push(`• טיפוס מצטבר: ${elevation} מ׳`);
       lines.push(`• משך רכיבה ממוצע: ~${avgMin} דקות`);
       if (offPct != null) {
@@ -350,19 +354,14 @@ export class OnboardingEngine {
       }
 
       if (volume && volume.weeksCount > 0) {
+        const wHours = this._formatNumber(volume.weeklyHoursAvg, 1);
+        const wRides = this._formatNumber(volume.weeklyRidesAvg, 1);
+        const weeksCount = this._formatNumber(volume.weeksCount, 0);
         lines.push("");
         lines.push("סיכום שבועי:");
-        lines.push(
-          `• שעות בשבוע (ממוצע): ~${volume.weeklyHoursAvg.toFixed(
-            1
-          )} שעות`
-        );
-        lines.push(
-          `• רכיבות בשבוע (ממוצע): ~${volume.weeklyRidesAvg.toFixed(
-            1
-          )} רכיבות`
-        );
-        lines.push(`• מספר שבועות שנבדקו: ${volume.weeksCount}`);
+        lines.push(`• שעות בשבוע (ממוצע): ~${wHours} שעות`);
+        lines.push(`• רכיבות בשבוע (ממוצע): ~${wRides} רכיבות`);
+        lines.push(`• מספר שבועות שנבדקו: ${weeksCount}`);
       }
 
       lines.push("");
@@ -381,8 +380,9 @@ export class OnboardingEngine {
         "נתחיל ממשקל — זה עוזר לי לחשב עומס ואימונים בצורה מדויקת יותר.\n\n";
 
       if (weightFromStrava != null) {
+        const wStr = this._formatNumber(weightFromStrava, 1);
         weightQuestion +=
-          `בסטרבה מופיע ${weightFromStrava} ק\"ג.\n` +
+          `בסטרבה מופיע ${wStr} ק\"ג.\n` +
           'אם זה נכון, תכתוב "אישור".\n' +
           "אם תרצה לעדכן – תכתוב את המשקל הנוכחי שלך (למשל 72.5).";
       } else {
@@ -396,7 +396,7 @@ export class OnboardingEngine {
       };
     }
 
-    // אין מספיק נתונים לסיכום נפח – עדיין נעבור לנתונים אישיים
+    // אין מספיק נתונים לסיכום נפח – עדיין נעבור לנתונים אישיים + משקל
     state.stage = "personal_details";
     state.data.personal = state.data.personal || {};
     state.data.personalStep = "weight";
@@ -461,7 +461,11 @@ export class OnboardingEngine {
         await this._saveState(userId, state);
 
         return {
-          reply: 'מה הגובה שלך בס"מ?',
+          reply:
+            `מעולה, אשתמש במשקל ${this._formatNumber(
+              weightFromStrava,
+              1
+            )} ק\"ג.\n\n` + 'מה הגובה שלך בס"מ?',
           onboarding: true,
         };
       }
@@ -534,13 +538,11 @@ export class OnboardingEngine {
         };
       }
 
-      // שומרים גיל ומסמנים שסיימנו נתונים אישיים
       state.data.personal.age = age;
       state.data.personalStep = "done";
       state.stage = "ftp_models";
       await this._saveState(userId, state);
 
-      // מיד אחרי גיל – מציגים את מודלי ה-FTP
       const ftpIntro = await this._stageFtpModels(userId, "", state);
 
       const prefix =
@@ -639,7 +641,6 @@ export class OnboardingEngine {
     await this._updateTrainingParamsFromState(userId, state);
     await this._saveState(userId, state);
 
-    // מיד אחרי עדכון FTP – מציגים את שלב הדופק
     const hrIntro = await this._stageHrIntro(userId, "", state);
 
     const prefix =
@@ -721,7 +722,6 @@ export class OnboardingEngine {
         state.data.hrStep = "hrThreshold";
         await this._saveState(userId, state);
 
-        // בלי הודעת "מעולה..." – עוברים ישר לשלב דופק סף
         return await this._stageHrCollect(userId, "", state);
       }
 
@@ -740,7 +740,6 @@ export class OnboardingEngine {
       state.data.hrStep = "hrThreshold";
       await this._saveState(userId, state);
 
-      // בלי "תודה, עדכנתי..." – עוברים ישר לדופק סף
       return await this._stageHrCollect(userId, "", state);
     }
 
@@ -955,6 +954,20 @@ export class OnboardingEngine {
     };
   }
 
+  _formatNumber(num, fractionDigits = 0) {
+    if (typeof num !== "number" || !isFinite(num)) {
+      return String(num);
+    }
+    try {
+      return num.toLocaleString("he-IL", {
+        minimumFractionDigits: fractionDigits,
+        maximumFractionDigits: fractionDigits,
+      });
+    } catch (e) {
+      return num.toFixed(fractionDigits);
+    }
+  }
+
   _parseThreeDurations(text) {
     if (!text) return null;
     const cleaned = text.replace(/[^\d,\/ ]/g, "");
@@ -991,7 +1004,6 @@ export class OnboardingEngine {
     const ftpModels = state.data.ftpModels || {};
     const personal = state.data.personal || {};
     const hr = state.data.hr || {};
-
     const trainingTime = state.data.trainingTime || {};
 
     const lines = [];
