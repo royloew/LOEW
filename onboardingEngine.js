@@ -208,7 +208,6 @@ export class OnboardingEngine {
   // 🔹 תפריט ברירת מחדל אחרי אונבורדינג
   _postOnboardingMenu() {
     return (
-      "האונבורדינג שלך הושלם בהצלחה!\n" +
       "במה אני יכול לעזור לך?\n" +
       "שים לב לדוגמאות לשאלות שאתה יכול לשאול אותי\n\n" +
       "טיפול בנתונים:\n" +
@@ -276,14 +275,12 @@ export class OnboardingEngine {
 
   // ===== STAGE: INTRO =====
 
-  // ===== STAGE: INTRO =====
-
   async _stageIntro(userId, text, state) {
     if (!text) {
       return {
         reply:
           "נעים מאוד, אני LOEW — המאמן האישי שלך.\n" +
-          "...",
+          "כדי להתחיל לעבוד יחד, נחבר את סטרבה שלך (אם יש) ונעבור תהליך קצר של אונבורדינג.",
         onboarding: true,
       };
     }
@@ -293,7 +290,7 @@ export class OnboardingEngine {
 
     return {
       reply:
-        "מעולה. ברגע שתאשר את החיבור לסטרבה, ...",
+        "מעולה. ברגע שתאשר את החיבור לסטרבה, אייבא את הנתונים שלך ונמשיך לנתונים האישיים.",
       onboarding: true,
     };
   }
@@ -318,16 +315,11 @@ export class OnboardingEngine {
 
   // ===== STAGE: STRAVA SUMMARY =====
 
-  // ===== STAGE: STRAVA SUMMARY =====
-
-  // ===== STAGE: STRAVA SUMMARY =====
-
   async _stageStravaSummary(userId, text, state) {
     state = await this._ensureStravaMetricsInState(userId, state);
     const ts = state.data.trainingSummary;
     const volume = state.data.volume;
 
-    // נשלוף גם את המשקל מסטרבה (אם קיים ב-personal)
     const personal = state.data.personal || {};
     const weightFromStrava =
       personal && personal.weightFromStrava != null
@@ -338,43 +330,53 @@ export class OnboardingEngine {
     if (ts && ts.rides_count > 0) {
       const hours = (ts.totalMovingTimeSec / 3600).toFixed(1);
       const km = ts.totalDistanceKm.toFixed(1);
-      const elevation = Math.round(ts.totalElevationGainM);
+      const elevation = Math.round(ts.totalElevationGainM || 0);
       const avgMin = Math.round(ts.avgDurationSec / 60);
       const offPct =
-        ts.offroadPct != null ? Math.round(ts.offroadPct * 100) : null;
+        ts.offroadPct != null ? Math.round(ts.offroadPct) : null;
 
-      let profileLine = `ב-90 הימים האחרונים רכבת ${ts.rides_count} פעמים, `;
-      profileLine += `סה\"כ ~${hours} שעות ו-${km} ק\"מ עם ${elevation} מטר טיפוס. `;
-      profileLine += `משך רכיבה ממוצע ~${avgMin} דקות.`;
+      const lines = [];
+
+      lines.push("סיימתי לייבא נתונים מסטרבה ✅");
+      lines.push("");
+      lines.push("סיכום 90 הימים האחרונים:");
+      lines.push(`• מספר רכיבות: ${ts.rides_count}`);
+      lines.push(`• זמן רכיבה מצטבר: ~${hours} שעות`);
+      lines.push(`• מרחק מצטבר: ${km} ק״מ`);
+      lines.push(`• טיפוס מצטבר: ${elevation} מ׳`);
+      lines.push(`• משך רכיבה ממוצע: ~${avgMin} דקות`);
       if (offPct != null) {
-        profileLine += ` כ-${offPct}% מהרכיבות היו שטח (off-road).`;
+        lines.push(`• שטח (off-road): ~${offPct}% מהרכיבות`);
       }
 
-      let volLine = "";
       if (volume && volume.weeksCount > 0) {
-        const wHours = volume.weeklyHoursAvg.toFixed(1);
-        const wRides = volume.weeklyRidesAvg.toFixed(1);
-        volLine =
-          `\n\nבממוצע שבועי זה יוצא ~${wHours} שעות ו-${wRides} רכיבות לשבוע ` +
-          `(על בסיס ${volume.weeksCount} שבועות אחרונים).`;
+        lines.push("");
+        lines.push("סיכום שבועי:");
+        lines.push(
+          `• שעות בשבוע (ממוצע): ~${volume.weeklyHoursAvg.toFixed(
+            1
+          )} שעות`
+        );
+        lines.push(
+          `• רכיבות בשבוע (ממוצע): ~${volume.weeklyRidesAvg.toFixed(
+            1
+          )} רכיבות`
+        );
+        lines.push(`• מספר שבועות שנבדקו: ${volume.weeksCount}`);
       }
 
-      // מגדירים שהשלב הבא הוא נתונים אישיים → משקל
-            // מגדירים שהשלב הבא הוא נתונים אישיים → משקל
+      lines.push("");
+      lines.push("עכשיו נעבור לנתונים האישיים שלך.");
+
+      const summaryText = lines.join("\n");
+
+      // השלב הבא: נתונים אישיים → משקל
       state.stage = "personal_details";
       state.data.personal = personal;
       state.data.personalStep = "weight";
       await this._saveState(userId, state);
 
-      // בועה 1: סיכום סטרבה
-      const summaryText =
-        "סיימתי לייבא נתונים מסטרבה ✅\n\n" +
-        profileLine +
-        volLine +
-        "\n\n" +
-        "עכשיו נעבור לנתונים האישיים שלך.";
-
-      // בועה 2: שאלת משקל
+      // בועה 2 – שאלת משקל
       let weightQuestion =
         "נתחיל ממשקל — זה עוזר לי לחשב עומס ואימונים בצורה מדויקת יותר.\n\n";
 
@@ -392,11 +394,9 @@ export class OnboardingEngine {
         followups: [weightQuestion],
         onboarding: true,
       };
-
     }
 
-    // אין מספיק נתונים לסיכום נפח – עדיין מקפיצים ישר לשאלת משקל
-        // אין מספיק נתונים לסיכום נפח – עדיין נעבור לנתונים אישיים
+    // אין מספיק נתונים לסיכום נפח – עדיין נעבור לנתונים אישיים
     state.stage = "personal_details";
     state.data.personal = state.data.personal || {};
     state.data.personalStep = "weight";
@@ -415,10 +415,7 @@ export class OnboardingEngine {
       followups: [weightQuestion],
       onboarding: true,
     };
-
   }
-
-  // ===== PERSONAL DETAILS =====
 
   // ===== PERSONAL DETAILS =====
 
@@ -519,7 +516,6 @@ export class OnboardingEngine {
     }
 
     // גיל
-      // גיל
     if (step === "age") {
       if (!t) {
         return {
@@ -556,7 +552,6 @@ export class OnboardingEngine {
       };
     }
 
-
     return {
       reply: "משהו לא היה ברור בנתונים האישיים, ננסה שוב.",
       onboarding: true,
@@ -586,7 +581,9 @@ export class OnboardingEngine {
     const recommendFtp =
       candidates.length > 0
         ? Math.round(
-            candidates.sort((a, b) => a - b)[Math.floor(candidates.length / 2)]
+            candidates.sort((a, b) => a - b)[
+              Math.floor(candidates.length / 2)
+            ]
           )
         : null;
 
@@ -983,83 +980,88 @@ export class OnboardingEngine {
 
   // ===== GOAL COLLECT =====
 
-   // ===== GOAL COLLECT =====
+  async _stageGoalCollect(userId, text, state) {
+    const goalText = text.trim();
 
-// בתוך המחלקה OnboardingEngine
-async _stageGoalCollect(userId, text, state) {
-  const goalText = text.trim();
+    const db = await this._getDb();
+    await db.updateGoal(userId, goalText);
 
-  const db = await this._getDb();
-  await db.updateGoal(userId, goalText);
+    const ts = state.data.trainingSummary;
+    const volume = state.data.volume;
+    const ftpModels = state.data.ftpModels || {};
+    const personal = state.data.personal || {};
+    const hr = state.data.hr || {};
 
-  const ts = state.data.trainingSummary;
-  const volume = state.data.volume;
-  const ftpModels = state.data.ftpModels || {};
-  const personal = state.data.personal || {};
-  const hr = state.data.hr || {};
+    const trainingTime = state.data.trainingTime || {};
 
-  const trainingTime = state.data.trainingTime || {};
+    const lines = [];
 
-  const lines = [];
+    lines.push("סיכום פרופיל הרוכב שלך:");
+    lines.push("");
 
-  lines.push("סיכום פרופיל הרוכב שלך:");
-  lines.push("");
+    if (personal.age) lines.push(`• גיל: ${personal.age}`);
+    if (personal.weightKg) lines.push(`• משקל: ${personal.weightKg} ק״ג`);
+    if (personal.heightCm) lines.push(`• גובה: ${personal.heightCm} ס״מ`);
 
-  if (personal.age) lines.push(`• גיל: ${personal.age}`);
-  if (personal.weightKg) lines.push(`• משקל: ${personal.weightKg} ק״ג`);
-  if (personal.heightCm) lines.push(`• גובה: ${personal.heightCm} ס״מ`);
+    lines.push("");
 
-  lines.push("");
+    if (ftpModels.ftpRecommended) {
+      lines.push(
+        `• FTP מומלץ: ${ftpModels.ftpRecommended.value}W (Recommended FTP)`
+      );
+    }
 
-  if (ftpModels.ftpRecommended) {
-    lines.push(
-      `• FTP מומלץ: ${ftpModels.ftpRecommended.value}W (Recommended FTP)`
-    );
+    if (hr.hrMax || hr.hrThreshold) {
+      lines.push("• דופק:");
+      if (hr.hrMax) {
+        lines.push(`  - דופק מקסימלי משוער: ${hr.hrMax} bpm`);
+      }
+      if (hr.hrThreshold) {
+        lines.push(`  - דופק סף משוער: ${hr.hrThreshold} bpm`);
+      }
+    }
+
+    lines.push("");
+
+    if (
+      trainingTime.minMinutes ||
+      trainingTime.avgMinutes ||
+      trainingTime.maxMinutes
+    ) {
+      lines.push("• זמני אימון טיפוסיים:");
+      if (trainingTime.minMinutes) {
+        lines.push(`  - קצר: ~${trainingTime.minMinutes} דק׳`);
+      }
+      if (trainingTime.avgMinutes) {
+        lines.push(`  - ממוצע: ~${trainingTime.avgMinutes} דק׳`);
+      }
+      if (trainingTime.maxMinutes) {
+        lines.push(`  - ארוך: ~${trainingTime.maxMinutes} דק׳`);
+      }
+    }
+
+    lines.push("");
+    lines.push(`מטרה שהגדרת: "${goalText}"`);
+
+    const profileText = lines.join("\n");
+
+    state.stage = "done";
+    await this._saveState(userId, state);
+
+    return {
+      reply: profileText,
+      onboarding: false,
+      followups: [
+        "האונבורדינג שלך הושלם בהצלחה!\n\n" + this._postOnboardingMenu(),
+      ],
+    };
   }
 
-  if (hr.hrMax || hr.hrThreshold) {
-    lines.push("• דופק:");
-    if (hr.hrMax) {
-      lines.push(`  - דופק מקסימלי משוער: ${hr.hrMax} bpm`);
+  // helper פנימי ל-DB
+  async _getDb() {
+    if (!this.db) {
+      throw new Error("DB not configured in OnboardingEngine");
     }
-    if (hr.hrThreshold) {
-      lines.push(`  - דופק סף משוער: ${hr.hrThreshold} bpm`);
-    }
+    return this.db;
   }
-
-  lines.push("");
-
-  if (trainingTime.minMinutes || trainingTime.avgMinutes || trainingTime.maxMinutes) {
-    lines.push("• זמני אימון טיפוסיים:");
-    if (trainingTime.minMinutes) {
-      lines.push(`  - קצר: ~${trainingTime.minMinutes} דק׳`);
-    }
-    if (trainingTime.avgMinutes) {
-      lines.push(`  - ממוצע: ~${trainingTime.avgMinutes} דק׳`);
-    }
-    if (trainingTime.maxMinutes) {
-      lines.push(`  - ארוך: ~${trainingTime.maxMinutes} דק׳`);
-    }
-  }
-
-  lines.push("");
-  lines.push(`מטרה שהגדרת: "${goalText}"`);
-
-  const profileText = lines.join("\n");
-
-  state.stage = "done";
-  await this._saveState(userId, state);
-
-  return {
-    reply: profileText,
-    onboarding: false,
-    followups: [
-      "האונבורדינג שלך הושלם בהצלחה!\n\n" + this._postOnboardingMenu(),
-    ],
-  };
 }
-
-
-}
-
-

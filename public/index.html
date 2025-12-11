@@ -293,11 +293,15 @@
               const u = new URL(url);
               const uid = u.searchParams.get("userId") || USER_ID;
               const authHref =
-                STRAVA_DOMAIN + "/auth/strava?userId=" + encodeURIComponent(uid);
+                STRAVA_DOMAIN +
+                "/auth/strava?userId=" +
+                encodeURIComponent(uid);
               return `<a href="${authHref}" target="_blank" rel="noopener noreferrer">חבר אותי לסטרבה</a>`;
             } catch (e) {
               const authHref =
-                STRAVA_DOMAIN + "/auth/strava?userId=" + encodeURIComponent(USER_ID);
+                STRAVA_DOMAIN +
+                "/auth/strava?userId=" +
+                encodeURIComponent(USER_ID);
               return `<a href="${authHref}" target="_blank" rel="noopener noreferrer">חבר אותי לסטרבה</a>`;
             }
           }
@@ -418,7 +422,7 @@
         return res.json();
       }
 
-            function handleChatReply(data) {
+      function handleChatReply(data) {
         if (!data.ok && data.error) {
           addMessage("bot", "שגיאה מהשרת: " + data.error, "chat");
           return;
@@ -433,7 +437,7 @@
           addMessage("bot", "לא קיבלתי תשובה מ-LOEW.", mode);
         }
 
-        // בועות המשך (followups) – למשל "האונבורדינג שלך הושלם בהצלחה!"
+        // בועות המשך (followups)
         if (Array.isArray(data.followups)) {
           data.followups.forEach((txt) => {
             if (txt && typeof txt === "string" && txt.trim()) {
@@ -442,7 +446,6 @@
           });
         }
       }
-
 
       // ===== STRAVA SYNC (פקודת "עדכן מסטרבה") =====
 
@@ -535,7 +538,6 @@
         }
       }
 
-
       function isLastWorkoutRequest(txt) {
         const t = txt.trim();
         return (
@@ -549,64 +551,63 @@
         return /נתח לי אימון מתאריך/i.test(txt);
       }
 
-async function callLastWorkoutAnalysis() {
-  addMessage("bot", "בודק את האימון האחרון שלך…", "chat");
+      async function callLastWorkoutAnalysis() {
+        addMessage("bot", "בודק את האימון האחרון שלך…", "chat");
 
-  const res = await fetch("/api/loew/last-workout-analysis", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ userId: USER_ID }),
-  });
+        const res = await fetch("/api/loew/last-workout-analysis", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: USER_ID }),
+        });
 
-  const data = await res.json();
+        const data = await res.json();
 
-  if (!data.ok) {
-    addMessage(
-      "bot",
-      "הייתה בעיה בניתוח האימון האחרון: " + (data.error || ""),
-      "chat"
-    );
-    return;
-  }
+        if (!data.ok) {
+          addMessage(
+            "bot",
+            "הייתה בעיה בניתוח האימון האחרון: " + (data.error || ""),
+            "chat"
+          );
+          return;
+        }
 
-  addMessage("bot", data.message || "לא קיבלתי סיכום אימון.", "chat");
-}
+        addMessage("bot", data.message || "לא קיבלתי סיכום אימון.", "chat");
+      }
 
-async function callWorkoutAnalysisByDate(text) {
-  // מחלץ תאריך בפורמט YYYY-MM-DD מתוך הטקסט
-  const match = text.match(/\d{4}-\d{2}-\d{2}/);
-  if (!match) {
-    addMessage(
-      "bot",
-      'כדי לנתח אימון לפי תאריך, תכתוב למשל: "נתח לי אימון מתאריך 2025-01-15".',
-      "chat"
-    );
-    return;
-  }
+      async function callWorkoutAnalysisByDate(text) {
+        const match = text.match(/\d{4}-\d{2}-\d{2}/);
+        if (!match) {
+          addMessage(
+            "bot",
+            'כדי לנתח אימון לפי תאריך, תכתוב למשל: "נתח לי אימון מתאריך 2025-01-15".',
+            "chat"
+          );
+          return;
+        }
 
-  const isoDate = match[0];
+        const isoDate = match[0];
 
-  addMessage("bot", `בודק את האימון מתאריך ${isoDate}…`, "chat");
+        addMessage("bot", `בודק את האימון מתאריך ${isoDate}…`, "chat");
 
-  const res = await fetch("/api/loew/workout-analysis-by-date", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ userId: USER_ID, date: isoDate }),
-  });
+        const res = await fetch("/api/loew/workout-analysis-by-date", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: USER_ID, date: isoDate }),
+        });
 
-  const data = await res.json();
+        const data = await res.json();
 
-  if (!data.ok) {
-    addMessage(
-      "bot",
-      "הייתה בעיה בניתוח האימון: " + (data.error || ""),
-      "chat"
-    );
-    return;
-  }
+        if (!data.ok) {
+          addMessage(
+            "bot",
+            "הייתה בעיה בניתוח האימון: " + (data.error || ""),
+            "chat"
+          );
+          return;
+        }
 
-  addMessage("bot", data.message || "לא קיבלתי סיכום אימון.", "chat");
-}
+        addMessage("bot", data.message || "לא קיבלתי סיכום אימון.", "chat");
+      }
 
       // ===== SEND MESSAGE =====
 
@@ -624,7 +625,6 @@ async function callWorkoutAnalysisByDate(text) {
           .toLowerCase()
           .replace(/[.!?…]/g, "");
 
-        // טריגר לחיבור סטרבה כשכותבים "כן" ואין סטרבה
         if (
           !hasStrava &&
           (normalized === "כן" || normalized === "yes" || normalized === "y")
@@ -641,78 +641,21 @@ async function callWorkoutAnalysisByDate(text) {
         }
 
         try {
-          // פקודת "עדכן מסטרבה"
           if (isStravaSyncRequest(text)) {
             await callStravaSync();
             return;
           }
 
-          // ===== SEND MESSAGE =====
+          if (isLastWorkoutRequest(text)) {
+            await callLastWorkoutAnalysis();
+            return;
+          }
 
-async function sendMessage() {
-  const text = inputEl.value.trim();
-  if (!text) return;
+          if (isWorkoutByDateRequest(text)) {
+            await callWorkoutAnalysisByDate(text);
+            return;
+          }
 
-  addMessage("me", text, "chat");
-  inputEl.value = "";
-  inputEl.focus();
-  sendBtn.disabled = true;
-
-  const normalized = text
-    .trim()
-    .toLowerCase()
-    .replace(/[.!?…]/g, "");
-
-  // טריגר לחיבור סטרבה כשכותבים "כן" ואין סטרבה
-  if (
-    !hasStrava &&
-    (normalized === "כן" || normalized === "yes" || normalized === "y")
-  ) {
-    const authHref =
-      STRAVA_DOMAIN + "/auth/strava?userId=" + encodeURIComponent(USER_ID);
-    window.location.href = authHref;
-    setTimeout(() => {
-      sendBtn.disabled = false;
-    }, 1500);
-    return;
-  }
-
-  try {
-    // פקודת "עדכן מסטרבה"
-    if (isStravaSyncRequest(text)) {
-      await callStravaSync();
-      return;
-    }
-
-    // ניתוח אימון אחרון
-    if (isLastWorkoutRequest(text)) {
-      await callLastWorkoutAnalysis();
-      return;
-    }
-
-    // ניתוח אימון לפי תאריך
-    if (isWorkoutByDateRequest(text)) {
-      await callWorkoutAnalysisByDate(text);
-      return;
-    }
-
-    // צ'אט רגיל (אונבורדינג / פוסט-אונבורדינג)
-    const data = await callChatAPI(text);
-    handleChatReply(data);
-  } catch (err) {
-    console.error(err);
-    addMessage(
-      "bot",
-      "שגיאה בתקשורת עם השרת: " + (err.message || ""),
-      "chat"
-    );
-  } finally {
-    sendBtn.disabled = false;
-  }
-}
-
-
-          // צ'אט רגיל
           const data = await callChatAPI(text);
           handleChatReply(data);
         } catch (err) {
@@ -736,7 +679,7 @@ async function sendMessage() {
       });
 
       // ===== INIT =====
-          (async function init() {
+      (async function init() {
         const snapshot = await fetchSnapshotOnce();
 
         // 1. חזרנו מ-Strava עם ?strava=connected
@@ -748,7 +691,6 @@ async function sendMessage() {
           );
 
           try {
-            // נותנים לשרת להחליט איך להמשיך (סיכום סטרבה + משקל וכו')
             const data = await callChatAPI("היי");
             handleChatReply(data);
           } catch (err) {
@@ -763,44 +705,37 @@ async function sendMessage() {
           return;
         }
 
-        // 2. אין סטרבה – מסך פתיחה שדוחף לחיבור לסטרבה (משתמש חדש)
-        // 2. אין סטרבה – מסך פתיחה שדוחף לחיבור לסטרבה (משתמש חדש)
-if (!hasStrava) {
-  const authRel = "/auth/strava?userId=" + encodeURIComponent(USER_ID);
-  const authHref = STRAVA_DOMAIN + authRel;
+        // 2. אין סטרבה – משתמש חדש
+        if (!hasStrava) {
+          const authRel = "/auth/strava?userId=" + encodeURIComponent(USER_ID);
+          const authHref = STRAVA_DOMAIN + authRel;
 
-  // בועה 1 – הודעת פתיחה
-  addMessage(
-    "bot",
-    "היי " +
-      USER_ID +
-      ", אני LOEW — המאמן האישי שלך.\n" +
-      "אני עובד בשיטות אימון מתקדמות, מבוססות מדע ונתונים, כמו אלו שנמצאות בשימוש אצל מאמני הצמרת העולמית.\n\n" +
-      "לפני שנתחיל לבנות עבורך תוכנית אימונים מותאמת אישית ולנתח את הביצועים שלך לעומק — נעבור תהליך קצר של אונבורדינג.\n" +
-      "זה יעזור לי להבין מי אתה כמתאמן ולדייק בשבילך כל המלצה.\n\n" +
-      "יאללה, בוא נתחיל 🚴‍♂️",
-    "onboarding"
-  );
+          addMessage(
+            "bot",
+            "היי " +
+              USER_ID +
+              ", אני LOEW — המאמן האישי שלך.\n" +
+              "אני עובד בשיטות אימון מתקדמות, מבוססות מדע ונתונים, כמו אלו שנמצאות בשימוש אצל מאמני הצמרת העולמית.\n\n" +
+              "לפני שנתחיל לבנות עבורך תוכנית אימונים מותאמת אישית ולנתח את הביצועים שלך לעומק — נעבור תהליך קצר של אונבורדינג.\n" +
+              "זה יעזור לי להבין מי אתה כמתאמן ולדייק בשבילך כל המלצה.\n\n" +
+              "יאללה, בוא נתחיל 🚴‍♂️",
+            "onboarding"
+          );
 
-  // בועה 2 – לינק סטרבה (אוטומטי)
-  addMessage(
-    "bot",
-    "כדי להתחיל, יש לחבר את חשבון הסטרבה שלך:\n" + authHref,
-    "onboarding"
-  );
+          addMessage(
+            "bot",
+            "כדי להתחיל, יש לחבר את חשבון הסטרבה שלך:\n" + authHref,
+            "onboarding"
+          );
 
-  // בועה 3 – טיפ אפור קטן
-  addSystemNote(
-    'טיפ: אפשר גם לכתוב "כן" כדי לפתוח את מסך ההתחברות לסטרבה מהצ\'אט.'
-  );
+          addSystemNote(
+            'טיפ: אפשר גם לכתוב "כן" כדי לפתוח את מסך ההתחברות לסטרבה מהצ\'אט.'
+          );
 
-  return;
-}
+          return;
+        }
 
-
-        // 3. יש סטרבה – נותנים לשרת להחליט:
-        //    אם האונבורדינג באמצע → ממשיכים מאותו שלב
-        //    אם האונבורדינג הסתיים (stage="done") → מחזיר את תפריט השאלות
+        // 3. יש סטרבה – השרת מחליט (אונבורדינג באמצע / סיום)
         try {
           const data = await callChatAPI("היי");
           handleChatReply(data);
@@ -813,7 +748,6 @@ if (!hasStrava) {
           );
         }
       })();
-
     </script>
   </body>
 </html>
