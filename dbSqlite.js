@@ -110,6 +110,16 @@ async function init() {
     );
   `);
 
+    // goals – מטרה מרכזית לכל משתמש
+  await run(`
+    CREATE TABLE IF NOT EXISTS goals (
+      user_id    TEXT PRIMARY KEY,
+      goal_text  TEXT,
+      updated_at INTEGER
+    );
+  `);
+
+
   // הרחבות בטיחות (ל־DB ישן יותר)
   try {
     await run(`ALTER TABLE training_params ADD COLUMN ftp20 INTEGER;`);
@@ -288,6 +298,31 @@ export async function createDbImpl() {
       `SELECT user_id FROM onboarding_states WHERE user_id = ?`,
       [userId]
     );
+
+      // ===== GOALS =====
+
+  async function updateGoal(userId, goalText) {
+    await ensureUser(userId);
+    const now = Math.floor(Date.now() / 1000);
+
+    await run(
+      `INSERT INTO goals (user_id, goal_text, updated_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET
+         goal_text  = excluded.goal_text,
+         updated_at = excluded.updated_at`,
+      [userId, goalText, now]
+    );
+  }
+
+  async function getGoal(userId) {
+    const row = await get(
+      `SELECT goal_text FROM goals WHERE user_id = ?`,
+      [userId]
+    );
+    return row ? row.goal_text : null;
+  }
+
 
     if (!existing) {
       await run(
@@ -1572,26 +1607,37 @@ export async function createDbImpl() {
     return await getWorkoutAnalysisCore(userId, { isoDate });
   }
 
-  return {
+    return {
     ensureUser,
+
+    // אונבורדינג
     getOnboardingState,
     saveOnboardingState,
+
+    // goals
+    getGoal,
+    updateGoal,
+
+    // פרמטרי אימון
     getTrainingParams,
     saveTrainingParams,
     getMetricsWindowDays,
     setMetricsWindowDays,
+
+    // סטרבה
     getStravaTokens,
     saveStravaTokens,
     clearStravaData,
     ingestAndComputeFromStrava,
 
-    // NEW: משמש את ה-onboardingEngine לצורך טעינת הנתונים
+    // snapshots
     getStravaSnapshot,
-    // נשאיר גם את זה לשימוש ישיר אם צריך
     getStravaOnboardingSnapshot,
 
+    // פרופיל ואימונים
     saveAthleteProfile,
     getLastWorkoutAnalysis,
     getWorkoutAnalysisByDate,
   };
 }
+
