@@ -59,22 +59,7 @@ export class OnboardingEngine {
       return await this._stageTrainingTime(userId, text, state);
     }
 
-    if (state.stage === "goal_collect") {
-      return await this._stageGoalCollect(userId, text, state);
-    }
-
-    if (state.stage === "goal_ftp_target") {
-  return await this._stageGoalFtpTarget(userId, text, state);
-}
-
-if (state.stage === "goal_ftp_timeframe") {
-  return await this._stageGoalFtpTimeframe(userId, text, state);
-}
-
-if (state.stage === "goal_ftp_result") {
-  return await this._stageGoalFtpResult(userId, text, state);
-}
-
+    
 if (state.stage === "goal_weight_target") {
   return await this._stageGoalWeightTarget(userId, text, state);
 }
@@ -83,6 +68,9 @@ if (state.stage === "goal_weight_timeline") {
   return await this._stageGoalWeightTimeline(userId, text, state);
 }
 
+if (state.stage === "goal_collect") {
+      return await this._stageGoalCollect(userId, text, state);
+    }
 
     // לא אמור להגיע לכאן, אבל אם כן – הודעת fallback
     return {
@@ -120,46 +108,6 @@ if (state.stage === "goal_weight_timeline") {
     // 3) אין state בכלל
     return null;
   }
-
-async _extractWeightGoal(text, currentWeightKg) {
-  // 1) fallback דטרמיניסטי מהיר (תמיד עובד)
-  const fallback = this._extractWeightGoalFallback(text);
-  if (fallback.targetKg != null || fallback.timeframeWeeks != null) return fallback;
-
-  // 2) LLM extractor – רק אם הוזרק מבחוץ (לא שובר כלום אם לא קיים)
-  if (typeof this._llmExtractWeightGoal === "function") {
-    try {
-      const llm = await this._llmExtractWeightGoal(text, currentWeightKg);
-      if (llm && (llm.targetKg != null || llm.timeframeWeeks != null)) return llm;
-    } catch (e) {
-      console.error("LLM weight goal extract failed:", e);
-    }
-  }
-
-  return { targetKg: null, timeframeWeeks: null };
-}
-
-_extractWeightGoalFallback(text) {
-  const t = (text || "").trim();
-
-  // יעד: מספר 30–200
-  let targetKg = null;
-  const mKg = t.match(/(\d{2,3}(?:[.,]\d)?)/);
-  if (mKg) {
-    const v = parseFloat(mKg[1].replace(",", "."));
-    if (!Number.isNaN(v) && v >= 30 && v <= 200) targetKg = Math.round(v * 10) / 10;
-  }
-
-  // זמן: "8 שבועות" / "3 חודשים"
-  let timeframeWeeks = null;
-  const mWeeks = t.match(/(\d{1,3})\s*(שבועות|שבוע)/);
-  const mMonths = t.match(/(\d{1,2})\s*(חודשים|חודש)/);
-  if (mWeeks) timeframeWeeks = parseInt(mWeeks[1], 10);
-  else if (mMonths) timeframeWeeks = parseInt(mMonths[1], 10) * 4;
-
-  return { targetKg, timeframeWeeks };
-}
-
 
   async _saveState(userId, state) {
     this._memStates.set(userId, state);
@@ -532,11 +480,8 @@ _extractWeightGoalFallback(text) {
 
       if (t === "אישור" && weightFromStrava != null) {
         state.data.personal.weight = weightFromStrava;
-    state.data.personal.weightKg = weightFromStrava;
-
-        state.data.personal.height = h;
-    state.data.personal.heightCm = h;
-
+        state.data.personal.weightKg = weightFromStrava;
+        state.data.personalStep = "height";
         await this._saveState(userId, state);
 
         return {
@@ -560,6 +505,7 @@ _extractWeightGoalFallback(text) {
       }
 
       state.data.personal.weight = Math.round(parsed * 10) / 10;
+      state.data.personal.weightKg = state.data.personal.weight;
       state.data.personalStep = "height";
       await this._saveState(userId, state);
 
@@ -1078,6 +1024,53 @@ _extractWeightGoalFallback(text) {
     const db = await this._getDb();
     await db.updateGoal(userId, goalText);
 
+// ===== WEIGHT GOAL MVP (only) =====
+// מפעילים שאלות המשך רק אם המשתמש כתב מטרה שקשורה למשקל
+const isWeightGoal =
+  /משקל|ירידה|להרזות|דיאטה/i.test(goalText);
+
+if (isWeightGoal) {
+  state.data.goal = state.data.goal || {};
+  state.data.goal.type = "weight";
+  state.data.goal.rawText = goalText;
+
+  const currentWeightKg =
+    (state.data.personal &&
+      (state.data.personal.weightKg || state.data.personal.weight)) ||
+    null;
+
+  const extracted = await this._extractWeightGoal(goalText, currentWeightKg);
+
+  if (extracted && extracted.targetKg != null) {
+    state.data.goal.targetKg = extracted.targetKg;
+  }
+  if (extracted && extracted.timeframeWeeks != null) {
+    state.data.goal.timeframeWeeks = extracted.timeframeWeeks;
+  }
+
+  if (state.data.goal.targetKg == null) {
+    state.stage = "goal_weight_target";
+    await this._saveState(userId, state);
+    return {
+      reply: "סגור. לאיזה משקל יעד היית רוצה להגיע? (בק״ג, למשל 68)",
+      onboarding: true,
+    };
+  }
+
+  if (state.data.goal.timeframeWeeks == null) {
+    state.stage = "goal_weight_timeline";
+    await this._saveState(userId, state);
+    return {
+      reply:
+        `מעולה. יעד: ${state.data.goal.targetKg} ק״ג.\n` +
+        "תוך כמה זמן היית רוצה להגיע לזה? (למשל: 8 שבועות / 3 חודשים)",
+      onboarding: true,
+    };
+  }
+  // אם יש גם יעד וגם זמן — ממשיכים לסיכום פרופיל כמו היום
+}
+
+
     const ts = state.data.trainingSummary;
     const volume = state.data.volume;
     const ftpModels = state.data.ftpModels || {};
@@ -1158,49 +1151,6 @@ _extractWeightGoalFallback(text) {
   `;
   await this.db.run(sql, [userId, goalText]);
 }
-
-// --- Weight goal MVP (only) ---
-state.data.goal = state.data.goal || { type: "weight" };
-state.data.goal.type = "weight";
-state.data.goal.rawText = goalText;
-
-// ניסיון חילוץ מהודעת המשתמש עצמה (LLM אם מחובר / fallback אם לא)
-const currentWeightKg =
-  (state.data.personal && (state.data.personal.weightKg || state.data.personal.weight)) || null;
-
-const extracted = await this._extractWeightGoal(goalText, currentWeightKg);
-
-// אם כבר יש יעד+זמן בהודעה – אפשר לקפוץ ישר לשלב הזמן או אפילו לסיכום
-if (extracted && extracted.targetKg != null) {
-  state.data.goal.targetKg = extracted.targetKg;
-}
-if (extracted && extracted.timeframeWeeks != null) {
-  state.data.goal.timeframeWeeks = extracted.timeframeWeeks;
-}
-
-// אם אין יעד -> שואלים יעד
-if (state.data.goal.targetKg == null) {
-  state.stage = "goal_weight_target";
-  await this._saveState(userId, state);
-  return {
-    reply: "סגור. לאיזה משקל יעד היית רוצה להגיע? (בק״ג, למשל 68)",
-    onboarding: true,
-  };
-}
-
-// יש יעד, אין זמן -> שואלים זמן
-if (state.data.goal.timeframeWeeks == null) {
-  state.stage = "goal_weight_timeline";
-  await this._saveState(userId, state);
-  return {
-    reply:
-      `מעולה. יעד: ${state.data.goal.targetKg} ק״ג.\n` +
-      "תוך כמה זמן היית רוצה להגיע לזה? (למשל: 8 שבועות / 3 חודשים)",
-    onboarding: true,
-  };
-}
-
-// יש הכל -> ממשיכים לסיום הקיים (נופל להמשך הפונקציה)
 
 
   // helper פנימי ל-DB
