@@ -97,16 +97,17 @@ app.post("/api/loew/strava-snapshot", async (req, res) => {
 });
 
 // ===== MAIN CHAT API =====
+// ===== MAIN CHAT API =====
 app.post("/api/loew/chat", async (req, res) => {
   try {
     const userId = getUserIdFromBody(req);
-    const message =
+    const messageRaw =
       (req.body && typeof req.body.message === "string"
         ? req.body.message
         : ""
       ).trim();
 
-    if (!message) {
+    if (!messageRaw) {
       return res.json({
         ok: true,
         reply:
@@ -117,129 +118,277 @@ app.post("/api/loew/chat", async (req, res) => {
 
     await dbImpl.ensureUser(userId);
 
-    // זיהוי בקשה לניתוח האימון האחרון
-    const lower = message.toLowerCase();
-    const isHebrewLastWorkout =
-      lower.includes("אימון אחרון") &&
-      (lower.includes("נתח") || lower.includes("ניתוח"));
-    const isEnglishLastWorkout =
-      lower.includes("last workout") &&
-      (lower.includes("analyze") || lower.includes("analysis"));
+    // בודק סטטוס אונבורדינג
+    const onboardingState = await dbImpl.getOnboardingState(userId);
+    const stage = onboardingState && onboardingState.stage;
+    const isOnboardingDone = stage === "done";
 
-    if (isHebrewLastWorkout || isEnglishLastWorkout) {
+    // אם האונבורדינג עוד לא הושלם – מעביר למנוע האונבורדינג כרגיל
+    if (!isOnboardingDone) {
+      const result = await onboarding.handleMessage(userId, messageRaw);
+
+      return res.json({
+        ok: true,
+        reply: result.reply,
+        onboarding: !!result.onboarding,
+        followups: result.followups || undefined,
+      });
+    }
+
+    // === אחרי אונבורדינג – "מצב מאמן חופשי" ===
+    const normalized = messageRaw
+      .trim()
+      .toLowerCase()
+      .replace(/[.!?…]/g, "");
+
+    // 1) עדכן מסטרבה
+    if (
+      normalized === "עדכן מסטרבה" ||
+      normalized === "עדכן לי מסטרבה" ||
+      normalized === "תעדכן מסטרבה"
+    ) {
       try {
-        const analysis = await dbImpl.getLastWorkoutAnalysis(userId);
-        if (!analysis || !analysis.summary) {
-          return res.json({
-            ok: true,
-            reply:
-              "לא מצאתי אימון אחרון מסטרבה עבור המשתמש הזה.\n" +
-              "תוודא שחיברת את סטרבה ויש לפחות אימון אחד עם נתוני וואטים.",
-            onboarding: false,
-          });
-        }
-
-        const summary = analysis.summary;
-        const dateStr = summary.startDateIso
-          ? summary.startDateIso.slice(0, 10)
-          : "תאריך לא ידוע";
-
-        const lines = [];
-
-        // כותרת
-        lines.push(`ניתוח האימון האחרון שלך (${dateStr}):`);
-        lines.push("");
-
-        // נתוני בסיס
-        if (summary.durationMin != null) {
-          lines.push(`⏱ משך: ${Math.round(summary.durationMin)} דק׳`);
-        }
-        if (summary.distanceKm != null) {
-          lines.push(`📍 מרחק: ${summary.distanceKm.toFixed(1)} ק״מ`);
-        }
-        if (summary.elevationGainM != null && summary.elevationGainM > 0) {
-          lines.push(`🏔 טיפוס מצטבר: ${summary.elevationGainM} מ׳`);
-        }
-
-        lines.push("");
-
-        // הספק ודופק
-        if (summary.avgPower != null) {
-          if (summary.ftpUsed) {
-            const rel = ((summary.avgPower / summary.ftpUsed) * 100).toFixed(1);
-            lines.push(
-              `⚡ וואטים ממוצעים: ${Math.round(
-                summary.avgPower
-              )}W (~${rel}% מה-FTP שלך)`
-            );
-          } else {
-            lines.push(
-              `⚡ וואטים ממוצעים: ${Math.round(summary.avgPower)}W`
-            );
-          }
-        }
-
-        if (summary.avgHr != null) {
-          lines.push(`❤️ דופק ממוצע: ${Math.round(summary.avgHr)} bpm`);
-        }
-
-        lines.push("");
-
-        // Decoupling (HR drift)
-        const dec =
-          summary.segments && summary.segments.decouplingPct != null
-            ? summary.segments.decouplingPct
-            : null;
-
-        if (dec != null && Number.isFinite(dec)) {
-          const decFixed = dec.toFixed(1);
-          lines.push(`📉 Decoupling: ${decFixed}%`);
-          lines.push(
-            "= שינוי ביחס בין דופק לוואטים לאורך האימון (ככל שהמספר גבוה יותר – יש יותר שחיקה/עייפות)."
-          );
-
-          if (Math.abs(dec) < 5) {
-            lines.push(
-              "ה-Decoupling נמוך – הגוף שמר על יציבות יפה לאורך האימון."
-            );
-          } else if (Math.abs(dec) < 10) {
-            lines.push(
-              "ה-Decoupling בינוני – יש סימנים לעייפות, אבל עדיין בטווח הגיוני."
-            );
-          } else {
-            lines.push(
-              "ה-Decoupling גבוה – סימן לעומס מצטבר או לכך שהגוף הגיע עייף לאימון."
-            );
-          }
-        }
-
-        const replyText = lines.join("\n");
+        await dbImpl.ingestAndComputeFromStrava(userId);
 
         return res.json({
           ok: true,
-          reply: replyText,
+          reply:
+            "עדכנתי עבורך נתונים מסטרבה וסיכמתי מחדש FTP, דופק ונפח אימונים.",
           onboarding: false,
         });
       } catch (err) {
-        console.error("chat last-workout analysis error:", err);
+        console.error("[CHAT] strava sync from chat failed:", err);
         return res.json({
           ok: false,
-          error: "chat_last_workout_failed",
+          error: "strava_sync_failed",
         });
       }
     }
 
-    // ברירת מחדל – מעבירים ל-onboarding / צ'אט הרגיל
-  // ברירת מחדל – מעבירים ל-onboarding / צ'אט הרגיל
-const result = await onboarding.handleMessage(userId, message);
+    // 2) "הפרופיל שלי"
+    if (
+      normalized === "הפרופיל שלי" ||
+      normalized === "תראה לי את הפרופיל שלי"
+    ) {
+      const snapshot = await dbImpl.getStravaSnapshot(userId);
+      if (!snapshot) {
+        return res.json({
+          ok: true,
+          reply:
+            "לא מצאתי עדיין נתונים מסטרבה או מהאונבורדינג. נסה קודם להתחבר לסטרבה או לסיים אונבורדינג.",
+          onboarding: false,
+        });
+      }
 
-return res.json({
-  ok: true,
-  reply: result.reply,
-  onboarding: !!result.onboarding,
-  followups: result.followups || [],   // 👈 זה השורה החדשה
-});
+      const { trainingSummary, volume, ftpModels, hr, metricsWindowDays } =
+        snapshot;
 
+      const lines = [];
+
+      lines.push("הנה סיכום הפרופיל שלך לפי הנתונים האחרונים:");
+      lines.push("");
+
+      if (trainingSummary) {
+        const hoursTotal = trainingSummary.totalMovingTimeSec
+          ? (trainingSummary.totalMovingTimeSec / 3600).toFixed(1)
+          : null;
+
+        lines.push("📊 נפח רכיבה:");
+        if (trainingSummary.rides_count != null) {
+          lines.push(`• מספר רכיבות: ${trainingSummary.rides_count}`);
+        }
+        if (hoursTotal != null) {
+          lines.push(`• זמן רכיבה כולל: ${hoursTotal} שעות`);
+        }
+        if (trainingSummary.totalDistanceKm != null) {
+          lines.push(
+            `• מרחק כולל: ${trainingSummary.totalDistanceKm.toFixed(1)} ק\"מ`
+          );
+        }
+        if (trainingSummary.totalElevationGainM != null) {
+          lines.push(
+            `• טיפוס מצטבר: ${trainingSummary.totalElevationGainM.toLocaleString(
+              "he-IL"
+            )} מ'`
+          );
+        }
+        lines.push("");
+      }
+
+      if (volume) {
+        lines.push("⏱ ממוצע שבועי (בערך):");
+        if (volume.weeklyHoursAvg != null) {
+          lines.push(
+            `• שעות רכיבה לשבוע: ${volume.weeklyHoursAvg.toFixed(1)} שעות`
+          );
+        }
+        if (volume.weeklyRidesAvg != null) {
+          lines.push(
+            `• רכיבות לשבוע: ${volume.weeklyRidesAvg.toFixed(1)} רכיבות`
+          );
+        }
+        lines.push("");
+      }
+
+      if (ftpModels && (ftpModels.ftp20 || ftpModels.ftpRecommended)) {
+        lines.push("🚴‍♂️ FTP:");
+        if (ftpModels.ftpRecommended) {
+          lines.push(
+            `• FTP מומלץ: ${ftpModels.ftpRecommended.value}W (${ftpModels.ftpRecommended.label})`
+          );
+        }
+        if (ftpModels.ftp20) {
+          lines.push(
+            `• FTP 20min: ${ftpModels.ftp20.value}W (${ftpModels.ftp20.label})`
+          );
+        }
+        lines.push("");
+      }
+
+      if (hr) {
+        lines.push("❤️ דופק:");
+        if (hr.hrMax != null) {
+          lines.push(`• דופק מקסימלי: ${hr.hrMax} bpm`);
+        }
+        if (hr.hrThreshold != null) {
+          lines.push(`• דופק סף: ${hr.hrThreshold} bpm`);
+        }
+        lines.push("");
+      }
+
+      if (metricsWindowDays) {
+        lines.push(
+          `כל הנתונים מחושבים לפי כ-${metricsWindowDays} הימים האחרונים.`
+        );
+      }
+
+      return res.json({
+        ok: true,
+        reply: lines.join("\n"),
+        onboarding: false,
+      });
+    }
+
+    // 3) עדכון משקל – "המשקל שלי עכשיו 72"
+    if (/המשקל שלי עכשיו/i.test(messageRaw)) {
+      const match = messageRaw.match(/(\d+(\.\d+)?)/);
+      if (!match) {
+        return res.json({
+          ok: true,
+          reply:
+            'כדי לעדכן משקל, תכתוב למשל: "המשקל שלי עכשיו 72" (בק\"ג).',
+          onboarding: false,
+        });
+      }
+
+      const weight = Number(match[1]);
+      if (!Number.isFinite(weight) || weight <= 0) {
+        return res.json({
+          ok: true,
+          reply: "המספר שקיבלתי לא נראה כמו משקל תקין. נסה שוב.",
+          onboarding: false,
+        });
+      }
+
+      await dbImpl.saveAthleteProfile(userId, weight);
+
+      return res.json({
+        ok: true,
+        reply: `עדכנתי משקל נוכחי: ${weight} ק\"ג.`,
+        onboarding: false,
+      });
+    }
+
+    // 4) עדכון FTP – למשל "FTP 250"
+    if (/ftp/i.test(messageRaw)) {
+      const match = messageRaw.match(/(\d{2,4})/);
+      if (!match) {
+        return res.json({
+          ok: true,
+          reply:
+            'כדי לעדכן FTP, תכתוב למשל: "FTP 250" (בוואט).',
+          onboarding: false,
+        });
+      }
+
+      const ftp = Number(match[1]);
+      const existing = (await dbImpl.getTrainingParams(userId)) || {};
+      const newParams = {
+        ...existing,
+        ftp,
+        ftpRecommended: existing.ftpRecommended || ftp,
+      };
+
+      await dbImpl.saveTrainingParams(userId, newParams);
+
+      return res.json({
+        ok: true,
+        reply: `עדכנתי FTP ל-${ftp}W.`,
+        onboarding: false,
+      });
+    }
+
+    // 5) דופק מקסימלי – "דופק מקסימלי 178"
+    if (/דופק מקסימלי/i.test(messageRaw)) {
+      const match = messageRaw.match(/(\d{2,3})/);
+      if (!match) {
+        return res.json({
+          ok: true,
+          reply:
+            'כדי לעדכן דופק מקסימלי, תכתוב למשל: "דופק מקסימלי 178".',
+          onboarding: false,
+        });
+      }
+
+      const hrMax = Number(match[1]);
+      const existing = (await dbImpl.getTrainingParams(userId)) || {};
+      const newParams = {
+        ...existing,
+        hrMax,
+      };
+      await dbImpl.saveTrainingParams(userId, newParams);
+
+      return res.json({
+        ok: true,
+        reply: `עדכנתי דופק מקסימלי ל-${hrMax} bpm.`,
+        onboarding: false,
+      });
+    }
+
+    // 6) דופק סף – "דופק סף 160"
+    if (/דופק סף/i.test(messageRaw)) {
+      const match = messageRaw.match(/(\d{2,3})/);
+      if (!match) {
+        return res.json({
+          ok: true,
+          reply:
+            'כדי לעדכן דופק סף, תכתוב למשל: "דופק סף 160".',
+          onboarding: false,
+        });
+      }
+
+      const hrThreshold = Number(match[1]);
+      const existing = (await dbImpl.getTrainingParams(userId)) || {};
+      const newParams = {
+        ...existing,
+        hrThreshold,
+      };
+      await dbImpl.saveTrainingParams(userId, newParams);
+
+      return res.json({
+        ok: true,
+        reply: `עדכנתי דופק סף ל-${hrThreshold} bpm.`,
+        onboarding: false,
+      });
+    }
+
+    // ברירת מחדל אחרי אונבורדינג
+    return res.json({
+      ok: true,
+      reply:
+        'סיימת אונבורדינג ✅\nכרגע אני יודע לענות לפקודות כמו:\n• "עדכן מסטרבה"\n• "הפרופיל שלי"\n• "המשקל שלי עכשיו 72"\n• "FTP 250"\n• "דופק מקסימלי 178"\n• "דופק סף 160"\nאו:\n• "נתח את האימון האחרון שלי"\n• "נתח לי אימון מתאריך 2025-01-15".',
+      onboarding: false,
+    });
   } catch (err) {
     console.error("/api/loew/chat error:", err);
     return res.json({
@@ -248,6 +397,7 @@ return res.json({
     });
   }
 });
+
 
 
 app.post("/api/loew/strava-sync", async (req, res) => {
