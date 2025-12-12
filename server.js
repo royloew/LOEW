@@ -408,7 +408,7 @@ app.post("/api/loew/strava-sync", async (req, res) => {
       return res.status(400).json({ error: "userId is required" });
     }
 
-    const db = await dbPromise;
+    const db = await dbImpl;
 
     console.log("[STRAVA] Manual sync requested for", userId);
 
