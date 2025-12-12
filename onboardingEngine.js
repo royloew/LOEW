@@ -337,3 +337,6 @@ export default class OnboardingEngine {
     return { targetKg, timeframeWeeks };
   }
 }
+
+// Support both named and default imports
+export default OnboardingEngine;
