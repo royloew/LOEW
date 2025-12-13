@@ -505,13 +505,18 @@ export async function createDbImpl() {
     await run(`DELETE FROM strava_streams WHERE user_id = ?`, [userId]);
     await run(`DELETE FROM power_curves WHERE user_id = ?`, [userId]);
     await run(`DELETE FROM strava_athlete WHERE user_id = ?`, [userId]);
+    // Optional but recommended if table exists:
+    try { await run(`DELETE FROM strava_ingest_log WHERE user_id = ?`, [userId]); } catch (e) {}
+  }
+
+  // --- ingest log helpers ---
 
   async function getLastIngestAt(userId) {
     const row = await get(
       `SELECT last_ingest_at FROM strava_ingest_log WHERE user_id = ?`,
       [userId]
     );
-    return row && row.last_ingest_at ? Number(row.last_ingest_at) : null;
+    return row && row.last_ingest_at != null ? Number(row.last_ingest_at) : null;
   }
 
   async function setLastIngestAtNow(userId) {
@@ -533,9 +538,7 @@ export async function createDbImpl() {
        WHERE user_id = ?`,
       [userId]
     );
-    return row && row.max_start_date ? Number(row.max_start_date) : null;
-  }
-
+    return row && row.max_start_date != null ? Number(row.max_start_date) : null;
   }
 
   // ===== SUMMARY & VOLUME =====
