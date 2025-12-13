@@ -1100,14 +1100,24 @@ if (state.stage === "goal_collect") {
   async _stageGoalWeightTimeline(userId, text, state) {
     const t = (text || "").trim();
 
+    // ננסה לחלץ שבועות/חודשים (פונקציה קיימת), ואם המשתמש כתב רק מספר – נניח שזה שבועות.
     const extracted = await this._extractWeightGoal(t, null);
-    const weeks = extracted && extracted.timeframeWeeks != null ? extracted.timeframeWeeks : null;
+    let weeks =
+      extracted && extracted.timeframeWeeks != null ? extracted.timeframeWeeks : null;
+
+    if (weeks == null) {
+      const numOnly = t.match(/\d{1,3}/);
+      if (numOnly) {
+        const n = parseInt(numOnly[0], 10);
+        if (!Number.isNaN(n) && n >= 1 && n <= 260) weeks = n;
+      }
+    }
 
     if (weeks == null || weeks < 1 || weeks > 260) {
       return {
         reply:
           "לא הצלחתי להבין את הזמן.\n" +
-          'תכתוב למשל: 8 שבועות / 12 שבועות / 3 חודשים.',
+          "תכתוב למשל: 8 שבועות / 12 שבועות / 3 חודשים (או רק מספר כמו 8).",
         onboarding: true,
       };
     }
@@ -1220,8 +1230,12 @@ if (state.stage === "goal_collect") {
     let timeframeWeeks = null;
     const mWeeks = t.match(/(\d{1,3})\s*(שבועות|שבוע)/);
     const mMonths = t.match(/(\d{1,2})\s*(חודשים|חודש)/);
+    const mWeeksEn = t.match(/(\d{1,3})\s*(weeks|week|wks|wk|w)\b/i);
+    const mMonthsEn = t.match(/(\d{1,2})\s*(months|month|mos|mo|m)\b/i);
     if (mWeeks) timeframeWeeks = parseInt(mWeeks[1], 10);
     else if (mMonths) timeframeWeeks = parseInt(mMonths[1], 10) * 4;
+    else if (mWeeksEn) timeframeWeeks = parseInt(mWeeksEn[1], 10);
+    else if (mMonthsEn) timeframeWeeks = parseInt(mMonthsEn[1], 10) * 4;
 
     return { targetKg, timeframeWeeks };
   }
