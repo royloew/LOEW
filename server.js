@@ -446,7 +446,7 @@ app.post("/api/loew/strava-sync", async (req, res) => {
 
 // ===== WORKOUT ANALYSIS APIS =====
 
-app\.post\("/api/loew/last-workout-analysis", async \(req, res\) => \{
+app.post\("/api/loew/last-workout-analysis", async \(req, res\) => \{
   try \{
     const userId = getUserIdFromBody\(req\);
     await ensureFreshStrava(dbImpl, userId);
@@ -615,7 +615,7 @@ app\.post\("/api/loew/last-workout-analysis", async \(req, res\) => \{
 
 
 
-app\.post\("/api/loew/workout-analysis-by-date", async \(req, res\) => \{
+app.post\("/api/loew/workout-analysis-by-date", async \(req, res\) => \{
   try \{
     const userId = getUserIdFromBody\(req\);
     await ensureFreshStrava(dbImpl, userId);
