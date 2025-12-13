@@ -55,23 +55,6 @@ const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 const dbImpl = await createDbImpl();
 const onboarding = new OnboardingEngine(dbImpl);
 
-
-// ===== Strava freshness helper =====
-async function ensureFreshStrava(db, userId, { maxAgeSec = 900 } = {}) {
-  try {
-    const last = await db.getLastIngestAt?.(userId);
-    const now = Math.floor(Date.now() / 1000);
-
-    if (!last || now - last > maxAgeSec) {
-      console.log("[STRAVA] Auto refresh before analysis for", userId, "lastIngestAt=", last);
-      await db.ingestAndComputeFromStrava(userId);
-    }
-  } catch (e) {
-    console.warn("[STRAVA] ensureFreshStrava failed (continuing):", e);
-  }
-}
-
-
 // ===== STATIC FRONTEND (index.html) =====
 
 // מגיש את כל הקבצים מתוך public (index.html, style.css וכו')
@@ -160,8 +143,9 @@ app.post("/api/loew/chat", async (req, res) => {
 
     // 1) עדכן מסטרבה
     if (
-      normalized.includes("עדכן") &&
-      normalized.includes("סטרבה")
+      normalized === "עדכן מסטרבה" ||
+      normalized === "עדכן לי מסטרבה" ||
+      normalized === "תעדכן מסטרבה"
     ) {
       try {
         await dbImpl.ingestAndComputeFromStrava(userId);
@@ -424,7 +408,7 @@ app.post("/api/loew/strava-sync", async (req, res) => {
       return res.status(400).json({ error: "userId is required" });
     }
 
-    const db = await dbImpl;
+    const db = await dbPromise;
 
     console.log("[STRAVA] Manual sync requested for", userId);
 
@@ -446,10 +430,9 @@ app.post("/api/loew/strava-sync", async (req, res) => {
 
 // ===== WORKOUT ANALYSIS APIS =====
 
-app.post\("/api/loew/last-workout-analysis", async \(req, res\) => \{
-  try \{
-    const userId = getUserIdFromBody\(req\);
-    await ensureFreshStrava(dbImpl, userId);
+app.post("/api/loew/last-workout-analysis", async (req, res) => {
+  try {
+    const userId = getUserIdFromBody(req);
 
     const analysis = await dbImpl.getLastWorkoutAnalysis(userId);
     if (!analysis) {
@@ -615,10 +598,9 @@ app.post\("/api/loew/last-workout-analysis", async \(req, res\) => \{
 
 
 
-app.post\("/api/loew/workout-analysis-by-date", async \(req, res\) => \{
-  try \{
-    const userId = getUserIdFromBody\(req\);
-    await ensureFreshStrava(dbImpl, userId);
+app.post("/api/loew/workout-analysis-by-date", async (req, res) => {
+  try {
+    const userId = getUserIdFromBody(req);
     const isoDate =
       (req.body && typeof req.body.date === "string"
         ? req.body.date.trim()
