@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <title>LOEW – המאמן האישי שלך</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+        background: #050816;
+        color: #f7f7ff;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+      }
+
+      .app {
+        width: 100%;
+        max-width: 800px;
+        height: 90vh;
+        max-height: 700px;
+        background: radial-gradient(circle at top left, #1f2937, #020617);
+        border-radius: 24px;
+        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.65);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        border: 1px solid rgba(148, 163, 184, 0.25);
+      }
+
+      .header {
+        padding: 16px 20px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.3);
+        background: linear-gradient(to left, #020617, #0b1120);
+      }
+
+      .avatar {
+        width: 40px;
+        height: 40px;
+        border-radius: 999px;
+        background: radial-gradient(circle at 30% 20%, #22c55e, #22d3ee);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 800;
+        color: #020617;
+        box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.9);
+      }
+
+      .header-text {
+        flex: 1;
+      }
+
+      .header-title {
+        font-size: 16px;
+        font-weight: 600;
+      }
+
+      .header-subtitle {
+        font-size: 12px;
+        color: #cbd5f5;
+      }
+
+      .badge {
+        font-size: 11px;
+        padding: 4px 10px;
+        border-radius: 999px;
+        border: 1px solid rgba(56, 189, 248, 0.6);
+        color: #e0f2fe;
+        background: rgba(15, 23, 42, 0.85);
+        white-space: nowrap;
+      }
+
+      .messages {
+        flex: 1;
+        padding: 16px 20px;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        scroll-behavior: smooth;
+      }
+
+      .bubble-row {
+        display: flex;
+        margin-bottom: 4px;
+      }
+
+      /* ב-RTL: המשתמש מימין, הבוט משמאל */
+      .bubble-row.me {
+        justify-content: flex-end;
+      }
+
+      .bubble-row.bot {
+        justify-content: flex-start;
+      }
+
+      .bubble {
+        max-width: 80%;
+        border-radius: 18px;
+        padding: 10px 12px;
+        font-size: 14px;
+        line-height: 1.4;
+        word-wrap: break-word;
+        white-space: pre-wrap;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .bubble.me {
+        background: linear-gradient(to left, #0f172a, #1e293b);
+        border: 1px solid rgba(148, 163, 184, 0.6);
+        border-bottom-left-radius: 4px;
+      }
+
+      .bubble.bot {
+        background: linear-gradient(to left, #22c55e, #22d3ee);
+        color: #020617;
+        border-bottom-right-radius: 4px;
+      }
+
+      .bubble a {
+        color: inherit;
+        text-decoration: underline;
+      }
+
+      .bubble-label {
+        font-size: 11px;
+        font-weight: 600;
+        opacity: 0.9;
+      }
+
+      .bubble-label.onboarding {
+        opacity: 1;
+      }
+
+      .bubble-label.chat {
+        opacity: 0.75;
+      }
+
+      .bubble-text {
+        font-size: 14px;
+        line-height: 1.4;
+      }
+
+      .system-note {
+        font-size: 11px;
+        color: #9ca3af;
+        margin: 4px 4px 12px;
+        text-align: center;
+      }
+
+      .footer {
+        padding: 10px 14px 14px;
+        border-top: 1px solid rgba(148, 163, 184, 0.3);
+        background: linear-gradient(to left, #020617, #020617);
+      }
+
+      .input-row {
+        display: flex;
+        gap: 8px;
+      }
+
+      .input-row input {
+        flex: 1;
+        border-radius: 999px;
+        border: 1px solid rgba(148, 163, 184, 0.6);
+        background: rgba(15, 23, 42, 0.9);
+        color: #e5e7eb;
+        padding: 10px 14px;
+        font-size: 14px;
+        outline: none;
+      }
+
+      .input-row input::placeholder {
+        color: #6b7280;
+      }
+
+      .input-row button {
+        border-radius: 999px;
+        border: none;
+        padding: 0 16px;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        background: linear-gradient(to left, #22c55e, #22d3ee);
+        color: #020617;
+        box-shadow: 0 8px 25px rgba(34, 197, 94, 0.4);
+      }
+
+      .input-row button:disabled {
+        opacity: 0.5;
+        cursor: default;
+        box-shadow: none;
+      }
+
+      .helper {
+        margin-top: 6px;
+        font-size: 11px;
+        color: #9ca3af;
+      }
+
+      .helper strong {
+        color: #e5e7eb;
+      }
+
+      @media (max-width: 640px) {
+        .app {
+          height: 100vh;
+          max-height: none;
+          border-radius: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <div class="header">
+        <div class="avatar">L</div>
+        <div class="header-text">
+          <div class="header-title">LOEW – המאמן האישי שלך</div>
+          <div class="header-subtitle">
+            צ'אט אימונים חכם שמכיר אותך ואת הנתונים מסטרבה
+          </div>
+        </div>
+        <div class="badge">Beta • Personal Coach</div>
+      </div>
+
+      <div id="messages" class="messages"></div>
+
+      <div class="footer">
+        <div class="input-row">
+          <input
+            id="input"
+            type="text"
+            placeholder='שאל את LOEW מה האימון הבא שלך, איך היה האימון האחרון, או כל דבר על האימונים שלך…'
+          />
+          <button id="sendBtn">שלח</button>
+        </div>
+        <div class="helper">
+          שימוש: אפשר להעביר userId ב-URL
+          <strong>?userId=yoram</strong> – אחרת ישמר <strong>userId=roy</strong>
+          כברירת מחדל.
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // ===== USER ID, STRAVA STATUS & DOM =====
+      function getUserId() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const fromUrl = urlParams.get("userId");
+        if (fromUrl) return fromUrl;
+        return "roy";
+      }
+
+      function getStravaStatus() {
+        const urlParams = new URLSearchParams(window.location.search);
+        return urlParams.get("strava") || null; // למשל: "connected"
+      }
+
+      const USER_ID = getUserId();
+      const STRAVA_STATUS = getStravaStatus();
+
+      // דומיין לסטרבה – תמיד הדומיין שבו נטען העמוד (הדומיין החדש אם יש)
+      const STRAVA_DOMAIN =
+        window.location.origin || "https://loew.onrender.com";
+
+      const messagesEl = document.getElementById("messages");
+      const inputEl = document.getElementById("input");
+      const sendBtn = document.getElementById("sendBtn");
+
+      let hasStrava = false;
+
+      function scrollToBottom() {
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      }
+
+      function renderTextWithLinks(text) {
+        const urlRegex = /(https?:\/\/[^\s]+)/g;
+
+        return text.replace(urlRegex, (url) => {
+          // לינק חיבור סטרבה – מחליפים לדומיין החדש + CAPTION
+          if (url.includes("/auth/strava?userId=")) {
+            try {
+              const u = new URL(url);
+              const uid = u.searchParams.get("userId") || USER_ID;
+              const authHref =
+                STRAVA_DOMAIN +
+                "/auth/strava?userId=" +
+                encodeURIComponent(uid);
+              return `<a href="${authHref}" target="_blank" rel="noopener noreferrer">חבר אותי לסטרבה</a>`;
+            } catch (e) {
+              const authHref =
+                STRAVA_DOMAIN +
+                "/auth/strava?userId=" +
+                encodeURIComponent(USER_ID);
+              return `<a href="${authHref}" target="_blank" rel="noopener noreferrer">חבר אותי לסטרבה</a>`;
+            }
+          }
+
+          // שאר ה-URLs מוצגים כרגיל
+          return `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`;
+        });
+      }
+
+      /**
+       * mode:
+       *  - "onboarding" → LOEW מצב אונבורדינג
+       *  - "chat"       → צ'אט רגיל
+       */
+      function addMessage(who, text, mode = "chat") {
+        const row = document.createElement("div");
+        row.className = "bubble-row " + (who === "me" ? "me" : "bot");
+
+        const bubble = document.createElement("div");
+        bubble.className = "bubble " + (who === "me" ? "me" : "bot");
+
+        if (who === "bot") {
+          const label = document.createElement("div");
+          label.className =
+            "bubble-label " + (mode === "onboarding" ? "onboarding" : "chat");
+          if (mode === "onboarding") {
+            label.textContent = "LOEW · אונבורדינג";
+          } else {
+            label.textContent = "LOEW · צ'אט";
+          }
+          bubble.appendChild(label);
+        }
+
+        const textDiv = document.createElement("div");
+        textDiv.className = "bubble-text";
+        textDiv.innerHTML = renderTextWithLinks(text);
+        bubble.appendChild(textDiv);
+
+        row.appendChild(bubble);
+        messagesEl.appendChild(row);
+        scrollToBottom();
+      }
+
+      function addSystemNote(text) {
+        const div = document.createElement("div");
+        div.className = "system-note";
+        div.textContent = text;
+        messagesEl.appendChild(div);
+        scrollToBottom();
+      }
+
+      // ===== STRAVA SNAPSHOT =====
+
+      async function fetchSnapshotOnce() {
+        try {
+          const res = await fetch("/api/loew/strava-snapshot", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ userId: USER_ID }),
+          });
+          const data = await res.json();
+
+          if (data.ok && data.snapshot) {
+            const snap = data.snapshot;
+            if (typeof snap.hasStrava === "boolean") {
+              hasStrava = snap.hasStrava;
+            } else {
+              // אם חזר snapshot – נניח שיש סטרבה
+              hasStrava = true;
+            }
+            return snap;
+          } else {
+            hasStrava = false;
+            return null;
+          }
+        } catch (err) {
+          console.warn("snapshot init error", err);
+          hasStrava = false;
+          return null;
+        }
+      }
+
+      async function fetchSnapshot() {
+        try {
+          const res = await fetch("/api/loew/strava-snapshot", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ userId: USER_ID }),
+          });
+          const data = await res.json();
+
+          if (data.ok && data.snapshot) {
+            const snap = data.snapshot;
+            if (typeof snap.hasStrava === "boolean") {
+              hasStrava = snap.hasStrava;
+            } else {
+              hasStrava = true;
+            }
+            return snap;
+          }
+        } catch (err) {
+          console.warn("snapshot error", err);
+        }
+        return null;
+      }
+
+      // ===== CHAT API =====
+
+      async function callChatAPI(text) {
+        const res = await fetch("/api/loew/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: USER_ID,
+            message: text,
+          }),
+        });
+        return res.json();
+      }
+
+    function handleChatReply(data) {
+        if (!data.ok && data.error) {
+          addMessage("bot", "שגיאה מהשרת: " + data.error, "chat");
+          return;
+        }
+
+        const mode = data.onboarding ? "onboarding" : "chat";
+
+        if (data.reply) {
+          addMessage("bot", data.reply, mode);
+        } else {
+          addMessage("bot", "לא קיבלתי תשובה מ-LOEW.", mode);
+        }
+
+        // בועות המשך (followups) במידה והשרת מחזיר הודעות נוספות
+        if (Array.isArray(data.followups)) {
+          data.followups.forEach((txt) => {
+            if (txt && typeof txt === "string" && txt.trim()) {
+              addMessage("bot", txt, mode);
+            }
+          });
+        }
+      }
+
+
+      // ===== STRAVA SYNC (פקודת "עדכן מסטרבה") =====
+
+      function isStravaSyncRequest(txt) {
+        return /סנכרון מסטרבה|עדכון מסטרבה|עדכן.*סטרבה|תעדכן.*סטרבה/.test(
+          txt
+        );
+      }
+
+      async function callStravaSync() {
+        addMessage("bot", "מייבא נתונים מסטרבה...", "chat");
+
+        try {
+          const res = await fetch("/api/loew/strava-sync", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ userId: USER_ID }),
+          });
+
+          const data = await res.json();
+
+          if (!res.ok || !data.ok) {
+            throw new Error(data.error || "Strava sync failed");
+          }
+
+          const snapshot = data.snapshot || {};
+          const ts = snapshot.trainingSummary;
+          const volume = snapshot.volume;
+          const ftpModels = snapshot.ftpModels || {};
+          const hr = snapshot.hr || {};
+          const windowDays = snapshot.metricsWindowDays || 60;
+
+          let text = "סיימתי לעדכן את הנתונים מסטרבה.\n";
+
+          if (ts && ts.rides_count) {
+            const hours = (ts.totalMovingTimeSec / 3600).toFixed(1);
+            const km = ts.totalDistanceKm.toFixed(1);
+            const elev = Math.round(ts.totalElevationGainM || 0);
+            text += `ב-${windowDays} הימים האחרונים יש לך ${ts.rides_count} רכיבות, `;
+            text += `${hours} שעות ו-${km} ק״מ עם ${elev} מטר טיפוס.\n`;
+          }
+
+          if (volume && volume.weeksCount) {
+            text += `בממוצע שבועי: ${volume.weeklyHoursAvg.toFixed(
+              1
+            )} שעות ו-${volume.weeklyRidesAvg.toFixed(
+              1
+            )} רכיבות לשבוע.\n`;
+          }
+
+          if (ftpModels.ftpRecommended) {
+            text += `FTP מומלץ כרגע: ${ftpModels.ftpRecommended.value}W (Recommended FTP).\n`;
+          }
+
+          if (
+            ftpModels.ftp20 ||
+            ftpModels.ftpFrom3min ||
+            ftpModels.ftpFromCP
+          ) {
+            text += "מודלים נוספים:\n";
+            if (ftpModels.ftp20) {
+              text += `• FTP 20min (95%): ${ftpModels.ftp20.value}W\n`;
+            }
+            if (ftpModels.ftpFrom3min) {
+              text += `• FTP from 3min model: ${ftpModels.ftpFrom3min.value}W\n`;
+            }
+            if (ftpModels.ftpFromCP) {
+              text += `• Critical Power model: ${ftpModels.ftpFromCP.value}W\n`;
+            }
+          }
+
+          if (hr.hrMax || hr.hrThreshold) {
+            text += "דופק:\n";
+            if (hr.hrMax) {
+              text += `• דופק מקסימלי משוער: ${hr.hrMax} bpm\n`;
+            }
+            if (hr.hrThreshold) {
+              text += `• דופק סף משוער: ${hr.hrThreshold} bpm\n`;
+            }
+          }
+
+          addMessage("bot", text.trim(), "chat");
+        } catch (err) {
+          console.error(err);
+          addMessage(
+            "bot",
+            "הייתה בעיה בעדכון מסטרבה. נסה שוב מאוחר יותר.",
+            "chat"
+          );
+        }
+      }
+
+      function isLastWorkoutRequest(txt) {
+        const t = txt.trim();
+        return (
+          t === "נתח את האימון האחרון שלי" ||
+          t === "נתח לי את האימון האחרון" ||
+          t === "האימון האחרון שלי"
+        );
+      }
+
+      function isWorkoutByDateRequest(txt) {
+        return /נתח לי אימון מתאריך/i.test(txt);
+      }
+
+      async function callLastWorkoutAnalysis() {
+        addMessage("bot", "בודק את האימון האחרון שלך…", "chat");
+
+        const res = await fetch("/api/loew/last-workout-analysis", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: USER_ID }),
+        });
+
+        const data = await res.json();
+
+        if (!data.ok) {
+          addMessage(
+            "bot",
+            "הייתה בעיה בניתוח האימון האחרון: " + (data.error || ""),
+            "chat"
+          );
+          return;
+        }
+
+        addMessage("bot", data.message || "לא קיבלתי סיכום אימון.", "chat");
+      }
+
+      async function callWorkoutAnalysisByDate(text) {
+        const match = text.match(/\d{4}-\d{2}-\d{2}/);
+        if (!match) {
+          addMessage(
+            "bot",
+            'כדי לנתח אימון לפי תאריך, תכתוב למשל: "נתח לי אימון מתאריך 2025-01-15".',
+            "chat"
+          );
+          return;
+        }
+
+        const isoDate = match[0];
+
+        addMessage("bot", `בודק את האימון מתאריך ${isoDate}…`, "chat");
+
+        const res = await fetch("/api/loew/workout-analysis-by-date", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: USER_ID, date: isoDate }),
+        });
+
+        const data = await res.json();
+
+        if (!data.ok) {
+          addMessage(
+            "bot",
+            "הייתה בעיה בניתוח האימון: " + (data.error || ""),
+            "chat"
+          );
+          return;
+        }
+
+        addMessage("bot", data.message || "לא קיבלתי סיכום אימון.", "chat");
+      }
+
+      // ===== SEND MESSAGE =====
+
+      async function sendMessage() {
+        const text = inputEl.value.trim();
+        if (!text) return;
+
+        addMessage("me", text, "chat");
+        inputEl.value = "";
+        inputEl.focus();
+        sendBtn.disabled = true;
+
+        const normalized = text
+          .trim()
+          .toLowerCase()
+          .replace(/[.!?…]/g, "");
+
+        if (
+          !hasStrava &&
+          (normalized === "כן" || normalized === "yes" || normalized === "y")
+        ) {
+          const authHref =
+            STRAVA_DOMAIN +
+            "/auth/strava?userId=" +
+            encodeURIComponent(USER_ID);
+          window.location.href = authHref;
+          setTimeout(() => {
+            sendBtn.disabled = false;
+          }, 1500);
+          return;
+        }
+
+        try {
+          if (isStravaSyncRequest(text)) {
+            await callStravaSync();
+            return;
+          }
+
+          if (isLastWorkoutRequest(text)) {
+            await callLastWorkoutAnalysis();
+            return;
+          }
+
+          if (isWorkoutByDateRequest(text)) {
+            await callWorkoutAnalysisByDate(text);
+            return;
+          }
+
+          const data = await callChatAPI(text);
+          handleChatReply(data);
+        } catch (err) {
+          console.error(err);
+          addMessage(
+            "bot",
+            "שגיאה בתקשורת עם השרת: " + (err.message || ""),
+            "chat"
+          );
+        } finally {
+          sendBtn.disabled = false;
+        }
+      }
+
+      sendBtn.addEventListener("click", sendMessage);
+      inputEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          sendMessage();
+        }
+      });
+
+      // ===== INIT =====
+      (async function init() {
+        const snapshot = await fetchSnapshotOnce();
+
+        // 1. חזרנו מ-Strava עם ?strava=connected
+        if (STRAVA_STATUS === "connected") {
+          addMessage(
+            "bot",
+            "החיבור לסטרבה הצליח ✅\nאני מייבא את הנתונים שלך… זה לוקח בדרך כלל פחות מדקה.",
+            "onboarding"
+          );
+
+          try {
+            const data = await callChatAPI("היי");
+            handleChatReply(data);
+          } catch (err) {
+            console.error("auto onboarding after Strava error:", err);
+            addMessage(
+              "bot",
+              "משהו השתבש אחרי חיבור לסטרבה. נסה לכתוב לי הודעה בצ'אט כדי להמשיך.",
+              "chat"
+            );
+          }
+
+          return;
+        }
+
+        // 2. אין סטרבה – משתמש חדש
+        if (!hasStrava) {
+          const authRel = "/auth/strava?userId=" + encodeURIComponent(USER_ID);
+          const authHref = STRAVA_DOMAIN + authRel;
+
+          addMessage(
+            "bot",
+            "היי " +
+              USER_ID +
+              ", אני LOEW — המאמן האישי שלך.\n" +
+              "אני עובד בשיטות אימון מתקדמות, מבוססות מדע ונתונים, כמו אלו שנמצאות בשימוש אצל מאמני הצמרת העולמית.\n\n" +
+              "לפני שנתחיל לבנות עבורך תוכנית אימונים מותאמת אישית ולנתח את הביצועים שלך לעומק — נעבור תהליך קצר של אונבורדינג.\n" +
+              "זה יעזור לי להבין מי אתה כמתאמן ולדייק בשבילך כל המלצה.\n\n" +
+              "יאללה, בוא נתחיל 🚴‍♂️",
+            "onboarding"
+          );
+
+          addMessage(
+            "bot",
+            "כדי להתחיל, יש לחבר את חשבון הסטרבה שלך:\n" + authHref,
+            "onboarding"
+          );
+
+          addSystemNote(
+            'טיפ: אפשר גם לכתוב "כן" כדי לפתוח את מסך ההתחברות לסטרבה מהצ\'אט.'
+          );
+
+          return;
+        }
+
+        // 3. יש סטרבה – השרת מחליט (אונבורדינג באמצע / סיום)
+        try {
+          const data = await callChatAPI("היי");
+          handleChatReply(data);
+        } catch (err) {
+          console.error("init chat error:", err);
+          addMessage(
+            "bot",
+            "היי " + USER_ID + " 👋\nבמה אני יכול לעזור לך היום?",
+            "chat"
+          );
+        }
+      })();
+    </script>
+  </body>
+</html>
