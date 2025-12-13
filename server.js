@@ -141,12 +141,9 @@ app.post("/api/loew/chat", async (req, res) => {
       .toLowerCase()
       .replace(/[.!?…]/g, "");
 
-    // 1) עדכן מסטרבה
-    if (
-      normalized === "עדכן מסטרבה" ||
-      normalized === "עדכן לי מסטרבה" ||
-      normalized === "תעדכן מסטרבה"
-    ) {
+    // 1) עדכן מסטרבה (כולל וריאציות/שגיאות הקלדה)
+    const isStravaSync = /סנכרון מסטרבה|עדכון מסטרבה|דכן.*סטרבה|עדכן.*סטרבה|תעדכן.*סטרבה/.test(normalized);
+    if (isStravaSync) {
       try {
         await dbImpl.ingestAndComputeFromStrava(userId);
 
@@ -165,7 +162,33 @@ app.post("/api/loew/chat", async (req, res) => {
       }
     }
 
-    // 2) "הפרופיל שלי"
+        // 1b) חישוב FTP מחדש (למשל אחרי אימונים חדשים)
+    if (/חשב.*ftp|רענן.*ftp|עדכן.*ftp|חישוב.*ftp/.test(normalized)) {
+      try {
+        await dbImpl.ingestAndComputeFromStrava(userId, { lookbackDays: 180 });
+
+        const snap = await dbImpl.getStravaSnapshot(userId);
+        const ftpModels = (snap && snap.ftpModels) || {};
+        const rec = ftpModels.ftpRecommended && ftpModels.ftpRecommended.value;
+
+        return res.json({
+          ok: true,
+          reply:
+            rec != null
+              ? `חישבתי מחדש את ה-FTP על בסיס הנתונים העדכניים מסטרבה.\nFTP מומלץ כרגע: ${rec}W.`
+              : "חישבתי מחדש את המודלים, אבל עדיין אין מספיק נתוני וואטים בסטרבה כדי להמליץ על FTP.",
+          onboarding: false,
+        });
+      } catch (err) {
+        console.error("ftp recompute failed:", err);
+        return res.status(500).json({
+          ok: false,
+          error: "ftp_recompute_failed",
+        });
+      }
+    }
+
+// 2) "הפרופיל שלי"
     if (
       normalized === "הפרופיל שלי" ||
       normalized === "תראה לי את הפרופיל שלי"
@@ -434,6 +457,15 @@ app.post("/api/loew/last-workout-analysis", async (req, res) => {
   try {
     const userId = getUserIdFromBody(req);
 
+    // ניסיון לרענן מסטרבה לפני ניתוח (כדי לא ליפול על DB ישן)
+    // מביא כמה ימים אחורה בלבד + מושך Streams רק לאימונים שאין להם Streams ב-DB.
+    try {
+      await dbImpl.ingestAndComputeFromStrava(userId, { lookbackDays: 7 });
+    } catch (e) {
+      // לא מפילים את הבקשה אם רענון נכשל – ננסה לנתח מה שיש ב-DB
+      console.error('[STRAVA] pre-analysis refresh failed', e);
+    }
+
     const analysis = await dbImpl.getLastWorkoutAnalysis(userId);
     if (!analysis) {
       return res.json({
@@ -612,6 +644,17 @@ app.post("/api/loew/workout-analysis-by-date", async (req, res) => {
         error: "missing_date",
         message: 'צריך לשלוח שדה "date" בפורמט YYYY-MM-DD בגוף הבקשה.',
       });
+    }
+
+    // אם אין אימון בתאריך – ייתכן שה-DB לא עודכן. נרענן מסטרבה טווח שמכסה את התאריך וננסה שוב פעם אחת.
+    const targetDate = new Date(isoDate + 'T00:00:00Z');
+    const now = new Date();
+    const diffDays = Math.max(0, Math.ceil((now - targetDate) / (24 * 3600 * 1000)));
+    const lookbackDays = Math.min(365, Math.max(14, diffDays + 3));
+    try {
+      await dbImpl.ingestAndComputeFromStrava(userId, { lookbackDays });
+    } catch (e) {
+      console.error('[STRAVA] pre-date-analysis refresh failed', e);
     }
 
     const analysis = await dbImpl.getWorkoutAnalysisByDate(userId, isoDate);

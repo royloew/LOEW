@@ -698,6 +698,46 @@ export async function createDbImpl() {
   }
 
   // ===== STRAVA helpers (fetch + streams + power curves + FTP + HR) =====
+  async function refreshStravaAccessToken(userId, tokens) {
+    const refreshToken = tokens && tokens.refreshToken;
+    if (!refreshToken) {
+      throw new Error("missing_refresh_token");
+    }
+
+    const clientId = process.env.STRAVA_CLIENT_ID;
+    const clientSecret = process.env.STRAVA_CLIENT_SECRET;
+    if (!clientId || !clientSecret) {
+      throw new Error("missing_strava_client_env");
+    }
+
+    const res = await fetch("https://www.strava.com/oauth/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({
+        client_id: clientId,
+        client_secret: clientSecret,
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+      }),
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      console.error("[STRAVA] refresh token failed", res.status, text);
+      throw new Error(`Strava refresh failed ${res.status}`);
+    }
+
+    const json = await res.json();
+
+    const newTokens = {
+      accessToken: json.access_token,
+      refreshToken: json.refresh_token || refreshToken,
+      expiresAt: json.expires_at || 0,
+    };
+
+    await saveStravaTokens(userId, newTokens);
+    return newTokens;
+  }
 
   async function fetchStravaJson(url, accessToken, label) {
     const res = await fetch(url, {
@@ -717,10 +757,49 @@ export async function createDbImpl() {
         res.status,
         text
       );
-      throw new Error(
-        `Strava API error ${res.status} for ${label || url}`
-      );
+      const err = new Error(`Strava API error ${res.status} for ${label || url}`);
+      err.status = res.status;
+      err.body = text;
+      throw err;
     }
+
+    return await res.json();
+  }
+
+  async function fetchStravaJsonWithRefresh(userId, tokens, url, label) {
+    let t = tokens;
+    let accessToken = t && t.accessToken;
+
+    // proactive refresh (60s safety)
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (t && t.expiresAt && nowSec >= Number(t.expiresAt) - 60) {
+      try {
+        t = await refreshStravaAccessToken(userId, t);
+        accessToken = t.accessToken;
+      } catch (e) {
+        console.error("[STRAVA] proactive refresh failed", e);
+      }
+    }
+
+    try {
+      return await fetchStravaJson(url, accessToken, label);
+    } catch (e) {
+      // reactive refresh on 401
+      if (e && e.status === 401) {
+        const t2 = await refreshStravaAccessToken(userId, t);
+        return await fetchStravaJson(url, t2.accessToken, label);
+      }
+      throw e;
+    }
+  }
+
+  async function hasStreamsForActivity(userId, activityId) {
+    const row = await get(
+      `SELECT 1 FROM strava_streams WHERE user_id = ? AND activity_id = ? LIMIT 1`,
+      [userId, activityId]
+    );
+    return !!row;
+  }
 
     return await res.json();
   }
@@ -1066,7 +1145,7 @@ export async function createDbImpl() {
 
   // ===== STRAVA ingest (full) =====
 
-  async function pullAndStoreStravaData(userId, tokens) {
+  async function pullAndStoreStravaData(userId, tokens, opts = {}) {
     const accessToken = tokens && tokens.accessToken;
     if (!accessToken) {
       console.log("[STRAVA] No accessToken for user", userId);
@@ -1075,9 +1154,10 @@ export async function createDbImpl() {
 
     // 1) Athlete profile
     try {
-      const athlete = await fetchStravaJson(
+      const athlete = await fetchStravaJsonWithRefresh(
+        userId,
+        tokens,
         "https://www.strava.com/api/v3/athlete",
-        accessToken,
         "athlete"
       );
       if (athlete && typeof athlete.weight === "number") {
@@ -1097,9 +1177,11 @@ export async function createDbImpl() {
     const perPage = 100;
     const maxPages = 3;
     const nowSec = Math.floor(Date.now() / 1000);
-    const sinceSec = nowSec - 180 * 24 * 3600; // חצי שנה אחורה לאינג'סט
+        const lookbackDays = Number(opts.lookbackDays || 180) || 180;
+    const sinceSec = nowSec - lookbackDays * 24 * 3600;
 
     const activityIdsForPower = [];
+    const fetchStreams = opts.fetchStreams !== false;
 
     for (let page = 1; page <= maxPages; page++) {
       let activities;
@@ -1135,33 +1217,58 @@ export async function createDbImpl() {
           continue;
         }
 
-        const hasPower =
-          a.device_watts ||
-          (typeof a.average_watts === "number" && a.average_watts > 0);
+        con  async function ingestAndComputeFromStrava(userId, opts = {}) {
+    const mode = (opts && opts.mode) || "full";
+    console.log("[STRAVA] ingestAndComputeFromStrava", mode, "for", userId);
 
-        const avgPower =
-          typeof a.average_watts === "number" ? a.average_watts : null;
-        const maxPower =
-          typeof a.max_watts === "number" ? a.max_watts : null;
-        const avgHr =
-          typeof a.average_heartrate === "number"
-            ? a.average_heartrate
-            : null;
-        const maxHr =
-          typeof a.max_heartrate === "number" ? a.max_heartrate : null;
+    try {
+      const tokens = await getStravaTokens(userId);
+      if (!tokens || !tokens.accessToken) {
+        console.log(
+          "[STRAVA] No tokens for user during ingest, falling back to DB-only metrics for",
+          userId
+        );
+      } else {
+        // lookbackDays: אם מבקשים "רענון" נקודתי — אפשר להביא רק כמה ימים אחורה
+        const lookbackDays = opts.lookbackDays != null ? opts.lookbackDays : undefined;
+        const fetchStreams = opts.fetchStreams != null ? opts.fetchStreams : undefined;
 
-        await run(
-          `
-          INSERT INTO strava_activities (
-            id, user_id, start_date,
-            moving_time, elapsed_time,
-            distance, total_elevation_gain,
-            avg_power, max_power,
-            avg_hr, max_hr,
-            has_power, type
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(id) DO UPDATE SET
+        await pullAndStoreStravaData(userId, tokens, {
+          lookbackDays,
+          fetchStreams,
+        });
+      }
+    } catch (err) {
+      console.error("[STRAVA] ingestAndComputeFromStrava raw ingest failed:", err);
+    }
+
+    const { trainingSummary, volume } =
+      await computeVolumeAndSummaryFromDb(userId);
+
+    // אם ביקשו "activities_only" נרצה להחזיר לפחות סיכום נפח, בלי לחשב מודלים כבדים (FTP/HR)
+    if (mode === "activities_only") {
+      const params = await getTrainingParams(userId);
+      const metricsWindowDays = (params && (params.metricsWindowDays || params.metrics_window_days)) || 60;
+      return {
+        trainingSummary,
+        volume,
+        ftpModels: {},
+        hr: { hrMax: null, hrThreshold: null },
+        metricsWindowDays,
+      };
+    }
+
+    const { ftpModels, hr, metricsWindowDays } =
+      await computeFtpAndHrModelsFromDb(userId);
+
+    return {
+      trainingSummary,
+      volume,
+      ftpModels,
+      hr,
+      metricsWindowDays,
+    };
+  }NFLICT(id) DO UPDATE SET
             user_id = excluded.user_id,
             start_date = excluded.start_date,
             moving_time = excluded.moving_time,
@@ -1192,8 +1299,9 @@ export async function createDbImpl() {
           ]
         );
 
-        if (hasPower) {
-          activityIdsForPower.push(a.id);
+        if (fetchStreams && hasPower) {
+          const already = await hasStreamsForActivity(userId, a.id);
+          if (!already) activityIdsForPower.push(a.id);
         }
       }
     }
