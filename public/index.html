@@ -539,16 +539,29 @@
       }
 
       function isLastWorkoutRequest(txt) {
-        const t = txt.trim();
-        return (
+        const t = (txt || "")
+          .trim()
+          .toLowerCase()
+          .replace(/[.!?…״"']/g, "");
+
+        // תמיכה בכמה ניסוחים נפוצים
+        if (
           t === "נתח את האימון האחרון שלי" ||
           t === "נתח לי את האימון האחרון" ||
+          t === "נתח לי אימון אחרון" ||
+          t === "נתח אימון אחרון" ||
           t === "האימון האחרון שלי"
-        );
+        ) {
+          return true;
+        }
+
+        // fallback גמיש
+        return /נתח.*אימון.*אחרון/.test(t);
       }
 
       function isWorkoutByDateRequest(txt) {
-        return /נתח לי אימון מתאריך/i.test(txt);
+        const t = (txt || "").trim();
+        return /נתח( לי)? אימון מתאריך/i.test(t) || /אימון מתאריך/i.test(t);
       }
 
       async function callLastWorkoutAnalysis() {
