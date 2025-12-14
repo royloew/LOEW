@@ -14,9 +14,11 @@ export class OnboardingEngine {
     let state = await this._loadState(userId);
 
     // אם כבר סיימנו אונבורדינג – לא חוזרים פנימה לתהליך
-    // אבל כן מאפשרים פקודות קצרות (פרופיל, עדכונים, וכו׳)
     if (state && state.stage === "done") {
-      return await this._handlePostOnboarding(userId, text);
+      return {
+        reply: this._postOnboardingMenu(),
+        onboarding: false,
+      };
     }
 
     // אין state שמור – בוטסטרפ מסטרבה
@@ -119,214 +121,7 @@ if (state.stage === "goal_weight_timeline") {
     return null;
   }
 
-
-
-  // ===== Post-onboarding commands (after onboarding completion) =====
-
-  _normalizeTextForCommands(text) {
-    return (text || "")
-      .trim()
-      .toLowerCase()
-      // מסיר סימני פיסוק נפוצים כדי שנזהה "פרופיל שלי!" וכו׳
-      .replace(/[.!?…״"']/g, "")
-      .replace(/\s+/g, " ");
-  }
-
-  async _handlePostOnboarding(userId, text) {
-    const t = this._normalizeTextForCommands(text);
-
-    // ריק -> תפריט
-    if (!t) {
-      return { reply: this._postOnboardingMenu(), onboarding: false };
-    }
-
-    // 1) Profile
-    if (t === "הפרופיל שלי" || t === "פרופיל שלי" || t === "פרופיל" || t === "הפרופיל") {
-      return await this._postOnboardingProfile(userId);
-    }
-
-    // 2) Weight update: "המשקל שלי עכשיו 72" / "משקל 72.5"
-    const weightMatch = t.match(/(?:המשקל שלי(?: עכשיו)?|משקל)\s*(?:הוא|=|:)?\s*(\d{2,3}(?:[\.,]\d{1,2})?)/);
-    if (weightMatch) {
-      const w = this._parseNumber(weightMatch[1]);
-      if (w == null || w < 30 || w > 200) {
-        return { reply: 'לא הצלחתי להבין את המשקל. תכתוב למשל: "המשקל שלי עכשיו 72.5".', onboarding: false };
-      }
-
-      try {
-        if (this.db && typeof this.db.saveTrainingParams === "function") {
-          const existing = (this.db.getTrainingParams ? (await this.db.getTrainingParams(userId)) : null) || {};
-          // שומרים בשני שמות כדי להיות עמידים מול מיגרציות שונות
-          await this.db.saveTrainingParams(userId, { ...existing, weightKg: w, weight: w });
-        } else if (this.db && typeof this.db.updateUserProfile === "function") {
-          await this.db.updateUserProfile(userId, { weightKg: w });
-        } else if (this.db && typeof this.db.saveUserProfile === "function") {
-          await this.db.saveUserProfile(userId, { weightKg: w });
-        } else {
-          return { reply: "קיבלתי את המשקל, אבל אין לי גישה לשמור אותו (DB לא מחובר).", onboarding: false };
-        }
-      } catch (e) {
-        console.error("PostOnboarding weight save error:", e);
-        return { reply: "קיבלתי את המשקל, אבל הייתה בעיה לשמור אותו בשרת.", onboarding: false };
-      }
-
-      return { reply: `עדכנתי משקל ל-${this._formatNumber(w, 1)} ק״ג.`, onboarding: false };
-    }
-
-    // 3) FTP update: "FTP 250"
-    const ftpMatch = t.match(/\bftp\b\s*(\d{2,3})/i);
-    if (ftpMatch) {
-      const ftp = parseInt(ftpMatch[1], 10);
-      if (Number.isNaN(ftp) || ftp < 80 || ftp > 500) {
-        return { reply: 'תכתוב FTP כמספר בוואטים, למשל: "FTP 250".', onboarding: false };
-      }
-      try {
-        if (this.db && typeof this.db.saveTrainingParams === "function") {
-          const existing = (this.db.getTrainingParams ? (await this.db.getTrainingParams(userId)) : null) || {};
-          await this.db.saveTrainingParams(userId, { ...existing, ftp });
-        }
-      } catch (e) {
-        console.error("PostOnboarding ftp save error:", e);
-        return { reply: "הייתה בעיה לשמור את ה-FTP.", onboarding: false };
-      }
-      return { reply: `עדכנתי FTP ל-${ftp}W.`, onboarding: false };
-    }
-
-    // 4) HR updates
-    const hrMaxMatch = t.match(/דופק\s*מקסימלי\s*(\d{2,3})/);
-    if (hrMaxMatch) {
-      const v = parseInt(hrMaxMatch[1], 10);
-      if (Number.isNaN(v) || v < 120 || v > 230) {
-        return { reply: 'תכתוב דופק מקסימלי כמספר, למשל: "דופק מקסימלי 178".', onboarding: false };
-      }
-      try {
-        if (this.db && typeof this.db.saveTrainingParams === "function") {
-          const existing = (this.db.getTrainingParams ? (await this.db.getTrainingParams(userId)) : null) || {};
-          await this.db.saveTrainingParams(userId, { ...existing, hrMax: v });
-        }
-      } catch (e) {
-        console.error("PostOnboarding hrMax save error:", e);
-        return { reply: "הייתה בעיה לשמור דופק מקסימלי.", onboarding: false };
-      }
-      return { reply: `עדכנתי דופק מקסימלי ל-${v} bpm.`, onboarding: false };
-    }
-
-    const hrThrMatch = t.match(/דופק\s*סף\s*(\d{2,3})/);
-    if (hrThrMatch) {
-      const v = parseInt(hrThrMatch[1], 10);
-      if (Number.isNaN(v) || v < 90 || v > 210) {
-        return { reply: 'תכתוב דופק סף כמספר, למשל: "דופק סף 160".', onboarding: false };
-      }
-      try {
-        if (this.db && typeof this.db.saveTrainingParams === "function") {
-          const existing = (this.db.getTrainingParams ? (await this.db.getTrainingParams(userId)) : null) || {};
-          await this.db.saveTrainingParams(userId, { ...existing, hrThreshold: v });
-        }
-      } catch (e) {
-        console.error("PostOnboarding hrThreshold save error:", e);
-        return { reply: "הייתה בעיה לשמור דופק סף.", onboarding: false };
-      }
-      return { reply: `עדכנתי דופק סף ל-${v} bpm.`, onboarding: false };
-    }
-
-    // לא זיהיתי – תפריט
-    return { reply: this._postOnboardingMenu(), onboarding: false };
-  }
-
-  async _postOnboardingProfile(userId) {
-    try {
-      const lines = [];
-
-      // 1) volume summary (אם יש snapshot)
-      if (this.db && typeof this.db.getStravaSnapshot === "function") {
-        const snap = await this.db.getStravaSnapshot(userId);
-        const ts = snap?.trainingSummary || null;
-        const vol = snap?.volume || null;
-
-        if (ts) {
-          lines.push("📊 נפח רכיבה:");
-          if (ts.rides_count != null) lines.push(`• מספר רכיבות: ${ts.rides_count}`);
-          if (ts.totalMovingTimeSec != null) lines.push(`• זמן רכיבה כולל: ${(ts.totalMovingTimeSec / 3600).toFixed(1)} שעות`);
-          if (ts.totalDistanceKm != null) lines.push(`• מרחק כולל: ${this._formatNumber(ts.totalDistanceKm, 1)} ק\"מ`);
-          if (ts.totalElevationGainM != null) lines.push(`• טיפוס מצטבר: ${this._formatNumber(ts.totalElevationGainM, 0)} מ'`);
-          lines.push("");
-        }
-
-        if (vol) {
-          lines.push("⏱ ממוצע שבועי (בערך):");
-          if (vol.weeklyHoursAvg != null) lines.push(`• שעות רכיבה לשבוע: ${this._formatNumber(vol.weeklyHoursAvg, 1)} שעות`);
-          if (vol.weeklyRidesAvg != null) lines.push(`• רכיבות לשבוע: ${this._formatNumber(vol.weeklyRidesAvg, 1)} רכיבות`);
-          lines.push("");
-        }
-      }
-
-      // 2) training params (FTP/HR/Weight)
-      if (this.db && typeof this.db.getTrainingParams === "function") {
-        const tp = (await this.db.getTrainingParams(userId)) || {};
-        if (tp.ftpRecommended != null || tp.ftp != null || tp.ftp20 != null || tp.ftp_from_3min != null || tp.ftp_from_cp != null) {
-          lines.push("🚴‍♂️ FTP:");
-          if (tp.ftp != null) lines.push(`• FTP נוכחי: ${tp.ftp}W`);
-          if (tp.ftpRecommended != null) lines.push(`• FTP מומלץ: ${tp.ftpRecommended}W`);
-          if (tp.ftp20 != null) lines.push(`• FTP 20min: ${tp.ftp20}W`);
-          if (tp.ftp_from_3min != null) lines.push(`• FTP מ-3 דקות: ${tp.ftp_from_3min}W`);
-          if (tp.ftp_from_cp != null) lines.push(`• FTP CP: ${tp.ftp_from_cp}W`);
-          lines.push("");
-        }
-
-        if (tp.hrMax != null || tp.hrThreshold != null) {
-          lines.push("❤️ דופק:");
-          if (tp.hrMax != null) lines.push(`• דופק מקסימלי: ${tp.hrMax} bpm`);
-          if (tp.hrThreshold != null) lines.push(`• דופק סף: ${tp.hrThreshold} bpm`);
-          lines.push("");
-        }
-
-        const w = tp.weightKg ?? tp.weight ?? null;
-        if (w != null) {
-          lines.push("⚖️ משקל:");
-          lines.push(`• משקל נוכחי: ${this._formatNumber(w, 1)} ק״ג`);
-          lines.push("");
-        }
-      }
-
-      if (!lines.length) {
-        return { reply: "אין לי עדיין מספיק נתונים בפרופיל. נסה 'עדכן מסטרבה'.", onboarding: false };
-      }
-
-      return {
-        reply: "הנה סיכום הפרופיל שלך לפי הנתונים האחרונים:\n\n" + lines.join("\n").trim(),
-        onboarding: false,
-      };
-    } catch (e) {
-      console.error("PostOnboarding profile error:", e);
-      return { reply: "הייתה בעיה בשליפת הפרופיל.", onboarding: false };
-    }
-  }
-
-  _parseNumber(s) {
-    if (s == null) return null;
-    const v = parseFloat(String(s).replace(",", "."));
-    if (!isFinite(v)) return null;
-    return v;
-  }
-
-  _postOnboardingMenu() {
-    return (
-      'סיימת אונבורדינג ✅\n' +
-      'כרגע אני יודע לענות לפקודות כמו:\n' +
-      '• "עדכן מסטרבה"\n' +
-      '• "הפרופיל שלי"\n' +
-      '• "המשקל שלי עכשיו 72"\n' +
-      '• "FTP 250"\n' +
-      '• "דופק מקסימלי 178"\n' +
-      '• "דופק סף 160"\n' +
-      'או:\n' +
-      '• "נתח את האימון האחרון שלי"\n' +
-      '• "נתח לי אימון מתאריך 2025-01-15".'
-    );
-  }
-
-
-  async _extractWeightGoal(text, currentWeightKg) {
+async _extractWeightGoal(text, currentWeightKg) {
   // 1) fallback דטרמיניסטי מהיר (תמיד עובד)
   const fallback = this._extractWeightGoalFallback(text);
   if (fallback.targetKg != null || fallback.timeframeWeeks != null) return fallback;
@@ -469,7 +264,16 @@ _extractWeightGoalFallback(text) {
     }
   }
 
-  // 🔹 תפריט ברירת מחדל אחרי אונבורדינג
+  
+  // helper פנימי ל-DB
+  async _getDb() {
+    if (!this.db) {
+      throw new Error("DB not configured in OnboardingEngine");
+    }
+    return this.db;
+  }
+
+// 🔹 תפריט ברירת מחדל אחרי אונבורדינג
   _postOnboardingMenu() {
     return (
       "במה אני יכול לעזור לך?\n" +
@@ -1377,14 +1181,17 @@ if (state.data.goal.timeframeWeeks == null) {
   };
 }
 
-// יש הכל -> ממשיכים לסיום הקיים (נופל להמשך הפונקציה)
+// יש הכל -> סיכום וסיום אונבורדינג
+state.stage = "done";
+await this._saveState(userId, state);
+
+return {
+  reply:
+    `קיבלתי. המטרה שלך: לרדת ל-${state.data.goal.targetKg} ק״ג ` +
+    `תוך ${state.data.goal.timeframeWeeks} שבועות.\n\nסיימנו אונבורדינג 🎉`,
+  onboarding: true,
+};
+}
 
 
-  // helper פנימי ל-DB
-  async _getDb() {
-    if (!this.db) {
-      throw new Error("DB not configured in OnboardingEngine");
-    }
-    return this.db;
-  }
 }
