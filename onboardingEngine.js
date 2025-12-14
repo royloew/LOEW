@@ -382,7 +382,11 @@ _extractWeightGoalFallback(text) {
     if (ftpMatch) {
       const ftp = parseInt(ftpMatch[1], 10);
       if (Number.isNaN(ftp) || ftp < 80 || ftp > 500) {
-        return { reply: "תכתוב FTP כמספר בוואטים, למשל: "FTP 250".", onboarding: false };
+        return {
+  reply: "תכתוב FTP כמספר בוואטים, למשל: \"FTP 250\".",
+  onboarding: false
+};
+
       }
       try {
         if (this.db && typeof this.db.saveTrainingParams === "function") {
