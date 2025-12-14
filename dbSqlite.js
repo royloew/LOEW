@@ -263,6 +263,28 @@ function filterOutliersRobust(values, { min = null, max = null } = {}) {
 export async function createDbImpl() {
   await init();
 
+  
+// בתוך createDbImpl, ליד שאר ה-helpers שאתה כבר מחזיר
+async function sqlGet(sql, params = []) {
+  return db.get(sql, params);
+}
+async function sqlAll(sql, params = []) {
+  return db.all(sql, params);
+}
+async function sqlRun(sql, params = []) {
+  return db.run(sql, params);
+}
+
+// ואז ב-return של dbImpl:
+return {
+  // ... existing methods (DON'T TOUCH)
+  sqlGet,
+  sqlAll,
+  sqlRun,
+};
+
+
+
   // ===== USERS =====
 
   async function ensureUser(userId) {
