@@ -405,7 +405,11 @@ _extractWeightGoalFallback(text) {
     if (hrMaxMatch) {
       const v = parseInt(hrMaxMatch[1], 10);
       if (Number.isNaN(v) || v < 120 || v > 230) {
-        return { reply: "תכתוב דופק מקסימלי כמספר, למשל: "דופק מקסימלי 178".", onboarding: false };
+        return {
+  reply: 'תכתוב דופק מקסימלי כמספר, למשל: "דופק מקסימלי 178".',
+  onboarding: false
+};
+
       }
       try {
         if (this.db && typeof this.db.saveTrainingParams === "function") {
