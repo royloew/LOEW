@@ -13,15 +13,12 @@ export class OnboardingEngine {
 
     let state = await this._loadState(userId);
 
-    // אם כבר סיימנו אונבורדינג – לא חוזרים פנימה לתהליך
+    // אם כבר סיימנו אונבורדינג – עוברים ל-Post-Onboarding parser
     if (state && state.stage === "done") {
-      return {
-        reply: this._postOnboardingMenu(),
-        onboarding: false,
-      };
+      return await this._handlePostOnboarding(userId, text, state);
     }
 
-    // אין state שמור – בוטסטרפ מסטרבה
+// אין state שמור – בוטסטרפ מסטרבה
     if (!state || !state.stage) {
       state = await this._bootstrapStateFromStrava(userId);
       await this._saveState(userId, state);
@@ -264,16 +261,7 @@ _extractWeightGoalFallback(text) {
     }
   }
 
-  
-  // helper פנימי ל-DB
-  async _getDb() {
-    if (!this.db) {
-      throw new Error("DB not configured in OnboardingEngine");
-    }
-    return this.db;
-  }
-
-// 🔹 תפריט ברירת מחדל אחרי אונבורדינג
+  // 🔹 תפריט ברירת מחדל אחרי אונבורדינג
   _postOnboardingMenu() {
     return (
       "במה אני יכול לעזור לך?\n" +
@@ -291,6 +279,125 @@ _extractWeightGoalFallback(text) {
       "• \"נתח לי אימון מתאריך yyyy-mm-dd\""
     );
   }
+
+// ---------------------------
+// Post-Onboarding (after stage === "done")
+// ---------------------------
+async _handlePostOnboarding(userId, text, state) {
+  const t = (text || "").trim();
+
+  // Empty / menu
+  if (!t) {
+    return { reply: this._postOnboardingMenu(), onboarding: false };
+  }
+
+  // Profile (supports: "פרופיל", "פרופיל שלי", "הפרופיל שלי", "תראה לי פרופיל")
+  const isProfile =
+    /(^|\s)(ה?פרופיל)(\s+שלי)?(\s|$)/.test(t) ||
+    /ת(ראה|ציג)(\s+לי)?\s+.*פרופיל/.test(t);
+  if (isProfile) {
+    return await this._handleProfile(userId);
+  }
+
+  // Weight update (supports: "המשקל שלי עכשיו 72.5", "משקל 72")
+  const weightUpdateMatch = t.match(/(?:המשקל\s+שלי|משקל)\s*(?:עכשיו|היום)?\s*(\d{1,3}(?:[\.,]\d{1,2})?)/);
+  if (weightUpdateMatch) {
+    return await this._handleWeightUpdate(userId, weightUpdateMatch[1]);
+  }
+
+  // Weight goal (supports: "לרדת ל 68 ב4 שבועות", "להוריד 3 קילו תוך 5 שבועות")
+  const looksLikeWeightGoal =
+    /(לרדת|להוריד|ירידה|להגיע\s+ל)/.test(t) &&
+    /\d/.test(t) &&
+    /(תוך|ב\s*\d+|שבוע|שבועות|חודש|חודשים|יום|ימים|עד\s*\d{4}-\d{2}-\d{2})/.test(t);
+
+  if (looksLikeWeightGoal) {
+    // Re-use existing goal flow
+    state.stage = "goal_collect";
+    await this._saveState(userId, state);
+    return await this._stageGoalCollect(userId, t, state);
+  }
+
+  // Fallback
+  return { reply: this._postOnboardingMenu(), onboarding: false };
+}
+
+async _handleProfile(userId) {
+  const db = await this._getDb();
+
+  let tp = null;
+  try {
+    tp = await db.getTrainingParams?.(userId);
+  } catch (e) {
+    // ignore
+  }
+
+  // Try to also read profile data if exists
+  let profile = null;
+  try {
+    profile = await db.getUserProfile?.(userId);
+  } catch (e) {
+    // ignore
+  }
+
+  const weight =
+    (tp && (tp.weightKg ?? tp.weight)) ??
+    (profile && (profile.weightKg ?? profile.weight)) ??
+    null;
+
+  const ftp = tp?.ftp ?? null;
+  const hrMax = tp?.hrMax ?? tp?.hr_max ?? null;
+  const hrThr = tp?.hrThreshold ?? tp?.hr_threshold ?? null;
+
+  const lines = [];
+  lines.push("🧾 **הפרופיל שלי**");
+  if (weight != null) lines.push(`⚖️ משקל: ${Number(weight).toFixed(1).replace(/\.0$/, "")} ק״ג`);
+  if (ftp != null) lines.push(`⚡ FTP: ${ftp}W`);
+  if (hrMax != null) lines.push(`❤️ דופק מקסימלי: ${hrMax}`);
+  if (hrThr != null) lines.push(`🫀 דופק סף: ${hrThr}`);
+  if (lines.length === 1) {
+    lines.push("אין לי עדיין נתונים שמורים בפרופיל. נסה: "עדכן מסטרבה" או עדכן ידנית (למשל: "המשקל שלי עכשיו 72").");
+  }
+
+  return { reply: lines.join("\n"), onboarding: false };
+}
+
+async _handleWeightUpdate(userId, weightStr) {
+  const db = await this._getDb();
+  const w = Number(String(weightStr).replace(",", "."));
+  if (!Number.isFinite(w) || w < 30 || w > 250) {
+    return {
+      reply: 'לא הצלחתי להבין את המשקל. תכתוב למשל: "המשקל שלי עכשיו 72.5".',
+      onboarding: false,
+    };
+  }
+
+  // Save in training_params (and keep compatibility with both names)
+  try {
+    if (db.saveTrainingParams) {
+      await db.saveTrainingParams(userId, { weightKg: w, weight: w });
+    } else if (db.updateTrainingParams) {
+      await db.updateTrainingParams(userId, { weightKg: w, weight: w });
+    }
+  } catch (e) {
+    // ignore – we'll still respond, but profile may not show it
+  }
+
+  // Optional: save in user_profile if exists
+  try {
+    if (db.saveUserProfile) {
+      await db.saveUserProfile(userId, { weightKg: w, weight: w });
+    } else if (db.updateUserProfile) {
+      await db.updateUserProfile(userId, { weightKg: w, weight: w });
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  return { reply: `עדכנתי משקל ל-${w.toFixed(1).replace(/\.0$/, "")} ק״ג.`, onboarding: false };
+}
+
+
 
   async _ensureStravaMetricsInState(userId, state) {
     state.data = state.data || {};
@@ -541,11 +648,10 @@ _extractWeightGoalFallback(text) {
 
       if (t === "אישור" && weightFromStrava != null) {
         state.data.personal.weight = weightFromStrava;
-    state.data.personal.weightKg = weightFromStrava;
+        state.data.personal.weightKg = weightFromStrava;
 
-        state.data.personal.height = h;
-    state.data.personal.heightCm = h;
-
+        // next: height
+        state.data.personalStep = "height";
         await this._saveState(userId, state);
 
         return {
@@ -1181,17 +1287,14 @@ if (state.data.goal.timeframeWeeks == null) {
   };
 }
 
-// יש הכל -> סיכום וסיום אונבורדינג
-state.stage = "done";
-await this._saveState(userId, state);
-
-return {
-  reply:
-    `קיבלתי. המטרה שלך: לרדת ל-${state.data.goal.targetKg} ק״ג ` +
-    `תוך ${state.data.goal.timeframeWeeks} שבועות.\n\nסיימנו אונבורדינג 🎉`,
-  onboarding: true,
-};
-}
+// יש הכל -> ממשיכים לסיום הקיים (נופל להמשך הפונקציה)
 
 
+  // helper פנימי ל-DB
+  async _getDb() {
+    if (!this.db) {
+      throw new Error("DB not configured in OnboardingEngine");
+    }
+    return this.db;
+  }
 }
