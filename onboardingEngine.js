@@ -352,7 +352,11 @@ _extractWeightGoalFallback(text) {
     if (weightMatch) {
       const w = this._parseNumber(weightMatch[1]);
       if (w == null || w < 30 || w > 200) {
-        return { reply: "לא הצלחתי להבין את המשקל. תכתוב למשל: \"המשקל שלי עכשיו 72.5\".", , onboarding: false };
+        return {
+  reply: "לא הצלחתי להבין את המשקל. תכתוב למשל: \"המשקל שלי עכשיו 72.5\".",
+  onboarding: false
+};
+
       }
 
       // ננסה לשמור במספר מקומות, בהתאם למה שה-DB תומך בו
