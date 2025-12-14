@@ -337,8 +337,7 @@ _extractWeightGoalFallback(text) {
           if (w != null) parts.push(`משקל: ${this._formatNumber(w, 1)} ק״ג`);
         }
         return {
-          reply: parts.length ? parts.join("
-") : "אין לי עדיין מספיק נתונים בפרופיל. נסה 'עדכן מסטרבה'.",
+          reply: parts.length ? parts.join("\n") : "אין לי עדיין מספיק נתונים בפרופיל. נסה 'עדכן מסטרבה'.",
           onboarding: false,
         };
       } catch (e) {
@@ -353,7 +352,7 @@ _extractWeightGoalFallback(text) {
     if (weightMatch) {
       const w = this._parseNumber(weightMatch[1]);
       if (w == null || w < 30 || w > 200) {
-        return { reply: "לא הצלחתי להבין את המשקל. תכתוב למשל: "המשקל שלי עכשיו 72.5".", onboarding: false };
+        return { reply: "לא הצלחתי להבין את המשקל. תכתוב למשל: \"המשקל שלי עכשיו 72.5\".", , onboarding: false };
       }
 
       // ננסה לשמור במספר מקומות, בהתאם למה שה-DB תומך בו
@@ -689,11 +688,8 @@ _extractWeightGoalFallback(text) {
 
       if (t === "אישור" && weightFromStrava != null) {
         state.data.personal.weight = weightFromStrava;
-    state.data.personal.weightKg = weightFromStrava;
-
-        state.data.personal.height = h;
-    state.data.personal.heightCm = h;
-
+        state.data.personal.weightKg = weightFromStrava;
+        state.data.personalStep = "height";
         await this._saveState(userId, state);
 
         return {
