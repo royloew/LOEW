@@ -1,9 +1,6 @@
 // onboardingEngine.js
 // אונבורדינג: פתיח מלא → סטרבה → נתונים אישיים → FTP → דופק → משך אימון → מטרה
 
-import { MSG } from "./messages.js";
-
-
 export class OnboardingEngine {
   constructor(dbImpl) {
     this.db = dbImpl;
@@ -11,18 +8,20 @@ export class OnboardingEngine {
     this._memStates = new Map();
   }
 
-
   async handleMessage(userId, textRaw) {
     const text = (textRaw || "").trim();
 
     let state = await this._loadState(userId);
 
-    // אם כבר סיימנו אונבורדינג – עוברים ל-Post-Onboarding parser
+    // אם כבר סיימנו אונבורדינג – לא חוזרים פנימה לתהליך
     if (state && state.stage === "done") {
-      return await this._handlePostOnboarding(userId, text, state);
+      return {
+        reply: this._postOnboardingMenu(),
+        onboarding: false,
+      };
     }
 
-// אין state שמור – בוטסטרפ מסטרבה
+    // אין state שמור – בוטסטרפ מסטרבה
     if (!state || !state.stage) {
       state = await this._bootstrapStateFromStrava(userId);
       await this._saveState(userId, state);
@@ -284,127 +283,6 @@ _extractWeightGoalFallback(text) {
     );
   }
 
-// ---------------------------
-// Post-Onboarding (after stage === "done")
-// ---------------------------
-async _handlePostOnboarding(userId, text, state) {
-  const t = (text || "").trim();
-
-  // Empty / menu
-  if (!t) {
-    return { reply: this._postOnboardingMenu(), onboarding: false };
-  }
-
-  // Profile (supports: "פרופיל", "פרופיל שלי", "הפרופיל שלי", "תראה לי פרופיל")
-  const isProfile =
-    /(^|\s)(ה?פרופיל)(\s+שלי)?(\s|$)/.test(t) ||
-    /ת(ראה|ציג)(\s+לי)?\s+.*פרופיל/.test(t);
-  if (isProfile) {
-    return await this._handleProfile(userId);
-  }
-
-  // Weight update (supports: "המשקל שלי עכשיו 72.5", "משקל 72")
-  const weightUpdateMatch = t.match(/(?:המשקל\s+שלי|משקל)\s*(?:עכשיו|היום)?\s*(\d{1,3}(?:[\.,]\d{1,2})?)/);
-  if (weightUpdateMatch) {
-    return await this._handleWeightUpdate(userId, weightUpdateMatch[1]);
-  }
-
-  // Weight goal (supports: "לרדת ל 68 ב4 שבועות", "להוריד 3 קילו תוך 5 שבועות")
-  const looksLikeWeightGoal =
-    /(לרדת|להוריד|ירידה|להגיע\s+ל)/.test(t) &&
-    /\d/.test(t) &&
-    /(תוך|ב\s*\d+|שבוע|שבועות|חודש|חודשים|יום|ימים|עד\s*\d{4}-\d{2}-\d{2})/.test(t);
-
-  if (looksLikeWeightGoal) {
-    // Re-use existing goal flow
-    state.stage = "goal_collect";
-    await this._saveState(userId, state);
-    return await this._stageGoalCollect(userId, t, state);
-  }
-
-  // Fallback
-  return { reply: this._postOnboardingMenu(), onboarding: false };
-}
-
-async _handleProfile(userId) {
-  const db = await this._getDb();
-
-  let tp = null;
-  try {
-    tp = await db.getTrainingParams?.(userId);
-  } catch (e) {
-    // ignore
-  }
-
-  // Try to also read profile data if exists
-  let profile = null;
-  try {
-    profile = await db.getUserProfile?.(userId);
-  } catch (e) {
-    // ignore
-  }
-
-  const weight =
-    (tp && (tp.weightKg ?? tp.weight)) ??
-    (profile && (profile.weightKg ?? profile.weight)) ??
-    null;
-
-  const ftp = tp?.ftp ?? null;
-  const hrMax = tp?.hrMax ?? tp?.hr_max ?? null;
-  const hrThr = tp?.hrThreshold ?? tp?.hr_threshold ?? null;
-
-  const lines = [];
-  lines.push("🧾 **הפרופיל שלי**");
-  if (weight != null) lines.push(`⚖️ משקל: ${Number(weight).toFixed(1).replace(/\.0$/, "")} ק״ג`);
-  if (ftp != null) lines.push(`⚡ FTP: ${ftp}W`);
-  if (hrMax != null) lines.push(`❤️ דופק מקסימלי: ${hrMax}`);
-  if (hrThr != null) lines.push(`🫀 דופק סף: ${hrThr}`);
-  if (lines.length === 1) {
-    
-  lines.push(MSG.NO_PROFILE_DATA);
-
-  }
-
-  return { reply: lines.join("\n"), onboarding: false };
-}
-
-async _handleWeightUpdate(userId, weightStr) {
-  const db = await this._getDb();
-  const w = Number(String(weightStr).replace(",", "."));
-  if (!Number.isFinite(w) || w < 30 || w > 250) {
-    return {
-      reply: 'לא הצלחתי להבין את המשקל. תכתוב למשל: "המשקל שלי עכשיו 72.5".',
-      onboarding: false,
-    };
-  }
-
-  // Save in training_params (and keep compatibility with both names)
-  try {
-    if (db.saveTrainingParams) {
-      await db.saveTrainingParams(userId, { weightKg: w, weight: w });
-    } else if (db.updateTrainingParams) {
-      await db.updateTrainingParams(userId, { weightKg: w, weight: w });
-    }
-  } catch (e) {
-    // ignore – we'll still respond, but profile may not show it
-  }
-
-  // Optional: save in user_profile if exists
-  try {
-    if (db.saveUserProfile) {
-      await db.saveUserProfile(userId, { weightKg: w, weight: w });
-    } else if (db.updateUserProfile) {
-      await db.updateUserProfile(userId, { weightKg: w, weight: w });
-    }
-  } catch (e) {
-    // ignore
-  }
-
-  return { reply: `עדכנתי משקל ל-${w.toFixed(1).replace(/\.0$/, "")} ק״ג.`, onboarding: false };
-}
-
-
-
   async _ensureStravaMetricsInState(userId, state) {
     state.data = state.data || {};
     const currentPersonal = state.data.personal || {};
@@ -654,10 +532,11 @@ async _handleWeightUpdate(userId, weightStr) {
 
       if (t === "אישור" && weightFromStrava != null) {
         state.data.personal.weight = weightFromStrava;
-        state.data.personal.weightKg = weightFromStrava;
+    state.data.personal.weightKg = weightFromStrava;
 
-        // next: height
-        state.data.personalStep = "height";
+        state.data.personal.height = h;
+    state.data.personal.heightCm = h;
+
         await this._saveState(userId, state);
 
         return {
@@ -1255,48 +1134,71 @@ async _handleWeightUpdate(userId, weightStr) {
         onboarding: true,
       };
     }
+  // --- Weight goal MVP (only) ---
 
-    // --- Weight goal MVP (only) ---
+  const currentWeightKg =
+    (state.data.personal && (state.data.personal.weightKg || state.data.personal.weight)) || null;
 
-const currentWeightKg =
-  (state.data.personal && (state.data.personal.weightKg || state.data.personal.weight)) || null;
+  const extracted = await this._extractWeightGoal(goalText, currentWeightKg);
 
-const extracted = await this._extractWeightGoal(goalText, currentWeightKg);
+  // אם כבר יש יעד+זמן בהודעה – אפשר לקפוץ ישר לשלב הזמן או אפילו לסיכום
+  if (extracted && extracted.targetKg != null) {
+    state.data.goal.targetKg = extracted.targetKg;
+  }
+  if (extracted && extracted.timeframeWeeks != null) {
+    state.data.goal.timeframeWeeks = extracted.timeframeWeeks;
+  }
 
-// אם כבר יש יעד+זמן בהודעה – אפשר לקפוץ ישר לשלב הזמן או אפילו לסיכום
-if (extracted && extracted.targetKg != null) {
-  state.data.goal.targetKg = extracted.targetKg;
-}
-if (extracted && extracted.timeframeWeeks != null) {
-  state.data.goal.timeframeWeeks = extracted.timeframeWeeks;
-}
+  // אם אין יעד -> שואלים יעד
+  if (state.data.goal.targetKg == null) {
+    state.stage = "goal_weight_target";
+    await this._saveState(userId, state);
+    return {
+      reply: "סגור. לאיזה משקל יעד היית רוצה להגיע? (בק״ג, למשל 68)",
+      onboarding: true,
+    };
+  }
 
-// אם אין יעד -> שואלים יעד
-if (state.data.goal.targetKg == null) {
-  state.stage = "goal_weight_target";
+  // יש יעד, אין זמן -> שואלים זמן
+  if (state.data.goal.timeframeWeeks == null) {
+    state.stage = "goal_weight_timeline";
+    await this._saveState(userId, state);
+    return {
+      reply:
+        `מעולה. יעד: ${state.data.goal.targetKg} ק״ג.
+` +
+        "תוך כמה זמן היית רוצה להגיע לזה? (למשל: 8 שבועות / 3 חודשים)",
+      onboarding: true,
+    };
+  }
+
+  // יש הכל -> מסכמים ושומרים
+  state.stage = "done";
   await this._saveState(userId, state);
-  return {
-    reply: "סגור. לאיזה משקל יעד היית רוצה להגיע? (בק״ג, למשל 68)",
-    onboarding: true,
-  };
-}
 
-// יש יעד, אין זמן -> שואלים זמן
-if (state.data.goal.timeframeWeeks == null) {
-  state.stage = "goal_weight_timeline";
-  await this._saveState(userId, state);
+  const target = state.data.goal.targetKg;
+  const weeks = state.data.goal.timeframeWeeks;
+  const delta =
+    currentWeightKg != null ? (currentWeightKg - target).toFixed(1) : null;
+
+  const deltaLine =
+    delta != null
+      ? `זה ירידה של כ-${delta} ק״ג מהמשקל הנוכחי שלך.
+`
+      : "";
+
   return {
     reply:
-      `מעולה. יעד: ${state.data.goal.targetKg} ק״ג.\n` +
-      "תוך כמה זמן היית רוצה להגיע לזה? (למשל: 8 שבועות / 3 חודשים)",
+      `מעולה. שמרתי מטרה: להגיע ל-${target} ק״ג תוך ${weeks} שבועות.
+` +
+      deltaLine +
+      "סיימנו אונבורדינג 🎉",
     onboarding: true,
   };
 }
 
-// יש הכל -> ממשיכים לסיום הקיים (נופל להמשך הפונקציה)
+// helper פנימי ל-DB
 
-
-  // helper פנימי ל-DB
   async _getDb() {
     if (!this.db) {
       throw new Error("DB not configured in OnboardingEngine");
