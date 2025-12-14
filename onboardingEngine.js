@@ -1,12 +1,16 @@
 // onboardingEngine.js
 // אונבורדינג: פתיח מלא → סטרבה → נתונים אישיים → FTP → דופק → משך אימון → מטרה
 
+import { MSG } from "./messages.js";
+
+
 export class OnboardingEngine {
   constructor(dbImpl) {
     this.db = dbImpl;
     // זיכרון פנימי לכל משתמש, כדי לא להיות תלויים רק ב-DB
     this._memStates = new Map();
   }
+
 
   async handleMessage(userId, textRaw) {
     const text = (textRaw || "").trim();
@@ -356,7 +360,9 @@ async _handleProfile(userId) {
   if (hrMax != null) lines.push(`❤️ דופק מקסימלי: ${hrMax}`);
   if (hrThr != null) lines.push(`🫀 דופק סף: ${hrThr}`);
   if (lines.length === 1) {
-    lines.push("אין לי עדיין נתונים שמורים בפרופיל. נסה: "עדכן מסטרבה" או עדכן ידנית (למשל: "המשקל שלי עכשיו 72").");
+    
+  lines.push(MSG.NO_PROFILE_DATA);
+
   }
 
   return { reply: lines.join("\n"), onboarding: false };
