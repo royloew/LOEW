@@ -1259,86 +1259,291 @@ _extractWeightGoalFallback(text) {
 
 
 
+  // ===== GOAL COLLECT =====
+  _detectGoalType(text) {
+    const t = (text || "").trim().toLowerCase();
+
+    // משקל / ירידה במשקל
+    if (
+      t.includes("משקל") ||
+      t.includes('ק"ג') ||
+      t.includes("קג") ||
+      t.includes("לרדת") ||
+      t.includes("להוריד") ||
+      t.includes("דיאטה")
+    ) {
+      return "weight";
+    }
+
+    // FTP
+    if (
+      t.includes("ftp") ||
+      t.includes("וואט") ||
+      t.includes("watt") ||
+      t.includes("וואטים")
+    ) {
+      return "ftp";
+    }
+
+    // אירוע / תחרות
+    if (
+      t.includes("תחרות") ||
+      t.includes("אירוע") ||
+      t.includes("גרנד פונדו") ||
+      t.includes("גראנד פונדו") ||
+      t.includes("מרוץ")
+    ) {
+      return "event";
+    }
+
+    return "unknown";
+  }
+
   async _stageGoalCollect(userId, text, state) {
     const goalText = (text || "").trim();
+    if (!goalText) {
+      return {
+        reply:
+          "מה המטרה המרכזית שלך?\n" +
+          "לדוגמה: \"לרדת ל-68 תוך 10 שבועות\" או \"להעלות FTP\" או \"להתכונן לגרנד פונדו\".",
+        onboarding: true,
+      };
+    }
 
-    const db = await this._getDb();
-    await db.updateGoal(userId, goalText);
+    // שמירה ב-DB (אם נתמך)
+    try {
+      if (this.db && typeof this.db.updateGoal === "function") {
+        await this.db.updateGoal(userId, goalText);
+      }
+    } catch (e) {
+      console.error("Goal save error:", e);
+    }
 
-    
-
-    // קובע סוג מטרה (ב-MVP נתמוך לעומק רק במשקל)
+    // קובע סוג מטרה
     const goalType = this._detectGoalType(goalText);
 
     state.data.goal = state.data.goal || {};
     state.data.goal.type = goalType;
     state.data.goal.rawText = goalText;
 
-    // אם זו לא מטרה של משקל – לא ניכנס לפלו של המשקל (כדי לא לבלבל)
-    if (goalType !== "weight") {
-      state.stage = "done";
+    // ----- FTP goal MVP -----
+    if (goalType === "ftp") {
+      state.stage = "goal_ftp_target";
       await this._saveState(userId, state);
-
-      let extra = "";
-      if (goalType === "ftp") {
-        extra =
-          "\n\nהערה: כרגע ב-MVP אני יודע להעמיק רק במטרה של ירידה במשקל.\n" +
-          "את מטרת ה-FTP שלך שמרתי, ובגרסה הבאה נוסיף שאלות המשך (יעד FTP + זמן).";
-      } else if (goalType === "event") {
-        extra =
-          "\n\nהערה: כרגע ב-MVP אני יודע להעמיק רק במטרה של ירידה במשקל.\n" +
-          "את מטרת האירוע/תחרות שמרתי, ובגרסה הבאה נוסיף שאלות המשך (תאריך, ימים, מרחק/טיפוס וכו').";
-      } else {
-        extra =
-          "\n\nהערה: כרגע ב-MVP אני יודע להעמיק רק במטרה של ירידה במשקל.\n" +
-          "אם תרצה – תכתוב את המטרה שלך כירידה במשקל (לדוגמה: \"לרדת ל-68 תוך 10 שבועות\").";
-      }
-
       return {
-        reply: `קיבלתי. המטרה שלך נשמרה: ${goalText}${extra}\n\nסיימנו אונבורדינג 🎉`,
+        reply:
+          "סגור. מה יעד ה-FTP שלך (בוואטים)?\n" +
+          'לדוגמה: "270".',
         onboarding: true,
       };
     }
 
-    // --- Weight goal MVP (only) ---
+    // ----- Weight goal MVP -----
+    if (goalType === "weight") {
+      const currentWeightKg =
+        (state.data.personal &&
+          (state.data.personal.weightKg || state.data.personal.weight)) ||
+        null;
 
-const currentWeightKg =
-  (state.data.personal && (state.data.personal.weightKg || state.data.personal.weight)) || null;
+      const extracted = await this._extractWeightGoal(goalText, currentWeightKg);
 
-const extracted = await this._extractWeightGoal(goalText, currentWeightKg);
+      if (extracted && extracted.targetKg != null) {
+        state.data.goal.targetKg = extracted.targetKg;
+      }
+      if (extracted && extracted.timeframeWeeks != null) {
+        state.data.goal.timeframeWeeks = extracted.timeframeWeeks;
+      }
 
-// אם כבר יש יעד+זמן בהודעה – אפשר לקפוץ ישר לשלב הזמן או אפילו לסיכום
-if (extracted && extracted.targetKg != null) {
-  state.data.goal.targetKg = extracted.targetKg;
-}
-if (extracted && extracted.timeframeWeeks != null) {
-  state.data.goal.timeframeWeeks = extracted.timeframeWeeks;
-}
+      if (state.data.goal.targetKg == null) {
+        state.stage = "goal_weight_target";
+        await this._saveState(userId, state);
+        return {
+          reply: "סגור. לאיזה משקל יעד היית רוצה להגיע? (בק״ג, למשל 68)",
+          onboarding: true,
+        };
+      }
 
-// אם אין יעד -> שואלים יעד
-if (state.data.goal.targetKg == null) {
-  state.stage = "goal_weight_target";
-  await this._saveState(userId, state);
-  return {
-    reply: "סגור. לאיזה משקל יעד היית רוצה להגיע? (בק״ג, למשל 68)",
-    onboarding: true,
-  };
-}
+      if (state.data.goal.timeframeWeeks == null) {
+        state.stage = "goal_weight_timeline";
+        await this._saveState(userId, state);
+        return {
+          reply:
+            `מעולה. יעד: ${this._formatNumber(state.data.goal.targetKg, 1)} ק״ג.\n` +
+            "תוך כמה זמן היית רוצה להגיע לזה? (למשל: 8 שבועות / 3 חודשים)",
+          onboarding: true,
+        };
+      }
 
-// יש יעד, אין זמן -> שואלים זמן
-if (state.data.goal.timeframeWeeks == null) {
-  state.stage = "goal_weight_timeline";
-  await this._saveState(userId, state);
-  return {
-    reply:
-      `מעולה. יעד: ${state.data.goal.targetKg} ק״ג.\n` +
-      "תוך כמה זמן היית רוצה להגיע לזה? (למשל: 8 שבועות / 3 חודשים)",
-    onboarding: true,
-  };
-}
+      // יש יעד + זמן → סיום
+      return await this._finalizeOnboarding(userId, state);
+    }
 
-// יש הכל -> ממשיכים לסיום הקיים (נופל להמשך הפונקציה)
+    // ----- Event / Unknown -----
+    state.stage = "done";
+    await this._saveState(userId, state);
 
+    let extra = "";
+    if (goalType === "event") {
+      extra =
+        "\n\nהערה: כרגע ב-MVP אני עדיין לא שואל שאלות המשך על אירועים (תאריך/מרחק/טיפוס וכו').\n" +
+        "שמתי את המטרה שלך, ובהמשך נוסיף תכנון מותאם."
+    } else {
+      extra =
+        "\n\nהערה: כרגע ב-MVP אני יודע להעמיק בעיקר במטרות משקל או FTP.\n" +
+        "אם תרצה, תכתוב מטרה בסגנון: \"לרדת ל-68 תוך 10 שבועות\" או \"FTP 270\"."
+    }
+
+    return {
+      reply: `קיבלתי. המטרה שלך נשמרה: ${goalText}${extra}\n\nסיימנו אונבורדינג 🎉`,
+      onboarding: true,
+    };
+  }
+
+  async _stageGoalWeightTarget(userId, text, state) {
+    const t = (text || "").trim();
+    const v = this._parseNumber(t);
+    if (v == null || v < 30 || v > 200) {
+      return {
+        reply:
+          "לא הצלחתי להבין את משקל היעד.\n" +
+          "תכתוב מספר בק״ג (למשל 68 או 68.5).",
+        onboarding: true,
+      };
+    }
+
+    state.data.goal = state.data.goal || {};
+    state.data.goal.targetKg = Math.round(v * 10) / 10;
+    state.stage = "goal_weight_timeline";
+    await this._saveState(userId, state);
+
+    return {
+      reply:
+        `מעולה. יעד: ${this._formatNumber(state.data.goal.targetKg, 1)} ק״ג.\n` +
+        "תוך כמה זמן היית רוצה להגיע לזה? (למשל: 8 שבועות / 3 חודשים)",
+      onboarding: true,
+    };
+  }
+
+  async _stageGoalWeightTimeline(userId, text, state) {
+    const t = (text || "").trim();
+    const mWeeks = t.match(/(\d{1,3})\s*(שבועות|שבוע)/);
+    const mMonths = t.match(/(\d{1,2})\s*(חודשים|חודש)/);
+
+    let weeks = null;
+    if (mWeeks) weeks = parseInt(mWeeks[1], 10);
+    else if (mMonths) weeks = parseInt(mMonths[1], 10) * 4;
+
+    if (!weeks || !Number.isFinite(weeks) || weeks < 1 || weeks > 520) {
+      return {
+        reply:
+          "לא הצלחתי להבין את משך הזמן.\n" +
+          "תכתוב למשל: 8 שבועות או 3 חודשים.",
+        onboarding: true,
+      };
+    }
+
+    state.data.goal = state.data.goal || {};
+    state.data.goal.timeframeWeeks = weeks;
+    return await this._finalizeOnboarding(userId, state);
+  }
+
+  async _stageGoalFtpTarget(userId, text, state) {
+    const t = (text || "").trim();
+    const v = parseInt(t, 10);
+    if (Number.isNaN(v) || v < 80 || v > 500) {
+      return {
+        reply:
+          "לא הצלחתי להבין את יעד ה-FTP.\n" +
+          'תכתוב מספר בוואטים, למשל: "270".',
+        onboarding: true,
+      };
+    }
+
+    state.data.goal = state.data.goal || {};
+    state.data.goal.targetFtp = v;
+    state.stage = "goal_ftp_timeframe";
+    await this._saveState(userId, state);
+
+    return {
+      reply:
+        `מעולה. יעד FTP: ${v}W.\n` +
+        "תוך כמה זמן היית רוצה להגיע לזה? (למשל: 12 שבועות / 4 חודשים)",
+      onboarding: true,
+    };
+  }
+
+  async _stageGoalFtpTimeframe(userId, text, state) {
+    const t = (text || "").trim();
+    const mWeeks = t.match(/(\d{1,3})\s*(שבועות|שבוע)/);
+    const mMonths = t.match(/(\d{1,2})\s*(חודשים|חודש)/);
+
+    let weeks = null;
+    if (mWeeks) weeks = parseInt(mWeeks[1], 10);
+    else if (mMonths) weeks = parseInt(mMonths[1], 10) * 4;
+
+    if (!weeks || !Number.isFinite(weeks) || weeks < 1 || weeks > 520) {
+      return {
+        reply:
+          "לא הצלחתי להבין את משך הזמן.\n" +
+          "תכתוב למשל: 12 שבועות או 4 חודשים.",
+        onboarding: true,
+      };
+    }
+
+    state.data.goal = state.data.goal || {};
+    state.data.goal.timeframeWeeks = weeks;
+    state.stage = "goal_ftp_result";
+    await this._saveState(userId, state);
+    return await this._stageGoalFtpResult(userId, "", state);
+  }
+
+  async _stageGoalFtpResult(userId, text, state) {
+    // כרגע סתם מסיימים אונבורדינג עם סיכום בסיסי
+    return await this._finalizeOnboarding(userId, state);
+  }
+
+  async _finalizeOnboarding(userId, state) {
+    state.stage = "done";
+    await this._saveState(userId, state);
+
+    const goal = (state.data && state.data.goal) || {};
+    const personal = (state.data && state.data.personal) || {};
+    const ftp = state.data ? state.data.ftpFinal : null;
+    const hr = (state.data && state.data.hr) || {};
+
+    const lines = [];
+    lines.push("סיימנו אונבורדינג 🎉");
+    lines.push("");
+
+    if (personal.weightKg != null || personal.weight != null) {
+      const w = personal.weightKg ?? personal.weight;
+      lines.push(`• משקל: ${this._formatNumber(w, 1)} ק״ג`);
+    }
+    if (personal.height != null) lines.push(`• גובה: ${personal.height} ס״מ`);
+    if (personal.age != null) lines.push(`• גיל: ${personal.age}`);
+
+    if (ftp != null) lines.push(`• FTP: ${ftp}W`);
+    if (hr.hrMaxFinal != null) lines.push(`• דופק מקסימלי: ${hr.hrMaxFinal} bpm`);
+    if (hr.hrThresholdFinal != null) lines.push(`• דופק סף: ${hr.hrThresholdFinal} bpm`);
+
+    if (goal.type === "weight") {
+      if (goal.targetKg != null) lines.push(`• יעד משקל: ${this._formatNumber(goal.targetKg, 1)} ק״ג`);
+      if (goal.timeframeWeeks != null) lines.push(`• טווח: ${goal.timeframeWeeks} שבועות`);
+    } else if (goal.type === "ftp") {
+      if (goal.targetFtp != null) lines.push(`• יעד FTP: ${goal.targetFtp}W`);
+      if (goal.timeframeWeeks != null) lines.push(`• טווח: ${goal.timeframeWeeks} שבועות`);
+    } else if (goal.rawText) {
+      lines.push(`• מטרה: ${goal.rawText}`);
+    }
+
+    lines.push("");
+    lines.push("עכשיו אתה יכול לכתוב למשל:");
+    lines.push('• "הפרופיל שלי"');
+    lines.push('• "עדכן מסטרבה"');
+    lines.push('• "נתח את האימון האחרון שלי"');
+
+    return { reply: lines.join("\n"), onboarding: false };
+  }
 
   // helper פנימי ל-DB
   async _getDb() {
