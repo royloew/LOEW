@@ -15,11 +15,9 @@ export class OnboardingEngine {
 
     // אם כבר סיימנו אונבורדינג – לא חוזרים פנימה לתהליך
     if (state && state.stage === "done") {
-      return {
-        reply: this._postOnboardingMenu(),
-        onboarding: false,
-      };
+      return await this._handlePostOnboarding(userId, text, state);
     }
+
 
     // אין state שמור – בוטסטרפ מסטרבה
     if (!state || !state.stage) {
@@ -282,6 +280,38 @@ _extractWeightGoalFallback(text) {
       "• \"נתח לי אימון מתאריך yyyy-mm-dd\""
     );
   }
+
+    async _handlePostOnboarding(userId, text, state) {
+    const t = (text || "").trim();
+
+    // פרופיל
+    if (/(^|\s)(ה?פרופיל)(\s+שלי)?(\s|$)/.test(t)) {
+      return await this._handleProfile(userId);
+    }
+
+    // עדכון משקל
+    if (/(המשקל שלי|משקל)\s*(עכשיו|היום)?\s*\d+/.test(t)) {
+      return await this._handleWeightUpdate(userId, t);
+    }
+
+    // יעד ירידה במשקל
+    const isWeightGoal =
+      /(רוצה|מתכנן|צריך)?\s*(לרדת|להוריד|ירידה|להגיע)/.test(t) &&
+      /\d+/.test(t) &&
+      /(שבוע|שבועות|חודש|חודשים|ב\s*\d+)/.test(t);
+
+    if (isWeightGoal) {
+      state.stage = "goal_collect";
+      await this._saveState(userId, state);
+      return await this._stageGoalCollect(userId, t, state);
+    }
+
+    return {
+      reply: this._postOnboardingMenu(),
+      onboarding: false
+    };
+  }
+
 
   async _ensureStravaMetricsInState(userId, state) {
     state.data = state.data || {};
