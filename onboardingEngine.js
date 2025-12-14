@@ -427,7 +427,7 @@ _extractWeightGoalFallback(text) {
     if (hrThrMatch) {
       const v = parseInt(hrThrMatch[1], 10);
       if (Number.isNaN(v) || v < 90 || v > 210) {
-        return { reply: "תכתוב דופק סף כמספר, למשל: "דופק סף 160".", onboarding: false };
+        return { reply: 'תכתוב דופק סף כמספר, למשל: "דופק סף 160".', onboarding: false };
       }
       try {
         if (this.db && typeof this.db.saveTrainingParams === "function") {
@@ -1337,8 +1337,27 @@ if (state.data.goal.timeframeWeeks == null) {
   };
 }
 
-// יש הכל -> ממשיכים לסיום הקיים (נופל להמשך הפונקציה)
+// יש הכל -> מסכמים ושומרים סיום
+    state.stage = "done";
+    await this._saveState(userId, state);
 
+    const target = state.data.goal.targetKg;
+    const weeks = state.data.goal.timeframeWeeks;
+    let pace = "";
+    if (currentWeightKg != null && target != null && weeks != null && weeks > 0) {
+      const delta = currentWeightKg - target;
+      if (Number.isFinite(delta) && delta !== 0) {
+        const perWeek = Math.round((delta / weeks) * 10) / 10;
+        pace = `\nקצב יעד משוער: ${this._formatNumber(Math.abs(perWeek), 1)} ק״ג לשבוע.`;
+      }
+    }
+
+    return {
+      reply:
+        `סגור. מטרה: להגיע ל-${target} ק״ג תוך ${weeks} שבועות.${pace}\n\nסיימנו אונבורדינג 🎉`,
+      onboarding: true,
+    };
+  }
 
   // helper פנימי ל-DB
   async _getDb() {
