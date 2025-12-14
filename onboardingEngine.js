@@ -320,7 +320,7 @@ _extractWeightGoalFallback(text) {
     }
 
     // 2) Profile
-    if (t === "הפרופיל שלי" || t === "פרופיל" || t === "הפרופיל") {
+    if (t === "הפרופיל שלי" || t === "פרופיל שלי" || t === "פרופיל" || t === "הפרופיל") {
       try {
         const parts = [];
         if (this.db && typeof this.db.getTrainingParams === "function") {
@@ -1337,27 +1337,8 @@ if (state.data.goal.timeframeWeeks == null) {
   };
 }
 
-// יש הכל -> מסכמים ושומרים סיום
-    state.stage = "done";
-    await this._saveState(userId, state);
+// יש הכל -> ממשיכים לסיום הקיים (נופל להמשך הפונקציה)
 
-    const target = state.data.goal.targetKg;
-    const weeks = state.data.goal.timeframeWeeks;
-    let pace = "";
-    if (currentWeightKg != null && target != null && weeks != null && weeks > 0) {
-      const delta = currentWeightKg - target;
-      if (Number.isFinite(delta) && delta !== 0) {
-        const perWeek = Math.round((delta / weeks) * 10) / 10;
-        pace = `\nקצב יעד משוער: ${this._formatNumber(Math.abs(perWeek), 1)} ק״ג לשבוע.`;
-      }
-    }
-
-    return {
-      reply:
-        `סגור. מטרה: להגיע ל-${target} ק״ג תוך ${weeks} שבועות.${pace}\n\nסיימנו אונבורדינג 🎉`,
-      onboarding: true,
-    };
-  }
 
   // helper פנימי ל-DB
   async _getDb() {
