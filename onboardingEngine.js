@@ -1075,7 +1075,7 @@ _extractWeightGoalFallback(text) {
     const t = (text || "").trim().toLowerCase();
 
     // משקל / ירידה במשקל
-    if (t.includes("משקל") || t.includes("ק"ג") || t.includes("קג") || t.includes("לרדת") || t.includes("להוריד") || t.includes("דיאטה")) {
+    if (t.includes("משקל") || t.includes('ק"ג') || t.includes("קג") || t.includes("לרדת") || t.includes("להוריד") || t.includes("דיאטה")) {
       return "weight";
     }
 
