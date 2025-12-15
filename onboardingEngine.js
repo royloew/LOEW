@@ -1,5 +1,6 @@
 // onboardingEngine.js
 // אונבורדינג: פתיח מלא → סטרבה → נתונים אישיים → FTP → דופק → משך אימון → מטרה
+import { MSG } from "./messages.js";
 
 export class OnboardingEngine {
   constructor(dbImpl) {
@@ -297,8 +298,7 @@ _extractWeightGoalFallback(text) {
       // מרענן נתונים לתוך ה-state (בלי לשבור את stage=done)
       await this._ensureStravaMetricsInState(userId, state);
       await this._saveState(userId, state);
-      return { reply: "עדכנתי נתונים מסטרבה ✅
-רוצה לראות את הפרופיל? כתוב: "הפרופיל שלי".", onboarding: false };
+      return { reply: MSG.POST_STRAVA_UPDATED_AND_PROFILE_HINT, onboarding: false };
     }
 
     // 2) פרופיל שלי
@@ -357,14 +357,7 @@ _extractWeightGoalFallback(text) {
       const parsed = await this._extractWeightGoal(t, currentW);
       if (parsed.targetKg == null && parsed.timeframeWeeks == null) {
         return {
-          reply:
-            "כדי להגדיר מטרה לירידה במשקל, כתוב למשל:
-" +
-            "• "מטרה: 72 ק"ג תוך 8 שבועות"
-" +
-            "או רק יעד:
-" +
-            "• "יעד משקל 72"",
+          reply: MSG.GOAL_WEIGHT_HELP,
           onboarding: false,
         };
       }
