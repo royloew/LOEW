@@ -309,7 +309,7 @@ _extractWeightGoalFallback(text) {
 
     // 3) עדכוני ערכים ידניים (משקל / FTP / דופק / VO2max)
     const w = this._extractNumber(t, 30, 200);
-    if (this._matchAny(t, ["משקל", "ק"ג", "קג"]) && w != null) {
+    if (this._matchAny(t, ["משקל", "ק\"ג", "קג"]) && w != null) {
       state.data.personal = state.data.personal || {};
       state.data.personal.weightKgManual = w;
       await this._saveState(userId, state);
