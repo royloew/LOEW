@@ -264,26 +264,17 @@ export async function createDbImpl() {
   await init();
 
   
-// בתוך createDbImpl, ליד שאר ה-helpers שאתה כבר מחזיר
-async function sqlGet(sql, params = []) {
-  return db.get(sql, params);
-}
-async function sqlAll(sql, params = []) {
-  return db.all(sql, params);
-}
-async function sqlRun(sql, params = []) {
-  return db.run(sql, params);
-}
-
-// ואז ב-return של dbImpl:
-return {
-  // ... existing methods (DON'T TOUCH)
-  sqlGet,
-  sqlAll,
-  sqlRun,
-};
-
-
+// SQL helpers (exposed for debugging / advanced queries)
+  // NOTE: these wrap the promise helpers defined above (run/get/all)
+  async function sqlGet(sql, params = []) {
+    return await get(sql, params);
+  }
+  async function sqlAll(sql, params = []) {
+    return await all(sql, params);
+  }
+  async function sqlRun(sql, params = []) {
+    return await run(sql, params);
+  }
 
   // ===== USERS =====
 
@@ -1677,6 +1668,9 @@ return {
 
   return {
     ensureUser,
+    sqlGet,
+    sqlAll,
+    sqlRun,
 
     // אונבורדינג
     getOnboardingState,
