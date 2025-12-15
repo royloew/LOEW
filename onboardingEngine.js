@@ -595,11 +595,9 @@ _extractWeightGoalFallback(text) {
 
       if (t === "אישור" && weightFromStrava != null) {
         state.data.personal.weight = weightFromStrava;
-    state.data.personal.weightKg = weightFromStrava;
+        state.data.personal.weightKg = weightFromStrava;
 
-        state.data.personal.height = h;
-    state.data.personal.heightCm = h;
-
+        state.data.personalStep = "height";
         await this._saveState(userId, state);
 
         return {

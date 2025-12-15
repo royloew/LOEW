@@ -290,6 +290,25 @@ app.post("/api/loew/chat", async (req, res) => {
         });
       }
 
+      // Smart update: refresh Strava-derived metrics before applying manual override (MVP-A)
+
+
+      try {
+
+
+        await dbImpl.ingestAndComputeFromStrava(userId);
+
+
+      } catch (e) {
+
+
+        console.warn("[CHAT] Strava refresh failed before weight override:", e);
+
+
+      }
+
+
+
       await dbImpl.saveAthleteProfile(userId, weight);
 
       return res.json({
@@ -319,7 +338,15 @@ app.post("/api/loew/chat", async (req, res) => {
         ftpRecommended: existing.ftpRecommended || ftp,
       };
 
-      await dbImpl.saveTrainingParams(userId, newParams);
+      
+      // Smart update: refresh Strava-derived metrics before applying manual override (MVP-A)
+      try {
+        await dbImpl.ingestAndComputeFromStrava(userId);
+      } catch (e) {
+        console.warn("[CHAT] Strava refresh failed before FTP override:", e);
+      }
+
+await dbImpl.saveTrainingParams(userId, newParams);
 
       return res.json({
         ok: true,
@@ -346,7 +373,15 @@ app.post("/api/loew/chat", async (req, res) => {
         ...existing,
         hrMax,
       };
-      await dbImpl.saveTrainingParams(userId, newParams);
+      
+      // Smart update: refresh Strava-derived metrics before applying manual override (MVP-A)
+      try {
+        await dbImpl.ingestAndComputeFromStrava(userId);
+      } catch (e) {
+        console.warn("[CHAT] Strava refresh failed before HR Max override:", e);
+      }
+
+await dbImpl.saveTrainingParams(userId, newParams);
 
       return res.json({
         ok: true,
@@ -373,7 +408,15 @@ app.post("/api/loew/chat", async (req, res) => {
         ...existing,
         hrThreshold,
       };
-      await dbImpl.saveTrainingParams(userId, newParams);
+      
+      // Smart update: refresh Strava-derived metrics before applying manual override (MVP-A)
+      try {
+        await dbImpl.ingestAndComputeFromStrava(userId);
+      } catch (e) {
+        console.warn("[CHAT] Strava refresh failed before HR Threshold override:", e);
+      }
+
+await dbImpl.saveTrainingParams(userId, newParams);
 
       return res.json({
         ok: true,
