@@ -250,6 +250,43 @@
 
     <script>
       // ===== USER ID, STRAVA STATUS & DOM =====
+      
+      let ingestTicker = null;
+
+      function startIngestIndicator() {
+        const steps = [
+          "מתחבר לסטרבה…",
+          "מושך פעילויות…",
+          "מושך נתוני רכיבה (Streams)…",
+          "מחשב מדדים (FTP / עומס)…",
+          "מסכם נתונים…",
+        ];
+
+        let i = 0;
+
+        // בועה אחת בלבד שמתעדכנת (בלי ספאם של הודעות)
+        const textDiv = addMessage(
+          "bot",
+          `מייבא נתונים מסטרבה…
+⏳ ${steps[i]}`,
+          "onboarding"
+        );
+
+        ingestTicker = setInterval(() => {
+          i = Math.min(i + 1, steps.length - 1);
+          updateMessage(textDiv, `מייבא נתונים מסטרבה…
+⏳ ${steps[i]}`);
+        }, 2500);
+      }
+
+
+      function stopIngestIndicator() {
+        if (ingestTicker) clearInterval(ingestTicker);
+        ingestTicker = null;
+      }
+
+
+
       function getUserId() {
         const urlParams = new URLSearchParams(window.location.search);
         const fromUrl = urlParams.get("userId");
@@ -348,46 +385,6 @@
         if (!textDiv) return;
         textDiv.innerHTML = renderTextWithLinks(text);
         scrollToBottom();
-      }
-
-      // ===== PROGRESS (Strava import indicator) =====
-      // Creates a bot bubble we can update while waiting for a long server task.
-      function addProgressMessage(initialText, mode = "chat") {
-        const row = document.createElement("div");
-        row.className = "bubble-row bot";
-
-        const bubble = document.createElement("div");
-        bubble.className = "bubble bot";
-
-        const label = document.createElement("div");
-        label.className =
-          "bubble-label " + (mode === "onboarding" ? "onboarding" : "chat");
-        label.textContent = mode === "onboarding" ? "LOEW · אונבורדינג" : "LOEW · צ'אט";
-        bubble.appendChild(label);
-
-        const textDiv = document.createElement("div");
-        textDiv.className = "bubble-text";
-        textDiv.textContent = initialText;
-        bubble.appendChild(textDiv);
-
-        row.appendChild(bubble);
-        messagesEl.appendChild(row);
-        scrollToBottom();
-
-        return {
-          setText: (t) => {
-            textDiv.textContent = t;
-            scrollToBottom();
-          },
-          remove: () => {
-            row.remove();
-          },
-        };
-      }
-
-      function setInputEnabled(enabled) {
-        inputEl.disabled = !enabled;
-        sendBtn.disabled = !enabled;
       }
 
       function addSystemNote(text) {
@@ -510,72 +507,6 @@
         return /סנכרון מסטרבה|עדכון מסטרבה|עדכן.*סטרבה|תעדכן.*סטרבה/.test(
           txt
         );
-      }
-
-
-      // ===== STRAVA INGEST PROGRESS UI =====
-      // We can't stream the real server logs to the browser (yet),
-      // so we show a simple, readable progress checklist while waiting.
-      function startIngestProgressUI(titleText) {
-        const steps = [
-          { key: "start", text: "מתחיל ייבוא נתונים מסטרבה" },
-          { key: "streams", text: "מושך נתוני וואטים/דופק (Streams) לאימונים" },
-          { key: "compute", text: "מחשב סיכום נפח + מודלי FTP/דופק" },
-        ];
-
-        const lines = [
-          titleText || "מייבא נתונים מסטרבה…",
-          "",
-          ...steps.map((s, i) => `⏳ ${s.text}`),
-        ].join("\n");
-
-        // Return a messageId so we can update the same bubble (no spam)
-        const textDiv = addMessage("bot", lines, "onboarding");
-
-        function render(statusKey) {
-          const idx = steps.findIndex((s) => s.key === statusKey);
-          const updated = [
-            titleText || "מייבא נתונים מסטרבה…",
-            "",
-            ...steps.map((s, i) => {
-              if (i < idx) return `✅ ${s.text}`;
-              if (i === idx) return `⏳ ${s.text}`;
-              return `• ${s.text}`;
-            }),
-          ].join("\n");
-          updateMessage(textDiv, updated);
-        }
-
-        function done(extraText) {
-          const updated = [
-            "הייבוא מסטרבה הושלם ✅",
-            extraText ? "\n" + extraText : "",
-          ].join("");
-          updateMessage(textDiv, updated);
-        }
-
-        function fail(errText) {
-          updateMessage(
-            textDiv,
-            "לא הצלחתי להשלים ייבוא מסטרבה ❌\n" +
-              (errText || "נסה שוב עוד רגע, או כתוב \"עדכן מסטרבה\".")
-          );
-        }
-
-        // A gentle "fake" progression so the user sees movement even on slow runs
-        render("start");
-        const t1 = setTimeout(() => render("streams"), 1200);
-        const t2 = setTimeout(() => render("compute"), 6500);
-
-        return {
-          render,
-          done,
-          fail,
-          stopTimers: () => {
-            clearTimeout(t1);
-            clearTimeout(t2);
-          },
-        };
       }
 
       async function callStravaSync(opts = {}) {
@@ -828,63 +759,51 @@
 
         const snapshot = await fetchSnapshotOnce();
 
-        
         // 1. חזרנו מ-Strava עם ?strava=connected
-        if (STRAVA_STATUS === "connected") {
-          // הודעה מיידית כדי שלא ירגיש תקוע
+       if (STRAVA_STATUS === "connected") {
+          // הודעת הצלחה + אינדיקציה חיה (בועה אחת שמתעדכנת)
           addMessage(
             "bot",
             `החיבור לסטרבה הצליח ✅\nכדי שאוכל להתחיל — אני מייבא עכשיו את הנתונים שלך.`,
             "onboarding"
           );
 
-          // אינדיקציה חיה בזמן שהשרת עושה ingest ברקע
-          setInputEnabled(false);
-          const prog = addProgressMessage("מתחיל ייבוא נתונים…", "onboarding");
+          // נועלים קלט בזמן הייבוא כדי לא לבלבל את המשתמש
+          inputEl.disabled = true;
+          sendBtn.disabled = true;
 
-          const stages = [
-            "מתחיל ייבוא נתונים…",
-            "מושך רשימת רכיבות מסטרבה…",
-            "מושך נתוני Streams (דופק/וואטים/קצב)…",
-            "מחשב עקומות כוח ומדדים…",
-            "מסכם נתונים ומעדכן את הפרופיל…",
-          ];
-
-          let idx = 0;
-          let dots = 0;
-          const startedAt = Date.now();
-
-          const tick = setInterval(() => {
-            // כל ~6 שניות לעבור לשלב הבא (UX, לא לוגים אמיתיים)
-            const elapsed = Date.now() - startedAt;
-            idx = Math.min(stages.length - 1, Math.floor(elapsed / 6000));
-
-            dots = (dots + 1) % 4;
-            const suffix = ".".repeat(dots);
-
-            prog.setText(stages[idx] + suffix);
-          }, 900);
+          startIngestIndicator();
 
           try {
-            // אצלנו "היי" מפעיל את המשך האונבורדינג אחרי ingest
+            // מריץ ingest מלא בצד השרת ומחזיר snapshot כשהוא מוכן
+            // אם ה-endpoint קיים (כמו אצלך) – זה הכי נכון.
+            if (typeof callStravaSync === "function") {
+              await callStravaSync({ mode: "onboarding" });
+            }
+
+            stopIngestIndicator();
+
+            addMessage("bot", "סיימתי לייבא נתונים מסטרבה ✅", "onboarding");
+
+            // ממשיכים לאונבורדינג/צ'אט ע"י טריגר "היי"
             const data = await callChatAPI("היי");
-
-            clearInterval(tick);
-            prog.remove();
-            setInputEnabled(true);
-
             handleChatReply(data);
           } catch (err) {
-            clearInterval(tick);
-            prog.setText(
-              "הייבוא נמשך יותר מהרגיל… אם זה לא מסתיים תוך דקה, נסה לרענן את הדף או לכתוב לי הודעה."
-            );
-            setInputEnabled(true);
+            stopIngestIndicator();
             console.error("auto onboarding after Strava error:", err);
+            addMessage(
+              "bot",
+              "הייתה בעיה בייבוא מסטרבה. נסה לכתוב לי 'עדכן מסטרבה' או לרענן את הדף.",
+              "chat"
+            );
+          } finally {
+            inputEl.disabled = false;
+            sendBtn.disabled = false;
           }
 
           return;
         }
+
 
         mode = "onboarding";
 
