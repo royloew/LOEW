@@ -302,6 +302,7 @@ _extractWeightGoalFallback(text) {
           state.data.trainingSummary =
             snap.trainingSummary || state.data.trainingSummary || null;
           state.data.volume = snap.volume || state.data.volume || null;
+          state.data.metricsWindowDays = snap.metricsWindowDays || state.data.metricsWindowDays || null;
           state.data.ftpModels =
             snap.ftpModels || state.data.ftpModels || {};
           state.data.hr = snap.hr || state.data.hr || {};
@@ -397,21 +398,23 @@ _extractWeightGoalFallback(text) {
       const elevStr = num0(elevation);
       const avgMin = Math.round(ts.avgDurationSec / 60);
       const avgMinStr = num0(avgMin);
+      const offPctRaw = ts.offroadPct;
       const offPct =
-        ts.offroadPct != null ? Math.round(ts.offroadPct * 100) : null;
+        offPctRaw == null ? null : (offPctRaw <= 1 ? Math.round(offPctRaw * 100) : Math.round(offPctRaw));
 
       let summaryLines = [];
 
       summaryLines.push("סיימתי לייבא נתונים מסטרבה ✅");
       summaryLines.push("");
-      summaryLines.push("סיכום 90 הימים האחרונים:");
+      const windowDays = state.data.metricsWindowDays || 60;
+      summaryLines.push(`סיכום ${windowDays} הימים האחרונים:`);
       summaryLines.push(`• מספר רכיבות: ${ridesStr}`);
       summaryLines.push(`• זמן רכיבה מצטבר: ${hoursStr} שעות`);
       summaryLines.push(`• מרחק מצטבר: ${kmStr} ק\"מ`);
       summaryLines.push(`• טיפוס מצטבר: ${elevStr} מטר`);
       summaryLines.push(`• משך רכיבה ממוצע: ${avgMinStr} דקות`);
       if (offPct != null) {
-        summaryLines.push(`• רכיבות שטח (off-road): כ-${offPct}% מהרכיבות`);
+        summaryLines.push(`• רכיבות שטח (off-road): ${offPct}% מהרכיבות`);
       }
 
       if (volume && volume.weeksCount > 0) {
@@ -729,10 +732,10 @@ _extractWeightGoalFallback(text) {
     lines.push("בוא נתאים גם את הדופק שלך.");
 
     if (typeof hr.hrMax === "number") {
-      lines.push(`• דופק מקסימלי מוערך מהנתונים: ${hr.hrMax} bpm.`);
+      lines.push(`• דופק מקסימלי מוערך מהנתונים: ~${hr.hrMax} bpm.`);
     }
     if (typeof hr.hrThreshold === "number") {
-      lines.push(`• דופק סף מוערך: ${hr.hrThreshold} bpm.`);
+      lines.push(`• דופק סף מוערך: ~${hr.hrThreshold} bpm.`);
     }
 
     lines.push(
@@ -1182,6 +1185,82 @@ if (state.data.goal.timeframeWeeks == null) {
       onboarding: true,
     };
   }
+
+
+  // ===== GOAL: WEIGHT TARGET =====
+  async _stageGoalWeightTarget(userId, text, state) {
+    const t = (text || "").trim();
+    const m = t.match(/(\d+(?:[.,]\d+)?)/);
+    if (!m) {
+      return { reply: "לא הצלחתי להבין. כתוב רק מספר בק״ג (למשל 68).", onboarding: true };
+    }
+    const val = parseFloat(m[1].replace(",", "."));
+    if (!isFinite(val) || val < 35 || val > 200) {
+      return { reply: "נראה שהמספר לא הגיוני. כתוב יעד בק״ג (למשל 68).", onboarding: true };
+    }
+
+    state.data = state.data || {};
+    state.data.goal = state.data.goal || {};
+    state.data.goal.targetKg = Math.round(val * 10) / 10;
+
+    state.stage = "goal_weight_timeline";
+    await this._saveState(userId, state);
+
+    return {
+      reply:
+        `מעולה. יעד: ${state.data.goal.targetKg} ק״ג.\n` +
+        "תוך כמה זמן היית רוצה להגיע לזה? (למשל: 8 שבועות / 3 חודשים)",
+      onboarding: true,
+    };
+  }
+
+  // ===== GOAL: WEIGHT TIMELINE =====
+  async _stageGoalWeightTimeline(userId, text, state) {
+    const t = (text || "").trim().toLowerCase();
+    const numMatch = t.match(/(\d+(?:[.,]\d+)?)/);
+    if (!numMatch) {
+      return { reply: "לא הצלחתי להבין. כתוב זמן כמו: 8 שבועות / 3 חודשים.", onboarding: true };
+    }
+    const num = parseFloat(numMatch[1].replace(",", "."));
+    if (!isFinite(num) || num <= 0) {
+      return { reply: "לא הצלחתי להבין. כתוב זמן כמו: 8 שבועות / 3 חודשים.", onboarding: true };
+    }
+
+    let weeks = null;
+    if (t.includes("שבוע")) weeks = Math.round(num);
+    else if (t.includes("חודש")) weeks = Math.round(num * 4.345); // ממוצע שבועות לחודש
+    else if (t.includes("יום")) weeks = Math.max(1, Math.round(num / 7));
+    else weeks = Math.round(num); // fallback: נניח שבועות
+
+    if (weeks < 1 || weeks > 260) {
+      return { reply: "זמן היעד נראה לא הגיוני. תכתוב למשל 8 שבועות או 3 חודשים.", onboarding: true };
+    }
+
+    state.data = state.data || {};
+    state.data.goal = state.data.goal || {};
+    state.data.goal.timeframeWeeks = weeks;
+
+    // שומרים DB אם אפשר
+    try {
+      if (this.db && typeof this.db.updateGoal === "function") {
+        const goalPayload = {
+          type: "weight_loss",
+          text: "weight_goal",
+          targetKg: state.data.goal.targetKg ?? null,
+          timeframeWeeks: state.data.goal.timeframeWeeks ?? null,
+        };
+        await this.db.updateGoal(userId, goalPayload);
+      }
+    } catch (e) {
+      console.error("OnboardingEngine goal update error:", e);
+    }
+
+    state.stage = "done";
+    await this._saveState(userId, state);
+
+    return { reply: MSG.GOAL_SAVED, onboarding: true };
+  }
+
 
 // helper פנימי ל-DB
   async _getDb() {
