@@ -274,6 +274,18 @@
         window.location.origin || "https://loew.onrender.com";
 
       const messagesEl = document.getElementById("messages");
+
+      // Ensure Strava auth always opens in the SAME tab (regression-safe)
+      messagesEl.addEventListener("click", (e) => {
+        const a = e.target.closest("a");
+        if (!a) return;
+        if (a.href && a.href.includes("/auth/strava")) {
+          e.preventDefault();
+          window.location.assign(a.href);
+        }
+      });
+
+
       const inputEl = document.getElementById("input");
       const sendBtn = document.getElementById("sendBtn");
 
@@ -296,13 +308,13 @@
                 STRAVA_DOMAIN +
                 "/auth/strava?userId=" +
                 encodeURIComponent(uid);
-              return `<a href="${authHref}" target="_blank" rel="noopener noreferrer">חבר אותי לסטרבה</a>`;
+              return `<a href="${authHref}">חבר אותי לסטרבה</a>`;
             } catch (e) {
               const authHref =
                 STRAVA_DOMAIN +
                 "/auth/strava?userId=" +
                 encodeURIComponent(USER_ID);
-              return `<a href="${authHref}" target="_blank" rel="noopener noreferrer">חבר אותי לסטרבה</a>`;
+              return `<a href="${authHref}">חבר אותי לסטרבה</a>`;
             }
           }
 
