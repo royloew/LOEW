@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<!-- saved from url=(0055)https://loew.onrender.com/index.html?userId=roy_new_qa3 -->
-<html lang="he" dir="rtl"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
-    
+<html lang="he" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
     <title>LOEW – המאמן האישי שלך</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <style>
       body {
         margin: 0;
@@ -220,7 +220,7 @@
       }
     </style>
   </head>
-  <body data-new-gr-c-s-check-loaded="14.1266.0" data-gr-ext-installed="">
+  <body>
     <div class="app">
       <div class="header">
         <div class="avatar">L</div>
@@ -237,7 +237,11 @@
 
       <div class="footer">
         <div class="input-row">
-          <input id="input" type="text" placeholder="שאל את LOEW מה האימון הבא שלך, איך היה האימון האחרון, או כל דבר על האימונים שלך…">
+          <input
+            id="input"
+            type="text"
+            placeholder='שאל את LOEW מה האימון הבא שלך, איך היה האימון האחרון, או כל דבר על האימונים שלך…'
+          />
           <button id="sendBtn">שלח</button>
         </div>
         <div class="helper">
@@ -250,41 +254,6 @@
 
     <script>
       // ===== USER ID, STRAVA STATUS & DOM =====
-      
-      let ingestTicker = null;
-
-      function startIngestIndicator() {
-        const steps = [
-          "מתחבר לסטרבה…",
-          "מושך פעילויות…",
-          "מושך נתוני רכיבה (Streams)…",
-          "מחשב מדדים (FTP / עומס)…",
-          "מסכם נתונים…",
-        ];
-
-        let i = 0;
-
-        // בועה אחת בלבד שמתעדכנת (בלי ספאם של הודעות)
-        const textDiv = addMessage(
-          "bot",
-          `מחובר לסטרבה ✅
-מייבא נתונים…
-⏳ ${steps[i]}`,
-          "onboarding"
-        );
-
-        ingestTicker = setInterval(() => {
-          i = Math.min(i + 1, steps.length - 1);
-          updateMessage(textDiv, `מחובר לסטרבה ✅
-מייבא נתונים…
-⏳ ${steps[i]}`);
-        }, 2500);
-
-        return textDiv;
-      }
-
-
-
       function getUserId() {
         const urlParams = new URLSearchParams(window.location.search);
         const fromUrl = urlParams.get("userId");
@@ -309,8 +278,6 @@
       const sendBtn = document.getElementById("sendBtn");
 
       let hasStrava = false;
-      // מצב תצוגה כללי (למקרי fallback). האונבורדינג עצמו מסומן בהודעות.
-      let mode = "chat";
 
       function scrollToBottom() {
         messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -329,13 +296,13 @@
                 STRAVA_DOMAIN +
                 "/auth/strava?userId=" +
                 encodeURIComponent(uid);
-              return `<a href="${authHref}">חבר אותי לסטרבה</a>`;
+              return `<a href="${authHref}" target="_blank" rel="noopener noreferrer">חבר אותי לסטרבה</a>`;
             } catch (e) {
               const authHref =
                 STRAVA_DOMAIN +
                 "/auth/strava?userId=" +
                 encodeURIComponent(USER_ID);
-              return `<a href="${authHref}">חבר אותי לסטרבה</a>`;
+              return `<a href="${authHref}" target="_blank" rel="noopener noreferrer">חבר אותי לסטרבה</a>`;
             }
           }
 
@@ -376,13 +343,6 @@
         row.appendChild(bubble);
         messagesEl.appendChild(row);
         scrollToBottom();
-        return textDiv;
-      }
-
-      function updateMessage(textDiv, text) {
-        if (!textDiv) return;
-        textDiv.innerHTML = renderTextWithLinks(text);
-        scrollToBottom();
       }
 
       function addSystemNote(text) {
@@ -393,27 +353,15 @@
         scrollToBottom();
       }
 
-      
-      // ===== FETCH WITH TIMEOUT (כדי שה-UI לא ייתקע על Pending) =====
-      async function fetchWithTimeout(url, options = {}, timeoutMs = 7000) {
-        const controller = new AbortController();
-        const id = setTimeout(() => controller.abort(), timeoutMs);
-        try {
-          return await fetch(url, { ...options, signal: controller.signal });
-        } finally {
-          clearTimeout(id);
-        }
-      }
-
-// ===== STRAVA SNAPSHOT =====
+      // ===== STRAVA SNAPSHOT =====
 
       async function fetchSnapshotOnce() {
         try {
-          const res = await fetchWithTimeout("/api/loew/strava-snapshot", {
+          const res = await fetch("/api/loew/strava-snapshot", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ userId: USER_ID }),
-          }, 7000);
+          });
           const data = await res.json();
 
           if (data.ok && data.snapshot) {
@@ -438,11 +386,11 @@
 
       async function fetchSnapshot() {
         try {
-          const res = await fetchWithTimeout("/api/loew/strava-snapshot", {
+          const res = await fetch("/api/loew/strava-snapshot", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ userId: USER_ID }),
-          }, 7000);
+          });
           const data = await res.json();
 
           if (data.ok && data.snapshot) {
@@ -507,77 +455,27 @@
         );
       }
 
+      
+      async function stravaSyncSilent() {
+        const res = await fetch("/api/loew/strava-sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: USER_ID }),
+        });
 
-      // ===== STRAVA INGEST PROGRESS UI =====
-      // We can't stream the real server logs to the browser (yet),
-      // so we show a simple, readable progress checklist while waiting.
-      function startIngestProgressUI(titleText) {
-        const steps = [
-          { key: "start", text: "מתחיל ייבוא נתונים מסטרבה" },
-          { key: "streams", text: "מושך נתוני וואטים/דופק (Streams) לאימונים" },
-          { key: "compute", text: "מחשב סיכום נפח + מודלי FTP/דופק" },
-        ];
-
-        const lines = [
-          titleText || "מייבא נתונים מסטרבה…",
-          "",
-          ...steps.map((s, i) => `⏳ ${s.text}`),
-        ].join("\n");
-
-        // Return a messageId so we can update the same bubble (no spam)
-        const textDiv = addMessage("bot", lines, "onboarding");
-
-        function render(statusKey) {
-          const idx = steps.findIndex((s) => s.key === statusKey);
-          const updated = [
-            titleText || "מייבא נתונים מסטרבה…",
-            "",
-            ...steps.map((s, i) => {
-              if (i < idx) return `✅ ${s.text}`;
-              if (i === idx) return `⏳ ${s.text}`;
-              return `• ${s.text}`;
-            }),
-          ].join("\n");
-          updateMessage(textDiv, updated);
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          throw new Error(data.error || "Strava sync failed");
         }
 
-        function done(extraText) {
-          const updated = [
-            "הייבוא מסטרבה הושלם ✅",
-            extraText ? "\n" + extraText : "",
-          ].join("");
-          updateMessage(textDiv, updated);
-        }
-
-        function fail(errText) {
-          updateMessage(
-            textDiv,
-            "לא הצלחתי להשלים ייבוא מסטרבה ❌\n" +
-              (errText || "נסה שוב עוד רגע, או כתוב \"עדכן מסטרבה\".")
-          );
-        }
-
-        // A gentle "fake" progression so the user sees movement even on slow runs
-        render("start");
-        const t1 = setTimeout(() => render("streams"), 1200);
-        const t2 = setTimeout(() => render("compute"), 6500);
-
-        return {
-          render,
-          done,
-          fail,
-          stopTimers: () => {
-            clearTimeout(t1);
-            clearTimeout(t2);
-          },
-        };
+        // תומך בשתי צורות תגובה: { ok, snapshot } או snapshot ישירות
+        return data.snapshot || data;
       }
 
-      async function callStravaSync(opts = {}) {
-        const { mode = "chat", progressUI = null, silent = false } = opts;
-        if (!silent && !progressUI) {
-          addMessage("bot", "מייבא נתונים מסטרבה...", mode);
-        }
+
+      async function callStravaSync() {
+        addMessage("bot", "מייבא נתונים מסטרבה...", "chat");
+
         try {
           const res = await fetch("/api/loew/strava-sync", {
             method: "POST",
@@ -591,10 +489,6 @@
             throw new Error(data.error || "Strava sync failed");
           }
 
-          if (progressUI) {
-            progressUI.stopTimers();
-            progressUI.done("עכשיו ממשיכים לתהליך האונבורדינג…");
-          }
           const snapshot = data.snapshot || {};
           const ts = snapshot.trainingSummary;
           const volume = snapshot.volume;
@@ -650,21 +544,71 @@
               text += `• דופק סף משוער: ${hr.hrThreshold} bpm\n`;
             }
           }
-          if (!silent) {
-            addMessage("bot", text.trim(), mode);
-          }
-          return snapshot;
+
+          addMessage("bot", text.trim(), "chat");
         } catch (err) {
           console.error(err);
-          if (!silent) {
           addMessage(
             "bot",
             "הייתה בעיה בעדכון מסטרבה. נסה שוב מאוחר יותר.",
             "chat"
           );
         }
-        }
       }
+
+      
+      // ===== STRAVA SUMMARY (after ingest) =====
+      function buildStravaSummaryText(snapshot) {
+        if (!snapshot) return null;
+
+        const ts = snapshot.trainingSummary;
+        const volume = snapshot.volume;
+        const ftpModels = snapshot.ftpModels || {};
+        const hr = snapshot.hr || {};
+        const windowDays = snapshot.metricsWindowDays != null ? snapshot.metricsWindowDays : 60;
+
+        const lines = [];
+        lines.push("✅ סיימתי לעדכן את הנתונים מסטרבה");
+
+        if (ts && ts.rides_count) {
+          const hours = ts.totalMovingTimeSec ? (ts.totalMovingTimeSec / 3600).toFixed(1) : null;
+          const km = ts.totalDistanceKm != null ? Number(ts.totalDistanceKm).toFixed(1) : null;
+          const elev = ts.totalElevationGainM != null ? Math.round(ts.totalElevationGainM) : null;
+
+          let row = `ב-${windowDays} הימים האחרונים: ${ts.rides_count} רכיבות`;
+          if (hours) row += `, ${hours} שעות`;
+          if (km) row += `, ${km} ק״מ`;
+          if (elev != null) row += `, ${elev} מ׳ טיפוס`;
+          lines.push(row);
+        }
+
+        if (volume && volume.weeksCount) {
+          lines.push(`ממוצע שבועי: ${volume.weeklyHoursAvg.toFixed(1)} שעות · ${volume.weeklyRidesAvg.toFixed(1)} רכיבות`);
+        }
+
+        if (ftpModels.ftpRecommended && ftpModels.ftpRecommended.value != null) {
+          lines.push("");
+          lines.push(`FTP מומלץ כרגע: ${ftpModels.ftpRecommended.value}W`);
+          const extra = [];
+          if (ftpModels.ftp20) extra.push(`• FTP 20min (95%): ${ftpModels.ftp20.value}W`);
+          if (ftpModels.ftpFrom3min) extra.push(`• FTP מ-3 דקות: ${ftpModels.ftpFrom3min.value}W`);
+          if (ftpModels.ftpFromCP) extra.push(`• Critical Power: ${ftpModels.ftpFromCP.value}W`);
+          if (extra.length) {
+            lines.push("מודלים נוספים:");
+            lines.push(...extra);
+          }
+        }
+
+        if (hr && (hr.hrMax || hr.hrThreshold)) {
+          lines.push("");
+          lines.push("דופק:");
+          if (hr.hrMax) lines.push(`• דופק מקס׳ משוער: ${hr.hrMax} bpm`);
+          if (hr.hrThreshold) lines.push(`• דופק סף משוער: ${hr.hrThreshold} bpm`);
+        }
+
+        return lines.join("\n");
+      }
+
 
       function isLastWorkoutRequest(txt) {
         const t = (txt || "")
@@ -756,7 +700,7 @@
         const text = inputEl.value.trim();
         if (!text) return;
 
-        addMessage("me", text, mode);
+        addMessage("me", text, "chat");
         inputEl.value = "";
         inputEl.focus();
         sendBtn.disabled = true;
@@ -821,28 +765,29 @@
 
       // ===== INIT =====
       (async function init() {
-        // תמיד מציגים משהו מיד, כדי שלא ייראה 'תקוע' בזמן cold-start של Render
-        addMessage("bot", "טוען את הצ׳אט…", "chat");
-
         const snapshot = await fetchSnapshotOnce();
 
         // 1. חזרנו מ-Strava עם ?strava=connected
-       if (STRAVA_STATUS === "connected") {
+        if (STRAVA_STATUS === "connected") {
           // נועלים קלט בזמן הייבוא כדי לא לבלבל את המשתמש
           inputEl.disabled = true;
           sendBtn.disabled = true;
 
+          // בועה אחת שמתעדכנת בזמן הייבוא
           startIngestIndicator();
 
           try {
-            // מריץ ingest מלא בצד השרת (בלי להדפיס סיכומים כפולים ב-UI)
-            if (typeof callStravaSync === "function") {
-              await callStravaSync({ mode: "onboarding", silent: true });
-            }
+            const snapshot2 = await stravaSyncSilent();
 
             stopIngestIndicator();
 
-            // ממשיכים לאונבורדינג/צ'אט ע"י טריגר "היי"
+            // סיכום מעוצב אחרי הייבוא (פעם אחת)
+            const summaryText = buildStravaSummaryText(snapshot2);
+            if (summaryText) {
+              addMessage("bot", summaryText, "onboarding");
+            }
+
+            // ממשיכים לאונבורדינג ע"י טריגר "היי"
             const data = await callChatAPI("היי");
             handleChatReply(data);
           } catch (err) {
@@ -860,10 +805,6 @@
 
           return;
         }
-
-
-
-        mode = "onboarding";
 
         // 2. אין סטרבה – משתמש חדש
         if (!hasStrava) {
@@ -895,8 +836,6 @@
           return;
         }
 
-        mode = "chat";
-
         // 3. יש סטרבה – השרת מחליט (אונבורדינג באמצע / סיום)
         try {
           const data = await callChatAPI("היי");
@@ -911,26 +850,5 @@
         }
       })();
     </script>
-  
-
-</body><grammarly-desktop-integration data-grammarly-shadow-root="true"><template shadowrootmode="open"><style>
-      div.grammarly-desktop-integration {
-        position: absolute;
-        width: 1px;
-        height: 1px;
-        padding: 0;
-        margin: -1px;
-        overflow: hidden;
-        clip: rect(0, 0, 0, 0);
-        white-space: nowrap;
-        border: 0;
-        -moz-user-select: none;
-        -webkit-user-select: none;
-        -ms-user-select:none;
-        user-select:none;
-      }
-
-      div.grammarly-desktop-integration:before {
-        content: attr(data-content);
-      }
-    </style><div aria-label="grammarly-integration" role="group" tabindex="-1" class="grammarly-desktop-integration" data-content="{&quot;mode&quot;:&quot;full&quot;,&quot;isActive&quot;:true,&quot;isUserDisabled&quot;:false}"></div></template></grammarly-desktop-integration></html>
+  </body>
+</html>
