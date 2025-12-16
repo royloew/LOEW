@@ -296,13 +296,13 @@
                 STRAVA_DOMAIN +
                 "/auth/strava?userId=" +
                 encodeURIComponent(uid);
-              return `<a href="${authHref}" target="_blank" rel="noopener noreferrer">חבר אותי לסטרבה</a>`;
+              return `<a href="${authHref}">חבר אותי לסטרבה</a>`;
             } catch (e) {
               const authHref =
                 STRAVA_DOMAIN +
                 "/auth/strava?userId=" +
                 encodeURIComponent(USER_ID);
-              return `<a href="${authHref}" target="_blank" rel="noopener noreferrer">חבר אותי לסטרבה</a>`;
+              return `<a href="${authHref}">חבר אותי לסטרבה</a>`;
             }
           }
 
