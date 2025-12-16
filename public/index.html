@@ -296,13 +296,13 @@
                 STRAVA_DOMAIN +
                 "/auth/strava?userId=" +
                 encodeURIComponent(uid);
-              return `<a href="${authHref}" target="_self" rel="noopener noreferrer">חבר אותי לסטרבה</a>`;
+              return `<a href="${authHref}" target="_blank" rel="noopener noreferrer">חבר אותי לסטרבה</a>`;
             } catch (e) {
               const authHref =
                 STRAVA_DOMAIN +
                 "/auth/strava?userId=" +
                 encodeURIComponent(USER_ID);
-              return `<a href="${authHref}" target="_self" rel="noopener noreferrer">חבר אותי לסטרבה</a>`;
+              return `<a href="${authHref}" target="_blank" rel="noopener noreferrer">חבר אותי לסטרבה</a>`;
             }
           }
 
@@ -343,14 +343,51 @@
         row.appendChild(bubble);
         messagesEl.appendChild(row);
         scrollToBottom();
-              return textDiv;
       }
 
-      function updateMessage(textDiv, newText) {
-        if (!textDiv) return;
-        textDiv.innerHTML = renderTextWithLinks(newText);
-        scrollToBottom();
-      }
+// --- Progress helper (client-side, no server streaming) ---
+let ingestProgressTimer = null;
+let ingestProgressBubble = null;
+let ingestProgressStep = 0;
+
+function startIngestProgress() {
+  stopIngestProgress();
+
+  ingestProgressStep = 0;
+  ingestProgressBubble = addMessage(
+    "bot",
+    "[STRAVA] מייבא נתונים…\n[STRAVA] מתחיל למשוך פעילויות…",
+    "onboarding"
+  );
+
+  ingestProgressTimer = setInterval(() => {
+    ingestProgressStep += 1;
+    if (!ingestProgressBubble) return;
+
+    const steps = [
+      "[STRAVA] מייבא נתונים…",
+      "[STRAVA] מתחיל למשוך פעילויות…",
+      "[STRAVA] מושך Streams לרכיבות…",
+      "[STRAVA] מחשב Power Curve…",
+      "[STRAVA] מחשב FTP/HR…",
+    ];
+
+    const shown = steps.slice(0, Math.min(steps.length, 2 + ingestProgressStep));
+    const dots = ".".repeat((ingestProgressStep % 3) + 1);
+    ingestProgressBubble.querySelector(".bubble").innerText =
+      shown.join("\n") + "\n" + "[STRAVA] עובד" + dots;
+
+    scrollToBottom();
+    if (ingestProgressStep > 12) stopIngestProgress(); // safety
+  }, 1200);
+}
+
+function stopIngestProgress() {
+  if (ingestProgressTimer) clearInterval(ingestProgressTimer);
+  ingestProgressTimer = null;
+  ingestProgressBubble = null;
+}
+
 
       function addSystemNote(text) {
         const div = document.createElement("div");
@@ -677,7 +714,8 @@
           }
 
           const data = await callChatAPI(text);
-          handleChatReply(data);
+          stopIngestProgress();
+            handleChatReply(data);
         } catch (err) {
           console.error(err);
           addMessage(
@@ -710,7 +748,9 @@
             "onboarding"
           );
 
-          try {
+          
+          startIngestProgress();
+try {
             const data = await callChatAPI("היי");
             handleChatReply(data);
           } catch (err) {

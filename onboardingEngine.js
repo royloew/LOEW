@@ -406,10 +406,10 @@ _extractWeightGoalFallback(text) {
       summaryLines.push("");
       summaryLines.push("סיכום 90 הימים האחרונים:");
       summaryLines.push(`• מספר רכיבות: ${ridesStr}`);
-      summaryLines.push(`• זמן רכיבה מצטבר: ~${hoursStr} שעות`);
-      summaryLines.push(`• מרחק מצטבר: ~${kmStr} ק\"מ`);
-      summaryLines.push(`• טיפוס מצטבר: ~${elevStr} מטר`);
-      summaryLines.push(`• משך רכיבה ממוצע: ~${avgMinStr} דקות`);
+      summaryLines.push(`• זמן רכיבה מצטבר: ${hoursStr} שעות`);
+      summaryLines.push(`• מרחק מצטבר: ${kmStr} ק\"מ`);
+      summaryLines.push(`• טיפוס מצטבר: ${elevStr} מטר`);
+      summaryLines.push(`• משך רכיבה ממוצע: ${avgMinStr} דקות`);
       if (offPct != null) {
         summaryLines.push(`• רכיבות שטח (off-road): כ-${offPct}% מהרכיבות`);
       }
@@ -420,8 +420,8 @@ _extractWeightGoalFallback(text) {
         const wRidesStr = num1(volume.weeklyRidesAvg);
         summaryLines.push("");
         summaryLines.push("מבט שבועי:");
-        summaryLines.push(`• שעות רכיבה לשבוע (ממוצע): ~${wHoursStr}`);
-        summaryLines.push(`• מספר רכיבות לשבוע (ממוצע): ~${wRidesStr}`);
+        summaryLines.push(`• שעות רכיבה לשבוע (ממוצע): ${wHoursStr}`);
+        summaryLines.push(`• מספר רכיבות לשבוע (ממוצע): ${wRidesStr}`);
         summaryLines.push(`(מבוסס על ${weeksStr} שבועות אחרונים)`);
       }
 
@@ -729,10 +729,10 @@ _extractWeightGoalFallback(text) {
     lines.push("בוא נתאים גם את הדופק שלך.");
 
     if (typeof hr.hrMax === "number") {
-      lines.push(`• דופק מקסימלי מוערך מהנתונים: ~${hr.hrMax} bpm.`);
+      lines.push(`• דופק מקסימלי מוערך מהנתונים: ${hr.hrMax} bpm.`);
     }
     if (typeof hr.hrThreshold === "number") {
-      lines.push(`• דופק סף מוערך: ~${hr.hrThreshold} bpm.`);
+      lines.push(`• דופק סף מוערך: ${hr.hrThreshold} bpm.`);
     }
 
     lines.push(

@@ -1184,7 +1184,8 @@ export async function createDbImpl() {
 
       for (const a of activities) {
         if (!a) continue;
-        if (!RIDE_TYPES.includes(a.type)) continue;
+        const activityType = a.sport_type || a.type;
+        if (!RIDE_TYPES.includes(activityType)) continue;
 
         const startDateSec = a.start_date
           ? Math.floor(new Date(a.start_date).getTime() / 1000)
@@ -1246,7 +1247,7 @@ export async function createDbImpl() {
             avgHr,
             maxHr,
             hasPower ? 1 : 0,
-            a.type || null,
+            activityType || null,
           ]
         );
 
