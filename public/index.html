@@ -278,6 +278,8 @@
       const sendBtn = document.getElementById("sendBtn");
 
       let hasStrava = false;
+      // מצב תצוגה כללי (למקרי fallback). האונבורדינג עצמו מסומן בהודעות.
+      let mode = "chat";
 
       function scrollToBottom() {
         messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -296,13 +298,13 @@
                 STRAVA_DOMAIN +
                 "/auth/strava?userId=" +
                 encodeURIComponent(uid);
-              return `<a href="${authHref}" target="_blank" rel="noopener noreferrer">חבר אותי לסטרבה</a>`;
+              return `<a href="${authHref}">חבר אותי לסטרבה</a>`;
             } catch (e) {
               const authHref =
                 STRAVA_DOMAIN +
                 "/auth/strava?userId=" +
                 encodeURIComponent(USER_ID);
-              return `<a href="${authHref}" target="_blank" rel="noopener noreferrer">חבר אותי לסטרבה</a>`;
+              return `<a href="${authHref}">חבר אותי לסטרבה</a>`;
             }
           }
 
@@ -343,7 +345,7 @@
         row.appendChild(bubble);
         messagesEl.appendChild(row);
         scrollToBottom();
-      return textDiv;
+        return textDiv;
       }
 
       function updateMessage(textDiv, text) {
@@ -360,15 +362,27 @@
         scrollToBottom();
       }
 
-      // ===== STRAVA SNAPSHOT =====
+      
+      // ===== FETCH WITH TIMEOUT (כדי שה-UI לא ייתקע על Pending) =====
+      async function fetchWithTimeout(url, options = {}, timeoutMs = 7000) {
+        const controller = new AbortController();
+        const id = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+          return await fetch(url, { ...options, signal: controller.signal });
+        } finally {
+          clearTimeout(id);
+        }
+      }
+
+// ===== STRAVA SNAPSHOT =====
 
       async function fetchSnapshotOnce() {
         try {
-          const res = await fetch("/api/loew/strava-snapshot", {
+          const res = await fetchWithTimeout("/api/loew/strava-snapshot", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ userId: USER_ID }),
-          });
+          }, 7000);
           const data = await res.json();
 
           if (data.ok && data.snapshot) {
@@ -393,11 +407,11 @@
 
       async function fetchSnapshot() {
         try {
-          const res = await fetch("/api/loew/strava-snapshot", {
+          const res = await fetchWithTimeout("/api/loew/strava-snapshot", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ userId: USER_ID }),
-          });
+          }, 7000);
           const data = await res.json();
 
           if (data.ok && data.snapshot) {
@@ -645,7 +659,7 @@
       }
 
       async function callLastWorkoutAnalysis() {
-        addMessage("bot", "בודק את האימון האחרון שלך…", mode);
+        addMessage("bot", "בודק את האימון האחרון שלך…", "chat");
 
         const res = await fetch("/api/loew/last-workout-analysis", {
           method: "POST",
@@ -664,7 +678,7 @@
           return;
         }
 
-        addMessage("bot", data.message || "לא קיבלתי סיכום אימון.", mode);
+        addMessage("bot", data.message || "לא קיבלתי סיכום אימון.", "chat");
       }
 
       async function callWorkoutAnalysisByDate(text) {
@@ -680,7 +694,7 @@
 
         const isoDate = match[0];
 
-        addMessage("bot", `בודק את האימון מתאריך ${isoDate}…`, mode);
+        addMessage("bot", `בודק את האימון מתאריך ${isoDate}…`, "chat");
 
         const res = await fetch("/api/loew/workout-analysis-by-date", {
           method: "POST",
@@ -699,7 +713,7 @@
           return;
         }
 
-        addMessage("bot", data.message || "לא קיבלתי סיכום אימון.", mode);
+        addMessage("bot", data.message || "לא קיבלתי סיכום אימון.", "chat");
       }
 
       // ===== SEND MESSAGE =====
@@ -773,10 +787,14 @@
 
       // ===== INIT =====
       (async function init() {
+        // תמיד מציגים משהו מיד, כדי שלא ייראה 'תקוע' בזמן cold-start של Render
+        addMessage("bot", "טוען את הצ׳אט…", "chat");
+
         const snapshot = await fetchSnapshotOnce();
 
         // 1. חזרנו מ-Strava עם ?strava=connected
         if (STRAVA_STATUS === "connected") {
+          mode = "onboarding";
           // אחרי חיבור לסטרבה: מריצים ייבוא + ממשיכים אונבורדינג באותו טאב
           addMessage(
             "bot",
@@ -807,6 +825,8 @@
           return;
         }
 
+        mode = "onboarding";
+
         // 2. אין סטרבה – משתמש חדש
         if (!hasStrava) {
           const authRel = "/auth/strava?userId=" + encodeURIComponent(USER_ID);
@@ -836,6 +856,8 @@
 
           return;
         }
+
+        mode = "chat";
 
         // 3. יש סטרבה – השרת מחליט (אונבורדינג באמצע / סיום)
         try {

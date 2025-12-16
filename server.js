@@ -35,8 +35,18 @@ app.get("/admin/download-db", (req, res) => {
     return res.status(404).send("DB file not found at " + DB_FILE);
   }
 
+  req.on("aborted", () => {
+    console.warn("[ADMIN] DB download request aborted by client");
+  });
+
   res.download(DB_FILE, "loew.db", (err) => {
     if (err) {
+      // אם הלקוח ביטל את ההורדה באמצע (refresh/סגירת טאב/timeout) — זה לא באג
+      if (err.code === "ECONNABORTED") {
+        console.warn("[ADMIN] DB download aborted by client");
+        return;
+      }
+
       console.error("Error sending DB:", err);
       if (!res.headersSent) {
         res.status(500).send("Error sending DB");
