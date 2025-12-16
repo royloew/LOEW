@@ -296,13 +296,13 @@
                 STRAVA_DOMAIN +
                 "/auth/strava?userId=" +
                 encodeURIComponent(uid);
-              return `<a href="${authHref}">חבר אותי לסטרבה</a>`;
+              return `<a href="${authHref}" target="_blank" rel="noopener noreferrer">חבר אותי לסטרבה</a>`;
             } catch (e) {
               const authHref =
                 STRAVA_DOMAIN +
                 "/auth/strava?userId=" +
                 encodeURIComponent(USER_ID);
-              return `<a href="${authHref}">חבר אותי לסטרבה</a>`;
+              return `<a href="${authHref}" target="_blank" rel="noopener noreferrer">חבר אותי לסטרבה</a>`;
             }
           }
 
@@ -342,6 +342,13 @@
 
         row.appendChild(bubble);
         messagesEl.appendChild(row);
+        scrollToBottom();
+      return textDiv;
+      }
+
+      function updateMessage(textDiv, text) {
+        if (!textDiv) return;
+        textDiv.innerHTML = renderTextWithLinks(text);
         scrollToBottom();
       }
 
@@ -455,8 +462,77 @@
         );
       }
 
-      async function callStravaSync() {
-        addMessage("bot", "מייבא נתונים מסטרבה...", "chat");
+
+      // ===== STRAVA INGEST PROGRESS UI =====
+      // We can't stream the real server logs to the browser (yet),
+      // so we show a simple, readable progress checklist while waiting.
+      function startIngestProgressUI(titleText) {
+        const steps = [
+          { key: "start", text: "מתחיל ייבוא נתונים מסטרבה" },
+          { key: "streams", text: "מושך נתוני וואטים/דופק (Streams) לאימונים" },
+          { key: "compute", text: "מחשב סיכום נפח + מודלי FTP/דופק" },
+        ];
+
+        const lines = [
+          titleText || "מייבא נתונים מסטרבה…",
+          "",
+          ...steps.map((s, i) => `⏳ ${s.text}`),
+        ].join("\n");
+
+        // Return a messageId so we can update the same bubble (no spam)
+        const textDiv = addMessage("bot", lines, "onboarding");
+
+        function render(statusKey) {
+          const idx = steps.findIndex((s) => s.key === statusKey);
+          const updated = [
+            titleText || "מייבא נתונים מסטרבה…",
+            "",
+            ...steps.map((s, i) => {
+              if (i < idx) return `✅ ${s.text}`;
+              if (i === idx) return `⏳ ${s.text}`;
+              return `• ${s.text}`;
+            }),
+          ].join("\n");
+          updateMessage(textDiv, updated);
+        }
+
+        function done(extraText) {
+          const updated = [
+            "הייבוא מסטרבה הושלם ✅",
+            extraText ? "\n" + extraText : "",
+          ].join("");
+          updateMessage(textDiv, updated);
+        }
+
+        function fail(errText) {
+          updateMessage(
+            textDiv,
+            "לא הצלחתי להשלים ייבוא מסטרבה ❌\n" +
+              (errText || "נסה שוב עוד רגע, או כתוב \"עדכן מסטרבה\".")
+          );
+        }
+
+        // A gentle "fake" progression so the user sees movement even on slow runs
+        render("start");
+        const t1 = setTimeout(() => render("streams"), 1200);
+        const t2 = setTimeout(() => render("compute"), 6500);
+
+        return {
+          render,
+          done,
+          fail,
+          stopTimers: () => {
+            clearTimeout(t1);
+            clearTimeout(t2);
+          },
+        };
+      }
+
+      async function callStravaSync(opts = {}) {
+        const { mode = "chat", progressUI = null } = opts;
+        if (!progressUI) {
+          addMessage("bot", "מייבא נתונים מסטרבה...", mode);
+        }
 
         try {
           const res = await fetch("/api/loew/strava-sync", {
@@ -471,6 +547,10 @@
             throw new Error(data.error || "Strava sync failed");
           }
 
+          if (progressUI) {
+            progressUI.stopTimers();
+            progressUI.done("עכשיו ממשיכים לתהליך האונבורדינג…");
+          }
           const snapshot = data.snapshot || {};
           const ts = snapshot.trainingSummary;
           const volume = snapshot.volume;
@@ -527,7 +607,7 @@
             }
           }
 
-          addMessage("bot", text.trim(), "chat");
+          addMessage("bot", text.trim(), mode);
         } catch (err) {
           console.error(err);
           addMessage(
@@ -565,7 +645,7 @@
       }
 
       async function callLastWorkoutAnalysis() {
-        addMessage("bot", "בודק את האימון האחרון שלך…", "chat");
+        addMessage("bot", "בודק את האימון האחרון שלך…", mode);
 
         const res = await fetch("/api/loew/last-workout-analysis", {
           method: "POST",
@@ -584,7 +664,7 @@
           return;
         }
 
-        addMessage("bot", data.message || "לא קיבלתי סיכום אימון.", "chat");
+        addMessage("bot", data.message || "לא קיבלתי סיכום אימון.", mode);
       }
 
       async function callWorkoutAnalysisByDate(text) {
@@ -600,7 +680,7 @@
 
         const isoDate = match[0];
 
-        addMessage("bot", `בודק את האימון מתאריך ${isoDate}…`, "chat");
+        addMessage("bot", `בודק את האימון מתאריך ${isoDate}…`, mode);
 
         const res = await fetch("/api/loew/workout-analysis-by-date", {
           method: "POST",
@@ -619,7 +699,7 @@
           return;
         }
 
-        addMessage("bot", data.message || "לא קיבלתי סיכום אימון.", "chat");
+        addMessage("bot", data.message || "לא קיבלתי סיכום אימון.", mode);
       }
 
       // ===== SEND MESSAGE =====
@@ -628,7 +708,7 @@
         const text = inputEl.value.trim();
         if (!text) return;
 
-        addMessage("me", text, "chat");
+        addMessage("me", text, mode);
         inputEl.value = "";
         inputEl.focus();
         sendBtn.disabled = true;
@@ -697,17 +777,26 @@
 
         // 1. חזרנו מ-Strava עם ?strava=connected
         if (STRAVA_STATUS === "connected") {
+          // אחרי חיבור לסטרבה: מריצים ייבוא + ממשיכים אונבורדינג באותו טאב
           addMessage(
             "bot",
-            "החיבור לסטרבה הצליח ✅\nאני מייבא את הנתונים שלך… זה לוקח בדרך כלל פחות מדקה.",
+            "החיבור לסטרבה הצליח ✅
+כדי שאוכל להתחיל — אני מייבא עכשיו את הנתונים שלך.",
             "onboarding"
           );
 
+          const progressUI = startIngestProgressUI("ייבוא מסטרבה בתהליך…");
+
           try {
+            // זה עושה ingest מלא ומעדכן DB. כשזה מסתיים – נמשיך לאונבורדינג.
+            await callStravaSync({ mode: "onboarding", progressUI });
+
             const data = await callChatAPI("היי");
             handleChatReply(data);
           } catch (err) {
             console.error("auto onboarding after Strava error:", err);
+            progressUI.stopTimers();
+            progressUI.fail(err && err.message ? err.message : null);
             addMessage(
               "bot",
               "משהו השתבש אחרי חיבור לסטרבה. נסה לכתוב לי הודעה בצ'אט כדי להמשיך.",
