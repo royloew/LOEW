@@ -296,13 +296,13 @@
                 STRAVA_DOMAIN +
                 "/auth/strava?userId=" +
                 encodeURIComponent(uid);
-              return `<a href="${authHref}" target="_blank" rel="noopener noreferrer">חבר אותי לסטרבה</a>`;
+              return `<a href="${authHref}" target="_self" rel="noopener noreferrer">חבר אותי לסטרבה</a>`;
             } catch (e) {
               const authHref =
                 STRAVA_DOMAIN +
                 "/auth/strava?userId=" +
                 encodeURIComponent(USER_ID);
-              return `<a href="${authHref}" target="_blank" rel="noopener noreferrer">חבר אותי לסטרבה</a>`;
+              return `<a href="${authHref}" target="_self" rel="noopener noreferrer">חבר אותי לסטרבה</a>`;
             }
           }
 
@@ -342,6 +342,13 @@
 
         row.appendChild(bubble);
         messagesEl.appendChild(row);
+        scrollToBottom();
+              return textDiv;
+      }
+
+      function updateMessage(textDiv, newText) {
+        if (!textDiv) return;
+        textDiv.innerHTML = renderTextWithLinks(newText);
         scrollToBottom();
       }
 
@@ -455,24 +462,6 @@
         );
       }
 
-      
-      async function stravaSyncSilent() {
-        const res = await fetch("/api/loew/strava-sync", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userId: USER_ID }),
-        });
-
-        const data = await res.json();
-        if (!res.ok || !data.ok) {
-          throw new Error(data.error || "Strava sync failed");
-        }
-
-        // תומך בשתי צורות תגובה: { ok, snapshot } או snapshot ישירות
-        return data.snapshot || data;
-      }
-
-
       async function callStravaSync() {
         addMessage("bot", "מייבא נתונים מסטרבה...", "chat");
 
@@ -555,60 +544,6 @@
           );
         }
       }
-
-      
-      // ===== STRAVA SUMMARY (after ingest) =====
-      function buildStravaSummaryText(snapshot) {
-        if (!snapshot) return null;
-
-        const ts = snapshot.trainingSummary;
-        const volume = snapshot.volume;
-        const ftpModels = snapshot.ftpModels || {};
-        const hr = snapshot.hr || {};
-        const windowDays = snapshot.metricsWindowDays != null ? snapshot.metricsWindowDays : 60;
-
-        const lines = [];
-        lines.push("✅ סיימתי לעדכן את הנתונים מסטרבה");
-
-        if (ts && ts.rides_count) {
-          const hours = ts.totalMovingTimeSec ? (ts.totalMovingTimeSec / 3600).toFixed(1) : null;
-          const km = ts.totalDistanceKm != null ? Number(ts.totalDistanceKm).toFixed(1) : null;
-          const elev = ts.totalElevationGainM != null ? Math.round(ts.totalElevationGainM) : null;
-
-          let row = `ב-${windowDays} הימים האחרונים: ${ts.rides_count} רכיבות`;
-          if (hours) row += `, ${hours} שעות`;
-          if (km) row += `, ${km} ק״מ`;
-          if (elev != null) row += `, ${elev} מ׳ טיפוס`;
-          lines.push(row);
-        }
-
-        if (volume && volume.weeksCount) {
-          lines.push(`ממוצע שבועי: ${volume.weeklyHoursAvg.toFixed(1)} שעות · ${volume.weeklyRidesAvg.toFixed(1)} רכיבות`);
-        }
-
-        if (ftpModels.ftpRecommended && ftpModels.ftpRecommended.value != null) {
-          lines.push("");
-          lines.push(`FTP מומלץ כרגע: ${ftpModels.ftpRecommended.value}W`);
-          const extra = [];
-          if (ftpModels.ftp20) extra.push(`• FTP 20min (95%): ${ftpModels.ftp20.value}W`);
-          if (ftpModels.ftpFrom3min) extra.push(`• FTP מ-3 דקות: ${ftpModels.ftpFrom3min.value}W`);
-          if (ftpModels.ftpFromCP) extra.push(`• Critical Power: ${ftpModels.ftpFromCP.value}W`);
-          if (extra.length) {
-            lines.push("מודלים נוספים:");
-            lines.push(...extra);
-          }
-        }
-
-        if (hr && (hr.hrMax || hr.hrThreshold)) {
-          lines.push("");
-          lines.push("דופק:");
-          if (hr.hrMax) lines.push(`• דופק מקס׳ משוער: ${hr.hrMax} bpm`);
-          if (hr.hrThreshold) lines.push(`• דופק סף משוער: ${hr.hrThreshold} bpm`);
-        }
-
-        return lines.join("\n");
-      }
-
 
       function isLastWorkoutRequest(txt) {
         const t = (txt || "")
@@ -769,38 +704,22 @@
 
         // 1. חזרנו מ-Strava עם ?strava=connected
         if (STRAVA_STATUS === "connected") {
-          // נועלים קלט בזמן הייבוא כדי לא לבלבל את המשתמש
-          inputEl.disabled = true;
-          sendBtn.disabled = true;
-
-          // בועה אחת שמתעדכנת בזמן הייבוא
-          startIngestIndicator();
+          addMessage(
+            "bot",
+            "החיבור לסטרבה הצליח ✅\nאני מייבא את הנתונים שלך… זה לוקח בדרך כלל פחות מדקה.",
+            "onboarding"
+          );
 
           try {
-            const snapshot2 = await stravaSyncSilent();
-
-            stopIngestIndicator();
-
-            // סיכום מעוצב אחרי הייבוא (פעם אחת)
-            const summaryText = buildStravaSummaryText(snapshot2);
-            if (summaryText) {
-              addMessage("bot", summaryText, "onboarding");
-            }
-
-            // ממשיכים לאונבורדינג ע"י טריגר "היי"
             const data = await callChatAPI("היי");
             handleChatReply(data);
           } catch (err) {
-            stopIngestIndicator();
             console.error("auto onboarding after Strava error:", err);
             addMessage(
               "bot",
-              "הייתה בעיה בייבוא מסטרבה. נסה לכתוב לי 'עדכן מסטרבה' או לרענן את הדף.",
+              "משהו השתבש אחרי חיבור לסטרבה. נסה לכתוב לי הודעה בצ'אט כדי להמשיך.",
               "chat"
             );
-          } finally {
-            inputEl.disabled = false;
-            sendBtn.disabled = false;
           }
 
           return;
