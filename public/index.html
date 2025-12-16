@@ -250,6 +250,34 @@
 
     <script>
       // ===== USER ID, STRAVA STATUS & DOM =====
+      
+      let ingestTicker = null;
+
+      function startIngestIndicator() {
+        const steps = [
+          "מתחבר לסטרבה ✅",
+          "מושך פעילויות…",
+          "מושך נתוני רכיבה (Streams)…",
+          "מחשב מדדים (FTP/עומס)…",
+          "מסכם נתונים…",
+        ];
+
+        let i = 0;
+        addMessage("bot", `מייבא נתונים מסטרבה…\n• ${steps[0]}`, "onboarding");
+
+        ingestTicker = setInterval(() => {
+          i = Math.min(i + 1, steps.length - 1);
+          addMessage("bot", `• ${steps[i]}`, "onboarding");
+        }, 2500);
+      }
+
+      function stopIngestIndicator() {
+        if (ingestTicker) clearInterval(ingestTicker);
+        ingestTicker = null;
+      }
+
+
+
       function getUserId() {
         const urlParams = new URLSearchParams(window.location.search);
         const fromUrl = urlParams.get("userId");
@@ -789,37 +817,44 @@
         const snapshot = await fetchSnapshotOnce();
 
         // 1. חזרנו מ-Strava עם ?strava=connected
-        if (STRAVA_STATUS === "connected") {
-          mode = "onboarding";
-          // אחרי חיבור לסטרבה: מריצים ייבוא + ממשיכים אונבורדינג באותו טאב
-          addMessage(
-            "bot",
-            `החיבור לסטרבה הצליח ✅
+       if (STRAVA_STATUS === "connected") {
+  // הודעת הצלחה + אינדיקציה
+  addMessage(
+    "bot",
+    `החיבור לסטרבה הצליח ✅
 כדי שאוכל להתחיל — אני מייבא עכשיו את הנתונים שלך.`,
-            "onboarding"
-          );
+    "onboarding"
+  );
 
-          const progressUI = startIngestProgressUI("ייבוא מסטרבה בתהליך…");
+  startIngestIndicator();
 
-          try {
-            // זה עושה ingest מלא ומעדכן DB. כשזה מסתיים – נמשיך לאונבורדינג.
-            await callStravaSync({ mode: "onboarding", progressUI });
+  try {
+    // אופציה 1 (מומלץ): לקרוא ל-sync ייעודי אם קיים אצלך
+    // זה יריץ ingest מלא ויחזיר snapshot כשהוא מוכן
+    if (typeof callStravaSync === "function") {
+      await callStravaSync();
+    }
 
-            const data = await callChatAPI("היי");
-            handleChatReply(data);
-          } catch (err) {
-            console.error("auto onboarding after Strava error:", err);
-            progressUI.stopTimers();
-            progressUI.fail(err && err.message ? err.message : null);
-            addMessage(
-              "bot",
-              "משהו השתבש אחרי חיבור לסטרבה. נסה לכתוב לי הודעה בצ'אט כדי להמשיך.",
-              "chat"
-            );
-          }
+    stopIngestIndicator();
 
-          return;
-        }
+    addMessage("bot", "סיימתי לייבא נתונים מסטרבה ✅", "onboarding");
+
+    // ממשיכים לאונבורדינג/צ'אט ע"י טריגר "היי"
+    const data = await callChatAPI("היי");
+    handleChatReply(data);
+  } catch (err) {
+    stopIngestIndicator();
+    console.error("auto onboarding after Strava error:", err);
+    addMessage(
+      "bot",
+      "הייתה בעיה בייבוא מסטרבה. נסה לכתוב לי 'עדכן מסטרבה' או לרענן את הדף.",
+      "chat"
+    );
+  }
+
+  return;
+}
+
 
         mode = "onboarding";
 
