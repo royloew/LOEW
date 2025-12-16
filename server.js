@@ -35,15 +35,11 @@ app.get("/admin/download-db", (req, res) => {
     return res.status(404).send("DB file not found at " + DB_FILE);
   }
 
-  req.on("aborted", () => {
-    console.warn("[ADMIN] DB download request aborted by client");
-  });
-
   res.download(DB_FILE, "loew.db", (err) => {
     if (err) {
-      // אם הלקוח ביטל את ההורדה באמצע (refresh/סגירת טאב/timeout) — זה לא באג
-      if (err.code === "ECONNABORTED") {
-        console.warn("[ADMIN] DB download aborted by client");
+      // אם הלקוח ביטל את ההורדה (ECONNABORTED) זה לא באמת "באג" – פשוט לא מפילים 500
+      if (err.code === "ECONNABORTED" || String(err.message || "").toLowerCase().includes("aborted")) {
+        console.warn("DB download aborted by client");
         return;
       }
 
@@ -52,8 +48,7 @@ app.get("/admin/download-db", (req, res) => {
         res.status(500).send("Error sending DB");
       }
     }
-  });
-});
+  });});
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
