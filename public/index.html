@@ -746,7 +746,7 @@
 
           try {
             const data = await callChatAPI("היי");
-            prog.done("הייבוא הסתיים ✅");
+            
             handleChatReply(data);
           } catch (err) {
             console.error("auto onboarding after Strava error:", err);
