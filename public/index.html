@@ -343,6 +343,7 @@
         row.appendChild(bubble);
         messagesEl.appendChild(row);
         scrollToBottom();
+      return { row, bubble, textDiv };
       }
 
       function addSystemNote(text) {
@@ -352,6 +353,39 @@
         messagesEl.appendChild(div);
         scrollToBottom();
       }
+
+      // ===== PROGRESS BUBBLE (Strava import) =====
+
+      function startProgressBubble(mode, titleLine) {
+        const base = (titleLine || "מייבא נתונים מסטרבה…").trim();
+        const ref = addMessage("bot", base + " 0%", mode);
+
+        let pct = 0;
+        let dots = 0;
+        const maxBeforeDone = 92;
+        const tickMs = 650;
+
+        const timer = setInterval(() => {
+          dots = (dots + 1) % 4;
+          pct = Math.min(maxBeforeDone, pct + 3 + Math.floor(Math.random() * 4));
+          const dotsStr = ".".repeat(dots);
+          // אין כאן לינקים – עדכון פשוט של הטקסט
+          ref.textDiv.textContent = `${base} ${pct}%${dotsStr}`;
+        }, tickMs);
+
+        return {
+          done(finalText) {
+            clearInterval(timer);
+            ref.textDiv.textContent = finalText || "הייבוא הסתיים ✅";
+          },
+          fail(finalText) {
+            clearInterval(timer);
+            ref.textDiv.textContent =
+              finalText || "הייתה בעיה בייבוא מסטרבה. נסה שוב מאוחר יותר.";
+          },
+        };
+      }
+
 
       // ===== STRAVA SNAPSHOT =====
 
@@ -456,7 +490,7 @@
       }
 
       async function callStravaSync() {
-        addMessage("bot", "מייבא נתונים מסטרבה...", "chat");
+        const prog = startProgressBubble("chat", "מייבא נתונים מסטרבה…");
 
         try {
           const res = await fetch("/api/loew/strava-sync", {
@@ -527,9 +561,13 @@
             }
           }
 
+          prog.done("סיימתי לעדכן מסטרבה ✅");
+
+
           addMessage("bot", text.trim(), "chat");
         } catch (err) {
           console.error(err);
+          try { prog.fail(); } catch (e) {}
           addMessage(
             "bot",
             "הייתה בעיה בעדכון מסטרבה. נסה שוב מאוחר יותר.",
@@ -697,17 +735,19 @@
 
         // 1. חזרנו מ-Strava עם ?strava=connected
         if (STRAVA_STATUS === "connected") {
-          addMessage(
-            "bot",
-            "החיבור לסטרבה הצליח ✅\nאני מייבא את הנתונים שלך… זה לוקח בדרך כלל פחות מדקה.",
-            "onboarding"
+          const prog = startProgressBubble(
+            "onboarding",
+            "החיבור לסטרבה הצליח ✅
+מייבא את הנתונים שלך…"
           );
 
           try {
             const data = await callChatAPI("היי");
+            prog.done("הייבוא הסתיים ✅");
             handleChatReply(data);
           } catch (err) {
             console.error("auto onboarding after Strava error:", err);
+            prog.fail("משהו השתבש אחרי חיבור לסטרבה. נסה לכתוב לי הודעה בצ'אט כדי להמשיך.");
             addMessage(
               "bot",
               "משהו השתבש אחרי חיבור לסטרבה. נסה לכתוב לי הודעה בצ'אט כדי להמשיך.",

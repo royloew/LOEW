@@ -435,8 +435,14 @@ _extractWeightGoalFallback(text) {
       const elevStr = num0(elevation);
       const avgMin = Math.round(ts.avgDurationSec / 60);
       const avgMinStr = num0(avgMin);
-      const offPct =
-        ts.offroadPct != null ? Math.round(ts.offroadPct * 100) : null;
+      const offPct = (() => {
+        if (ts.offroadPct == null) return null;
+        const raw = Number(ts.offroadPct);
+        if (!Number.isFinite(raw)) return null;
+        // dbSqlite מחשב offroadPct כאחוז (0–100). אם במקרה מגיע יחס (0–1) — נהפוך לאחוז.
+        const pct = raw <= 1 ? raw * 100 : raw;
+        return Math.round(pct);
+      })();
 
       let summaryLines = [];
 
