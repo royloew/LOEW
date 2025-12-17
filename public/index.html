@@ -490,7 +490,11 @@
       }
 
       async function callStravaSync() {
-        const prog = startProgressBubble("chat", "מייבא נתונים מסטרבה…");
+        const prog = startProgressBubble(
+          "onboarding",
+          "החיבור לסטרבה הצליח ✅\nמייבא את הנתונים שלך…"
+        );
+
 
         try {
           const res = await fetch("/api/loew/strava-sync", {
