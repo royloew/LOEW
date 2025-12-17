@@ -383,6 +383,11 @@
             ref.textDiv.textContent =
               finalText || "הייתה בעיה בייבוא מסטרבה. נסה שוב מאוחר יותר.";
           },
+          remove() {
+          clearInterval(timer);
+          try { ref.row.remove(); } catch (e) {}
+          }
+
         };
       }
 
@@ -746,8 +751,8 @@
 
           try {
             const data = await callChatAPI("היי");
-            
-            handleChatReply(data);
+            prog.remove();              // ✅ סוגר טיימר ומסיר בועה
+            handleChatReply(data);      // ✅ רק השרת מדבר על סיום
           } catch (err) {
             console.error("auto onboarding after Strava error:", err);
             prog.fail("משהו השתבש אחרי חיבור לסטרבה. נסה לכתוב לי הודעה בצ'אט כדי להמשיך.");
@@ -757,6 +762,7 @@
               "chat"
             );
           }
+
 
           return;
         }
@@ -782,10 +788,6 @@
             "bot",
             "כדי להתחיל, יש לחבר את חשבון הסטרבה שלך:\n" + authHref,
             "onboarding"
-          );
-
-          addSystemNote(
-            'טיפ: אפשר גם לכתוב "כן" כדי לפתוח את מסך ההתחברות לסטרבה מהצ\'אט.'
           );
 
           return;
